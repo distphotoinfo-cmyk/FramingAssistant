@@ -9,17 +9,22 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
     "ios": {
+      "bundleIdentifier": "com.matthewkoller.framingassistant",
+      "buildNumber": "1",
+      "supportsTablet": true,
       "icon": "./assets/icon.png",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow Framing Assistant to access your photos so you can place artwork into the preview.",
-        "NSCameraUsageDescription": "Allow Framing Assistant to use the camera so you can capture artwork for the preview."
-      },
-      "supportsTablet": true,
-      "bundleIdentifier": "com.matthewkoller.framingassistant"
+        "NSCameraUsageDescription": "Allow Framing Assistant to use the camera so you can capture artwork for the preview.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.matthewkoller.framingassistant",
       "edgeToEdgeEnabled": true,
-      "package": "com.matthewkoller.framingassistant"
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
       [
@@ -30,6 +35,11 @@
         }
       ],
       "./plugins/withFmtConstevalWorkaround"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6d7691b7-ed81-4d06-8f46-9cea31984158"
+      }
+    }
   }
 }

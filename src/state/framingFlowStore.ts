@@ -11,6 +11,24 @@ import type {
 } from "../types/framing";
 import { normalizeFrameSelection } from "../utils/frameProfiles";
 
+export function createInitialPreviewDraft(): PreviewDraft {
+  return {
+    matThicknessPly: 4,
+    matCoreColor: "white",
+    mountingBoardColorHex: "#FFFFFF",
+    frameFamily: "nielsenFlorentine",
+    frameProfileId: "nielsenFlorentine93",
+    frameFinishId: "florentineBlack",
+    matColorHex: "#F4F0E8",
+    frameColorHex: "#050505",
+    offsetX: 0,
+    offsetY: 0,
+    artworkSourceMode: "placeholder",
+    artworkImageUri: null,
+    artworkCrop: null,
+  };
+}
+
 function createInitialDraft(): FramingProjectDraft {
   return {
     meta: {
@@ -44,19 +62,7 @@ function createInitialDraft(): FramingProjectDraft {
         height: "",
       },
     },
-    preview: {
-      matThicknessPly: 4,
-      frameFamily: "nielsenFlorentine",
-      frameProfileId: "nielsenFlorentine93",
-      frameFinishId: "florentineBlack",
-      matColorHex: "#F4F0E8",
-      frameColorHex: "#050505",
-      offsetX: 0,
-      offsetY: 0,
-      artworkSourceMode: "placeholder",
-      artworkImageUri: null,
-      artworkCrop: null,
-    },
+    preview: createInitialPreviewDraft(),
   };
 }
 
@@ -171,7 +177,7 @@ export const useFramingFlowStore = create<FramingFlowState>()(
           draft: {
             ...state.draft,
             preview: {
-              ...createInitialDraft().preview,
+              ...createInitialPreviewDraft(),
               ...state.draft.preview,
               ...updates,
             },

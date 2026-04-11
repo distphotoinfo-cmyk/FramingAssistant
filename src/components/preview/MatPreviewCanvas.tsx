@@ -3,11 +3,12 @@ import { Image, PixelRatio, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import Svg, { Polygon } from "react-native-svg";
+import Svg, { Defs, LinearGradient, Polygon, Stop } from "react-native-svg";
 import type {
   ArtworkCropState,
   ArtworkPreviewSourceMode,
   FrameProfileId,
+  MatCoreColor,
   MatThicknessPly,
 } from "../../types/framing";
 import { useAppSettingsStore } from "../../state/appSettingsStore";
@@ -25,6 +26,8 @@ interface MatPreviewCanvasProps {
   frameColorHex: string;
   matThicknessPly: MatThicknessPly;
   matColorHex: string;
+  matCoreColor: MatCoreColor;
+  mountingBoardColorHex: string;
   offsetX: number;
   offsetY: number;
   snapIncrement: number;
@@ -44,6 +47,20 @@ interface FrameFacePalette {
   innerShadow: string;
   brushedHighlight: string;
   brushedShadow: string;
+}
+
+interface MatBevelSidePalette {
+  outer: string;
+  inner: string;
+  midOffset: string;
+}
+
+interface MatBevelPalette {
+  face: string;
+  top: MatBevelSidePalette;
+  left: MatBevelSidePalette;
+  right: MatBevelSidePalette;
+  bottom: MatBevelSidePalette;
 }
 
 function roundToPixel(value: number) {
@@ -274,6 +291,77 @@ function FrameFaceOverlay({
   );
 }
 
+function MatBevelOverlay({
+  width,
+  height,
+  inset,
+  palette,
+}: {
+  width: number;
+  height: number;
+  inset: number;
+  palette: MatBevelPalette;
+}) {
+  const gradientIdPrefixRef = useRef(`mat-bevel-${Math.random().toString(36).slice(2)}`);
+  const gradientIdPrefix = gradientIdPrefixRef.current;
+  const topMidColor = mixHexColors(palette.top.inner, palette.top.outer, 0.58);
+  const leftMidColor = mixHexColors(palette.left.inner, palette.left.outer, 0.56);
+  const rightMidColor = mixHexColors(palette.right.inner, palette.right.outer, 0.62);
+  const bottomMidColor = mixHexColors(palette.bottom.inner, palette.bottom.outer, 0.64);
+
+  return (
+    <Svg
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        inset: 0,
+      }}
+      width={width}
+      height={height}
+    >
+      <Defs>
+        <LinearGradient id={`${gradientIdPrefix}-top`} x1="0%" y1="0%" x2="0%" y2="100%">
+          <Stop offset="0%" stopColor={palette.top.outer} />
+          <Stop offset={palette.top.midOffset} stopColor={topMidColor} />
+          <Stop offset="100%" stopColor={palette.top.inner} />
+        </LinearGradient>
+        <LinearGradient id={`${gradientIdPrefix}-left`} x1="0%" y1="0%" x2="100%" y2="0%">
+          <Stop offset="0%" stopColor={palette.left.outer} />
+          <Stop offset={palette.left.midOffset} stopColor={leftMidColor} />
+          <Stop offset="100%" stopColor={palette.left.inner} />
+        </LinearGradient>
+        <LinearGradient id={`${gradientIdPrefix}-right`} x1="100%" y1="0%" x2="0%" y2="0%">
+          <Stop offset="0%" stopColor={palette.right.outer} />
+          <Stop offset={palette.right.midOffset} stopColor={rightMidColor} />
+          <Stop offset="100%" stopColor={palette.right.inner} />
+        </LinearGradient>
+        <LinearGradient id={`${gradientIdPrefix}-bottom`} x1="0%" y1="100%" x2="0%" y2="0%">
+          <Stop offset="0%" stopColor={palette.bottom.outer} />
+          <Stop offset={palette.bottom.midOffset} stopColor={bottomMidColor} />
+          <Stop offset="100%" stopColor={palette.bottom.inner} />
+        </LinearGradient>
+      </Defs>
+
+      <Polygon
+        points={`0,0 ${width},0 ${width - inset},${inset} ${inset},${inset}`}
+        fill={`url(#${gradientIdPrefix}-top)`}
+      />
+      <Polygon
+        points={`0,0 0,${height} ${inset},${height - inset} ${inset},${inset}`}
+        fill={`url(#${gradientIdPrefix}-left)`}
+      />
+      <Polygon
+        points={`${width},0 ${width},${height} ${width - inset},${height - inset} ${width - inset},${inset}`}
+        fill={`url(#${gradientIdPrefix}-right)`}
+      />
+      <Polygon
+        points={`0,${height} ${width},${height} ${width - inset},${height - inset} ${inset},${height - inset}`}
+        fill={`url(#${gradientIdPrefix}-bottom)`}
+      />
+    </Svg>
+  );
+}
+
 function snapToIncrement(value: number, increment: number) {
   "worklet";
   if (increment <= 0) {
@@ -291,6 +379,8 @@ export default function MatPreviewCanvas({
   frameColorHex,
   matThicknessPly,
   matColorHex,
+  matCoreColor,
+  mountingBoardColorHex,
   offsetX,
   offsetY,
   snapIncrement,
@@ -322,6 +412,9 @@ export default function MatPreviewCanvas({
     unit === "cm" ? frameProfile.faceWidthInches * 2.54 : frameProfile.faceWidthInches;
   const frameColor = normalizeHex(frameColorHex, "#050505");
   const matColor = normalizeHex(matColorHex, "#F4F0E8");
+  const mountingBoardColor = normalizeHex(mountingBoardColorHex, "#FFFFFF");
+  const isWhiteCore = matCoreColor === "white";
+  const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
   const previewCardColor = isDark ? "#E7DED2" : "#F3EEE6";
@@ -334,29 +427,45 @@ export default function MatPreviewCanvas({
   const previewStagePaddingBottom = isDark ? spacing.xl : spacing.lg;
   const bevelUnitScale = unit === "cm" ? 2.54 : 1;
   const bevelVisualScale = 1.5625;
+  const bevelThicknessMultiplier = {
+    2: 1,
+    4: 1.25,
+    6: 1,
+    8: 1.25,
+  }[matThicknessPly];
   const bevelProfile = {
-    2: { physicalWidth: 0.045 * bevelUnitScale * bevelVisualScale, apertureEdgeAlpha: 0.045 },
-    4: { physicalWidth: 0.08 * bevelUnitScale * bevelVisualScale, apertureEdgeAlpha: 0.06 },
-    6: { physicalWidth: 0.11 * bevelUnitScale * bevelVisualScale, apertureEdgeAlpha: 0.07 },
-    8: { physicalWidth: 0.14 * bevelUnitScale * bevelVisualScale, apertureEdgeAlpha: 0.08 },
+    2: { physicalWidth: 0.045 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.045 },
+    4: { physicalWidth: 0.08 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.06 },
+    6: { physicalWidth: 0.11 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.07 },
+    8: { physicalWidth: 0.14 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.08 },
   }[matThicknessPly];
   const minimumBevelInset = 0.85;
-  const matLightness = hexToHsl(matColor).l;
-  const lightMatCompensation = Math.max(0, Math.min(1, (matLightness - 0.86) / 0.14));
-  const topShadowBaseColor = mixHexColors(matColor, "#000000", 0.12);
-  const leftShadowBaseColor = mixHexColors(matColor, "#000000", 0.08);
-  const topShadowCompensatedColor = mixHexColors(matColor, "#BDB4A7", 0.28);
-  const leftShadowCompensatedColor = mixHexColors(matColor, "#C8C0B4", 0.22);
-  const rightHighlightBaseColor = mixHexColors(matColor, "#FFFFFF", 0.08);
-  const bottomHighlightBaseColor = mixHexColors(matColor, "#FFFFFF", 0.14);
-  const rightHighlightCompensatedColor = mixHexColors(matColor, "#F3EDE4", 0.08);
-  const bottomHighlightCompensatedColor = mixHexColors(matColor, "#F8F3EB", 0.1);
+  const topShadowEdgeColor = mixHexColors(coreFaceColor, "#000000", isWhiteCore ? 0.2 : 0.5);
+  const leftShadowEdgeColor = mixHexColors(coreFaceColor, "#000000", isWhiteCore ? 0.14 : 0.38);
+  const rightHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.16 : 0.26);
+  const bottomHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.24 : 0.34);
   const bevelPalette = {
-    face: matColor,
-    top: mixHexColors(topShadowBaseColor, topShadowCompensatedColor, lightMatCompensation),
-    left: mixHexColors(leftShadowBaseColor, leftShadowCompensatedColor, lightMatCompensation),
-    right: mixHexColors(rightHighlightBaseColor, rightHighlightCompensatedColor, lightMatCompensation * 0.3),
-    bottom: mixHexColors(bottomHighlightBaseColor, bottomHighlightCompensatedColor, lightMatCompensation * 0.35),
+    face: coreFaceColor,
+    top: {
+      outer: topShadowEdgeColor,
+      inner: mixHexColors(coreFaceColor, topShadowEdgeColor, isWhiteCore ? 0.48 : 0.64),
+      midOffset: "40%",
+    },
+    left: {
+      outer: leftShadowEdgeColor,
+      inner: mixHexColors(coreFaceColor, leftShadowEdgeColor, isWhiteCore ? 0.42 : 0.58),
+      midOffset: "42%",
+    },
+    right: {
+      outer: rightHighlightEdgeColor,
+      inner: mixHexColors(coreFaceColor, rightHighlightEdgeColor, isWhiteCore ? 0.34 : 0.46),
+      midOffset: "60%",
+    },
+    bottom: {
+      outer: bottomHighlightEdgeColor,
+      inner: mixHexColors(coreFaceColor, bottomHighlightEdgeColor, isWhiteCore ? 0.44 : 0.56),
+      midOffset: "62%",
+    },
   };
   const apertureEdgeColor = `rgba(0,0,0,${bevelProfile.apertureEdgeAlpha})`;
   const frameLightness = hexToHsl(frameColor).l;
@@ -753,6 +862,50 @@ export default function MatPreviewCanvas({
     );
   }, [artworkImageUri, artworkSourceMode, importedArtworkMetrics, previewGeometry]);
 
+  const bevelOpeningContent = previewGeometry ? (
+    <GestureDetector gesture={panGesture}>
+      <Animated.View
+        style={[
+          {
+            position: "absolute",
+            left: previewGeometry.bevelBaseLeft,
+            top: previewGeometry.bevelBaseTop,
+            width: previewGeometry.bevelOuterWidth,
+            height: previewGeometry.bevelOuterHeight,
+            backgroundColor: bevelPalette.face,
+            overflow: "hidden",
+          },
+          openingOffsetAnimatedStyle,
+        ]}
+      >
+        <MatBevelOverlay
+          width={previewGeometry.bevelOuterWidth}
+          height={previewGeometry.bevelOuterHeight}
+          inset={previewGeometry.bevelInset}
+          palette={bevelPalette}
+        />
+
+        <View
+          style={{
+            position: "absolute",
+            left: previewGeometry.bevelInset,
+            top: previewGeometry.bevelInset,
+            width: previewGeometry.apertureWidth,
+            height: previewGeometry.apertureHeight,
+            backgroundColor: mountingBoardColor,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: apertureEdgeColor,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {renderArtworkContent()}
+        </View>
+      </Animated.View>
+    </GestureDetector>
+  ) : null;
+
   return (
     <View
       style={{
@@ -840,67 +993,7 @@ export default function MatPreviewCanvas({
                       overflow: "hidden",
                     }}
                   >
-                    <GestureDetector gesture={panGesture}>
-                      <Animated.View
-                        style={[
-                          {
-                            position: "absolute",
-                            left: previewGeometry.bevelBaseLeft,
-                            top: previewGeometry.bevelBaseTop,
-                            width: previewGeometry.bevelOuterWidth,
-                            height: previewGeometry.bevelOuterHeight,
-                            backgroundColor: bevelPalette.face,
-                            overflow: "hidden",
-                          },
-                          openingOffsetAnimatedStyle,
-                        ]}
-                      >
-                      <Svg
-                        pointerEvents="none"
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                        }}
-                        width={previewGeometry.bevelOuterWidth}
-                        height={previewGeometry.bevelOuterHeight}
-                      >
-                        <Polygon
-                          points={`0,0 ${previewGeometry.bevelOuterWidth},0 ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                          fill={bevelPalette.top}
-                        />
-                        <Polygon
-                          points={`0,0 0,${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                          fill={bevelPalette.left}
-                        />
-                        <Polygon
-                          points={`${previewGeometry.bevelOuterWidth},0 ${previewGeometry.bevelOuterWidth},${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                          fill={bevelPalette.right}
-                        />
-                        <Polygon
-                          points={`0,${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth},${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset}`}
-                          fill={bevelPalette.bottom}
-                        />
-                      </Svg>
-
-                      <View
-                        style={{
-                          position: "absolute",
-                          left: previewGeometry.bevelInset,
-                          top: previewGeometry.bevelInset,
-                          width: previewGeometry.apertureWidth,
-                          height: previewGeometry.apertureHeight,
-                          backgroundColor: "#FFFFFF",
-                          overflow: "hidden",
-                          borderWidth: 1,
-                          borderColor: apertureEdgeColor,
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {renderArtworkContent()}
-                      </View>
-                      </Animated.View>
-                    </GestureDetector>
+                    {bevelOpeningContent}
                   </View>
                 </>
               ) : (
@@ -912,67 +1005,7 @@ export default function MatPreviewCanvas({
                     overflow: "hidden",
                   }}
                 >
-                  <GestureDetector gesture={panGesture}>
-                    <Animated.View
-                      style={[
-                        {
-                          position: "absolute",
-                          left: previewGeometry.bevelBaseLeft,
-                          top: previewGeometry.bevelBaseTop,
-                          width: previewGeometry.bevelOuterWidth,
-                          height: previewGeometry.bevelOuterHeight,
-                          backgroundColor: bevelPalette.face,
-                          overflow: "hidden",
-                        },
-                        openingOffsetAnimatedStyle,
-                      ]}
-                    >
-                    <Svg
-                      pointerEvents="none"
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                      }}
-                      width={previewGeometry.bevelOuterWidth}
-                      height={previewGeometry.bevelOuterHeight}
-                    >
-                      <Polygon
-                        points={`0,0 ${previewGeometry.bevelOuterWidth},0 ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                        fill={bevelPalette.top}
-                      />
-                      <Polygon
-                        points={`0,0 0,${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                        fill={bevelPalette.left}
-                      />
-                      <Polygon
-                        points={`${previewGeometry.bevelOuterWidth},0 ${previewGeometry.bevelOuterWidth},${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelInset}`}
-                        fill={bevelPalette.right}
-                      />
-                      <Polygon
-                        points={`0,${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth},${previewGeometry.bevelOuterHeight} ${previewGeometry.bevelOuterWidth - previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset} ${previewGeometry.bevelInset},${previewGeometry.bevelOuterHeight - previewGeometry.bevelInset}`}
-                        fill={bevelPalette.bottom}
-                      />
-                    </Svg>
-
-                    <View
-                      style={{
-                        position: "absolute",
-                        left: previewGeometry.bevelInset,
-                        top: previewGeometry.bevelInset,
-                        width: previewGeometry.apertureWidth,
-                        height: previewGeometry.apertureHeight,
-                        backgroundColor: "#FFFFFF",
-                        overflow: "hidden",
-                        borderWidth: 1,
-                        borderColor: apertureEdgeColor,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      {renderArtworkContent()}
-                    </View>
-                    </Animated.View>
-                  </GestureDetector>
+                  {bevelOpeningContent}
                 </View>
               )}
             </View>

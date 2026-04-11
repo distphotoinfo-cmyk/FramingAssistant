@@ -25,7 +25,9 @@ type Props = NativeStackScreenProps<FramingRootStackParamList, "ArtworkCrop">;
 export default function ArtworkCropScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { colors, radii, spacing, typography } = useAppTheme();
-  const dismissedGuideTips = useAppSettingsStore((state) => state.dismissedGuideTips);
+  const shouldShowCropGuide = useAppSettingsStore(
+    (state) => state.hasHydrated && !Boolean(state.sessionDismissedGuideTips.crop)
+  );
   const dismissGuideTip = useAppSettingsStore((state) => state.dismissGuideTip);
   const draft = useFramingFlowStore((state) => state.draft);
   const setPreview = useFramingFlowStore((state) => state.setPreview);
@@ -180,7 +182,7 @@ export default function ArtworkCropScreen({ navigation, route }: Props) {
   const baseImageWidth = baseImageSize?.width ?? 0;
   const baseImageHeight = baseImageSize?.height ?? 0;
   const cropGuideReady =
-    !dismissedGuideTips.crop &&
+    shouldShowCropGuide &&
     !loadError &&
     Boolean(artworkAspectRatio && sourceSize && cropViewport && baseImageSize);
 

@@ -16,7 +16,35 @@ type GuideTipKey =
   | "weighting"
   | "review";
 
+type DismissedGuideTips = Partial<Record<GuideTipKey, boolean>>;
+
 const MAX_CUSTOM_COLOR_PRESETS = 5;
+
+function buildGuidanceSessionState({
+  alwaysShowGuidanceOnLaunch,
+  hasSeenSetupIntro,
+  hasSeenPreviewAdjustIntro,
+  dismissedGuideTips,
+}: {
+  alwaysShowGuidanceOnLaunch: boolean;
+  hasSeenSetupIntro: boolean;
+  hasSeenPreviewAdjustIntro: boolean;
+  dismissedGuideTips: DismissedGuideTips;
+}) {
+  if (alwaysShowGuidanceOnLaunch) {
+    return {
+      sessionHasSeenSetupIntro: false,
+      sessionHasSeenPreviewAdjustIntro: false,
+      sessionDismissedGuideTips: {} as DismissedGuideTips,
+    };
+  }
+
+  return {
+    sessionHasSeenSetupIntro: hasSeenSetupIntro,
+    sessionHasSeenPreviewAdjustIntro: hasSeenPreviewAdjustIntro,
+    sessionDismissedGuideTips: { ...dismissedGuideTips },
+  };
+}
 
 function savePresetValue(currentValues: string[], nextHex: string) {
   const normalized = normalizeHex(nextHex);
@@ -34,17 +62,40 @@ interface AppSettingsState {
   previewSnapIncrementInches: number;
   matColorPresets: string[];
   frameColorPresets: string[];
+  alwaysShowGuidanceOnLaunch: boolean;
   hasSeenSetupIntro: boolean;
-  dismissedGuideTips: Partial<Record<GuideTipKey, boolean>>;
+  hasSeenPreviewAdjustIntro: boolean;
+  dismissedGuideTips: DismissedGuideTips;
+  sessionHasSeenSetupIntro: boolean;
+  sessionHasSeenPreviewAdjustIntro: boolean;
+  sessionDismissedGuideTips: DismissedGuideTips;
+  hasHydrated: boolean;
   setColorMode: (colorMode: AppColorMode) => void;
   setUnit: (unit: MeasurementUnit) => void;
   setImperialPrecision: (imperialPrecision: FractionDenominator) => void;
   setPreviewSnapIncrementInches: (previewSnapIncrementInches: number | string) => void;
   saveMatColorPreset: (hex: string) => void;
   saveFrameColorPreset: (hex: string) => void;
+  setAlwaysShowGuidanceOnLaunch: (alwaysShowGuidanceOnLaunch: boolean) => void;
   markSetupIntroSeen: () => void;
+  markPreviewAdjustIntroSeen: () => void;
   dismissGuideTip: (key: GuideTipKey) => void;
+  completeHydration: () => void;
 }
+
+type PersistedAppSettingsState = Pick<
+  AppSettingsState,
+  | "colorMode"
+  | "unit"
+  | "imperialPrecision"
+  | "previewSnapIncrementInches"
+  | "matColorPresets"
+  | "frameColorPresets"
+  | "alwaysShowGuidanceOnLaunch"
+  | "hasSeenSetupIntro"
+  | "hasSeenPreviewAdjustIntro"
+  | "dismissedGuideTips"
+>;
 
 export const useAppSettingsStore = create<AppSettingsState>()(
   persist(
@@ -55,8 +106,14 @@ export const useAppSettingsStore = create<AppSettingsState>()(
       previewSnapIncrementInches: DEFAULT_PREVIEW_SNAP_INCREMENT_INCHES,
       matColorPresets: [],
       frameColorPresets: [],
+      alwaysShowGuidanceOnLaunch: false,
       hasSeenSetupIntro: false,
+      hasSeenPreviewAdjustIntro: false,
       dismissedGuideTips: {},
+      sessionHasSeenSetupIntro: false,
+      sessionHasSeenPreviewAdjustIntro: false,
+      sessionDismissedGuideTips: {},
+      hasHydrated: false,
       setColorMode: (colorMode) => set({ colorMode }),
       setUnit: (unit) => set({ unit }),
       setImperialPrecision: (imperialPrecision) => set({ imperialPrecision }),
@@ -72,22 +129,67 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         set((state) => ({
           frameColorPresets: savePresetValue(state.frameColorPresets, hex),
         })),
-      markSetupIntroSeen: () => set({ hasSeenSetupIntro: true }),
+      setAlwaysShowGuidanceOnLaunch: (alwaysShowGuidanceOnLaunch) =>
+        set((state) => ({
+          alwaysShowGuidanceOnLaunch,
+          ...buildGuidanceSessionState({
+            alwaysShowGuidanceOnLaunch,
+            hasSeenSetupIntro: state.hasSeenSetupIntro,
+            hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
+            dismissedGuideTips: state.dismissedGuideTips,
+          }),
+        })),
+      markSetupIntroSeen: () =>
+        set({
+          hasSeenSetupIntro: true,
+          sessionHasSeenSetupIntro: true,
+        }),
+      markPreviewAdjustIntroSeen: () =>
+        set({
+          hasSeenPreviewAdjustIntro: true,
+          sessionHasSeenPreviewAdjustIntro: true,
+        }),
       dismissGuideTip: (key) =>
         set((state) => ({
           dismissedGuideTips: {
             ...state.dismissedGuideTips,
             [key]: true,
           },
+          sessionDismissedGuideTips: {
+            ...state.sessionDismissedGuideTips,
+            [key]: true,
+          },
+        })),
+      completeHydration: () =>
+        set((state) => ({
+          hasHydrated: true,
+          ...buildGuidanceSessionState({
+            alwaysShowGuidanceOnLaunch: state.alwaysShowGuidanceOnLaunch,
+            hasSeenSetupIntro: state.hasSeenSetupIntro,
+            hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
+            dismissedGuideTips: state.dismissedGuideTips,
+          }),
         })),
     }),
     {
       name: "framing-app-settings",
       storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state): PersistedAppSettingsState => ({
+        colorMode: state.colorMode,
+        unit: state.unit,
+        imperialPrecision: state.imperialPrecision,
+        previewSnapIncrementInches: state.previewSnapIncrementInches,
+        matColorPresets: state.matColorPresets,
+        frameColorPresets: state.frameColorPresets,
+        alwaysShowGuidanceOnLaunch: state.alwaysShowGuidanceOnLaunch,
+        hasSeenSetupIntro: state.hasSeenSetupIntro,
+        hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
+        dismissedGuideTips: state.dismissedGuideTips,
+      }),
       merge: (persistedState, currentState) => {
         const typedState =
           (persistedState as
-            | (Partial<AppSettingsState> & {
+            | (Partial<PersistedAppSettingsState> & {
                 previewSnapDenominator?: FractionDenominator;
               })
             | undefined) ?? {};
@@ -101,6 +203,9 @@ export const useAppSettingsStore = create<AppSettingsState>()(
               (legacyPreviewSnapDenominator ? 1 / legacyPreviewSnapDenominator : undefined)
           ),
         };
+      },
+      onRehydrateStorage: () => (state) => {
+        state?.completeHydration();
       },
     }
   )

@@ -12,7 +12,9 @@ interface CompactGuideTipProps {
 
 export default function CompactGuideTip({ tipKey, title, body }: CompactGuideTipProps) {
   const { colors, radii, spacing } = useAppTheme();
-  const dismissed = useAppSettingsStore((state) => Boolean(state.dismissedGuideTips[tipKey]));
+  const dismissed = useAppSettingsStore(
+    (state) => !state.hasHydrated || Boolean(state.sessionDismissedGuideTips[tipKey])
+  );
   const dismissGuideTip = useAppSettingsStore((state) => state.dismissGuideTip);
 
   if (dismissed) {

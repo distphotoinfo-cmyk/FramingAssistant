@@ -1,23 +1,36 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActionSheetIOS, Alert, Platform, Pressable, Text, View } from "react-native";
+import {
+  ActionSheetIOS,
+  Alert,
+  InteractionManager,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import FlowStepLayout from "../components/FlowStepLayout";
+import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
+import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
+import { GuidanceProvider } from "../components/guidance/GuidanceProvider";
 import MatPreviewCanvas from "../components/preview/MatPreviewCanvas";
 import AppCard from "../components/ui/AppCard";
+import AppSegmentedControl from "../components/ui/AppSegmentedControl";
 import AppSheetModal from "../components/ui/AppSheetModal";
 import ColorPickerField from "../components/ui/ColorPickerField";
 import CompactOptionPicker from "../components/ui/CompactOptionPicker";
 import { useAppSettingsStore } from "../state/appSettingsStore";
-import { useFramingFlowStore } from "../state/framingFlowStore";
+import { createInitialPreviewDraft, useFramingFlowStore } from "../state/framingFlowStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
-import type { FrameFinishId, FrameProfileId } from "../types/framing";
+import type { FrameFamily, FrameFinishId, FrameProfileId, MatCoreColor } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import { getArtworkAspectRatio, isArtworkCropCompatible } from "../utils/artworkCrop";
 import {
-  FRAME_SELECTOR_OPTIONS,
   getDefaultFinishForProfile,
   getFinishOptionsForProfile,
   getFrameProfile,
@@ -36,6 +49,47 @@ const MAT_DEFAULT_COLORS = [
   "#C8CCC8",
   "#252525",
 ];
+const MOUNTING_BOARD_DEFAULT_COLORS = [
+  "#FFFFFF",
+  "#F4F0E8",
+  "#E7DED2",
+  "#C8CCC8",
+  "#252525",
+];
+const GUIDANCE_SCROLL_SETTLE_DELAY_MS = 240;
+const GUIDANCE_SCROLL_FALLBACK_DELAY_MS = 900;
+const GUIDANCE_SCROLL_MIN_DELTA = 12;
+
+type FrameStyleOptionId = "none" | FrameFamily;
+type FrameProfilePickerValue = FrameProfileId | "notApplicable";
+
+const MAT_CORE_OPTIONS: { label: string; value: MatCoreColor }[] = [
+  { label: "White", value: "white" },
+  { label: "Black", value: "black" },
+];
+
+const FRAME_STYLE_OPTIONS: { label: string; value: FrameStyleOptionId }[] = [
+  { label: "No frame", value: "none" },
+  { label: "Basic", value: "basic" },
+  { label: "Nielsen Florentine", value: "nielsenFlorentine" },
+  { label: "Nielsen Monochrome", value: "nielsenMonochrome" },
+];
+
+const FRAME_PROFILE_OPTIONS_BY_STYLE: Record<
+  Exclude<FrameStyleOptionId, "none">,
+  { label: string; value: FrameProfileId }[]
+> = {
+  basic: [
+    { label: "Basic Thin - 7/16 in", value: "basicThin" },
+    { label: "Basic Gallery - 3/4 in", value: "basicGallery" },
+  ],
+  nielsenFlorentine: [
+    { label: "Profile 93 - 7/16 in", value: "nielsenFlorentine93" },
+  ],
+  nielsenMonochrome: [
+    { label: "Profile 97 - 7/8 in", value: "nielsenMonochrome97" },
+  ],
+};
 
 async function loadImagePickerModule() {
   const nativeImagePicker = requireOptionalNativeModule("ExponentImagePicker");
@@ -125,32 +179,106 @@ function HeaderToolIconButton({
   );
 }
 
+function DetailSheetLauncher({
+  label,
+  summary,
+  onPress,
+}: {
+  label: string;
+  summary: string;
+  onPress: () => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        minHeight: 64,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        borderRadius: radii.md,
+        backgroundColor: colors.backgroundInput,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: spacing.md,
+      }}
+    >
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+          {label}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {summary}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
+function PanelControlRow({ children }: { children: React.ReactNode }) {
+  const { colors, radii, spacing } = useAppTheme();
+
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: colors.borderSubtle,
+        borderRadius: radii.md,
+        backgroundColor: colors.backgroundCard,
+        padding: spacing.md,
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+function getFrameStyleValue(
+  frameFamily: FrameFamily,
+  frameProfileId: FrameProfileId
+): FrameStyleOptionId {
+  if (frameProfileId === "basicNone") {
+    return "none";
+  }
+
+  return frameFamily;
+}
+
 export default function PreviewAdjustScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const previewSnapIncrementInches = useAppSettingsStore((state) => state.previewSnapIncrementInches);
+  const shouldShowPreviewAdjustGuidance = useAppSettingsStore(
+    (state) => state.hasHydrated && !state.sessionHasSeenPreviewAdjustIntro
+  );
   const matColorPresets = useAppSettingsStore((state) => state.matColorPresets);
   const saveMatColorPreset = useAppSettingsStore((state) => state.saveMatColorPreset);
+  const markPreviewAdjustIntroSeen = useAppSettingsStore((state) => state.markPreviewAdjustIntroSeen);
   const draft = useFramingFlowStore((state) => state.draft);
   const setPreview = useFramingFlowStore((state) => state.setPreview);
   const { colors, radii, spacing, typography } = useAppTheme();
   const [liveDragOffsets, setLiveDragOffsets] = useState<{ offsetX: number; offsetY: number } | null>(null);
   const [artworkSourceSheetVisible, setArtworkSourceSheetVisible] = useState(false);
+  const [mattingSheetVisible, setMattingSheetVisible] = useState(false);
+  const [framingSheetVisible, setFramingSheetVisible] = useState(false);
+  const [guidanceIndex, setGuidanceIndex] = useState(0);
+  const [isGuidanceAutoScrolling, setIsGuidanceAutoScrolling] = useState(false);
   const lastLiveOffsetsUpdateRef = useRef(0);
-  const preview = draft.preview ?? {
-    matThicknessPly: 4 as const,
-    frameFamily: "nielsenFlorentine" as const,
-    frameProfileId: "nielsenFlorentine93" as const,
-    frameFinishId: "florentineBlack" as const,
-    matColorHex: "#F4F0E8",
-    frameColorHex: "#050505",
-    offsetX: 0,
-    offsetY: 0,
-    artworkSourceMode: "placeholder" as const,
-    artworkImageUri: null,
-    artworkCrop: null,
-  };
+  const previewAdjustScrollRef = useRef<ScrollView | null>(null);
+  const lowerControlsAnchorYRef = useRef<number | null>(null);
+  const currentScrollOffsetYRef = useRef(0);
+  const pendingGuidanceResumeIndexRef = useRef<number | null>(null);
+  const guidanceScrollFallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const guidanceSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const guidanceAfterInteractionsRef =
+    useRef<ReturnType<typeof InteractionManager.runAfterInteractions> | null>(null);
+  const preview = draft.preview ?? createInitialPreviewDraft();
 
   const derived = buildDerivedGeometry(draft);
   const artworkAspectRatio = getArtworkAspectRatio(derived.artworkSize);
@@ -202,6 +330,145 @@ export default function PreviewAdjustScreen() {
     "florentineBlack") as FrameFinishId;
   const selectedFrameColorValue =
     preview.frameProfileId === "basicNone" ? "notApplicable" : selectedFrameFinishId;
+  const selectedFrameStyleValue = getFrameStyleValue(
+    preview.frameFamily,
+    preview.frameProfileId
+  );
+  const frameProfilePickerOptions = useMemo<
+    { label: string; value: FrameProfilePickerValue }[]
+  >(
+    () =>
+      selectedFrameStyleValue === "none"
+        ? [{ label: "Not applicable", value: "notApplicable" }]
+        : FRAME_PROFILE_OPTIONS_BY_STYLE[selectedFrameStyleValue],
+    [selectedFrameStyleValue]
+  );
+  const selectedFrameProfileValue: FrameProfilePickerValue =
+    selectedFrameStyleValue === "none" ? "notApplicable" : preview.frameProfileId;
+  const selectedFrameStyleLabel =
+    FRAME_STYLE_OPTIONS.find((option) => option.value === selectedFrameStyleValue)?.label ??
+    "No frame";
+  const selectedFrameProfileLabel =
+    frameProfilePickerOptions.find((option) => option.value === selectedFrameProfileValue)
+      ?.label ?? "Not applicable";
+  const selectedFrameFinishLabel =
+    frameColorPickerOptions.find((option) => option.value === selectedFrameColorValue)?.label ??
+    "Not applicable";
+  const mattingSummary = `${preview.matThicknessPly} ply, ${
+    preview.matCoreColor === "white" ? "white core" : "black core"
+  }`;
+  const framingSummary =
+    selectedFrameStyleValue === "none"
+      ? "No frame selected"
+      : `${selectedFrameStyleLabel}, ${selectedFrameProfileLabel}, ${selectedFrameFinishLabel}`;
+  const previewAdjustGuidanceVisible =
+    shouldShowPreviewAdjustGuidance && !isGuidanceAutoScrolling;
+  const previewAdjustGuidanceItems = useMemo<GuidanceItem[]>(
+    () => [
+      {
+        id: "preview-adjust-canvas-bubble",
+        targetId: "preview-adjust-canvas",
+        text: "Move the mat opening to adjust the borders around your artwork or add more weight to the bottom.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "preview-adjust-upload-bubble",
+        targetId: "preview-adjust-upload-artwork",
+        text: "Upload the artwork you want to display inside the mat.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "preview-adjust-tools-bubble",
+        targetId: "preview-adjust-artwork-tools",
+        text: "Re-center, adjust, and crop your artwork to refine the composition.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "preview-adjust-options-bubble",
+        targetId: "preview-adjust-options-card",
+        text: "Adjust your mat thickness and color, then choose your frame style and finish.",
+        preferredPlacement: "top",
+      },
+      {
+        id: "preview-adjust-live-margins-bubble",
+        targetId: "preview-adjust-live-margins-card",
+        text: "These are the final mat margins to cut for your print.",
+        preferredPlacement: "top",
+      },
+    ],
+    []
+  );
+
+  const clearGuidanceScrollWait = useCallback(() => {
+    if (guidanceScrollFallbackTimeoutRef.current) {
+      clearTimeout(guidanceScrollFallbackTimeoutRef.current);
+      guidanceScrollFallbackTimeoutRef.current = null;
+    }
+
+    if (guidanceSettleTimeoutRef.current) {
+      clearTimeout(guidanceSettleTimeoutRef.current);
+      guidanceSettleTimeoutRef.current = null;
+    }
+
+    guidanceAfterInteractionsRef.current?.cancel();
+    guidanceAfterInteractionsRef.current = null;
+  }, []);
+
+  const finishGuidanceAutoScroll = useCallback(() => {
+    const nextIndex = pendingGuidanceResumeIndexRef.current;
+
+    if (nextIndex === null) {
+      return;
+    }
+
+    clearGuidanceScrollWait();
+    guidanceAfterInteractionsRef.current = InteractionManager.runAfterInteractions(() => {
+      guidanceSettleTimeoutRef.current = setTimeout(() => {
+        pendingGuidanceResumeIndexRef.current = null;
+        setGuidanceIndex(nextIndex);
+        setIsGuidanceAutoScrolling(false);
+      }, GUIDANCE_SCROLL_SETTLE_DELAY_MS);
+    });
+  }, [clearGuidanceScrollWait]);
+
+  const beginGuidanceAutoScroll = useCallback(
+    (nextIndex: number) => {
+      pendingGuidanceResumeIndexRef.current = nextIndex;
+      setIsGuidanceAutoScrolling(true);
+      clearGuidanceScrollWait();
+
+      const scrollTargetY = lowerControlsAnchorYRef.current;
+      const targetOffsetY = Math.max(0, (scrollTargetY ?? 0) - spacing.md);
+      const scrollView = previewAdjustScrollRef.current;
+
+      if (!scrollView) {
+        finishGuidanceAutoScroll();
+        return;
+      }
+
+      if (
+        scrollTargetY !== null &&
+        Math.abs(targetOffsetY - currentScrollOffsetYRef.current) <= GUIDANCE_SCROLL_MIN_DELTA
+      ) {
+        finishGuidanceAutoScroll();
+        return;
+      }
+
+      guidanceScrollFallbackTimeoutRef.current = setTimeout(() => {
+        finishGuidanceAutoScroll();
+      }, GUIDANCE_SCROLL_FALLBACK_DELAY_MS);
+
+      requestAnimationFrame(() => {
+        if (scrollTargetY === null) {
+          scrollView.scrollToEnd({ animated: true });
+          return;
+        }
+
+        scrollView.scrollTo({ y: targetOffsetY, animated: true });
+      });
+    },
+    [clearGuidanceScrollWait, finishGuidanceAutoScroll, spacing.md]
+  );
 
   useEffect(() => {
     if (
@@ -415,6 +682,32 @@ export default function PreviewAdjustScreen() {
     [preview.frameColorHex, setPreview]
   );
 
+  const handleFrameStyleChange = useCallback(
+    (frameStyle: FrameStyleOptionId) => {
+      if (frameStyle === "none") {
+        setPreview({
+          frameFamily: "basic",
+          frameProfileId: "basicNone",
+          frameFinishId: null,
+          frameColorHex: resolveFrameColorHex("basicNone", null, preview.frameColorHex),
+        });
+        return;
+      }
+
+      const nextProfileId =
+        frameStyle === "basic"
+          ? preview.frameFamily === "basic" && preview.frameProfileId !== "basicNone"
+            ? preview.frameProfileId
+            : "basicThin"
+          : frameStyle === "nielsenFlorentine"
+            ? "nielsenFlorentine93"
+            : "nielsenMonochrome97";
+
+      handleFramePresetChange(nextProfileId);
+    },
+    [handleFramePresetChange, preview.frameColorHex, preview.frameFamily, preview.frameProfileId, setPreview]
+  );
+
   const handleFrameFinishChange = useCallback(
     (frameFinishId: FrameFinishId) => {
       setPreview({
@@ -425,219 +718,371 @@ export default function PreviewAdjustScreen() {
     [preview.frameColorHex, preview.frameProfileId, setPreview]
   );
 
+  const handleAdvanceGuidance = useCallback(() => {
+    if (guidanceIndex === 0) {
+      beginGuidanceAutoScroll(1);
+      return;
+    }
+
+    setGuidanceIndex((current) => Math.min(current + 1, previewAdjustGuidanceItems.length - 1));
+  }, [beginGuidanceAutoScroll, guidanceIndex, previewAdjustGuidanceItems.length]);
+
+  const handleCloseGuidance = useCallback(() => {
+    pendingGuidanceResumeIndexRef.current = null;
+    clearGuidanceScrollWait();
+    setIsGuidanceAutoScrolling(false);
+    markPreviewAdjustIntroSeen();
+  }, [clearGuidanceScrollWait, markPreviewAdjustIntroSeen]);
+
+  const handlePreviewAdjustScroll = useCallback<NonNullable<React.ComponentProps<typeof FlowStepLayout>["onScroll"]>>(
+    (event) => {
+      currentScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+    },
+    []
+  );
+
+  const handlePreviewAdjustMomentumScrollEnd = useCallback<
+    NonNullable<React.ComponentProps<typeof FlowStepLayout>["onMomentumScrollEnd"]>
+  >(
+    (event) => {
+      currentScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+
+      if (pendingGuidanceResumeIndexRef.current !== null) {
+        finishGuidanceAutoScroll();
+      }
+    },
+    [finishGuidanceAutoScroll]
+  );
+
+  const handleLowerControlsAnchorLayout = useCallback((event: LayoutChangeEvent) => {
+    lowerControlsAnchorYRef.current = event.nativeEvent.layout.y;
+  }, []);
+
+  useEffect(() => {
+    if (shouldShowPreviewAdjustGuidance) {
+      pendingGuidanceResumeIndexRef.current = null;
+      clearGuidanceScrollWait();
+      setGuidanceIndex(0);
+      setIsGuidanceAutoScrolling(false);
+    }
+  }, [clearGuidanceScrollWait, shouldShowPreviewAdjustGuidance]);
+
+  useEffect(() => () => {
+    pendingGuidanceResumeIndexRef.current = null;
+    clearGuidanceScrollWait();
+  }, [clearGuidanceScrollWait]);
+
   return (
-    <FlowStepLayout
-      route="PreviewAdjust"
-      title="Preview and Adjust"
-      nextLabel="View Final Specs"
-      footerVariant="compactBackArrow"
-    >
-      <MatPreviewCanvas
-        artworkSize={derived.artworkSize}
-        openingSize={derived.openingSize}
-        outerMatSize={derived.outerMatSize}
-        frameProfileId={preview.frameProfileId}
-        frameColorHex={resolvedFrameColorHex}
-        matThicknessPly={preview.matThicknessPly}
-        matColorHex={preview.matColorHex}
-        offsetX={preview.offsetX}
-        offsetY={preview.offsetY}
-        snapIncrement={snapIncrement}
-        artworkSourceMode={preview.artworkSourceMode}
-        artworkImageUri={preview.artworkImageUri}
-        artworkCrop={preview.artworkCrop}
-        onAdjustOffsets={handleCommittedOffsets}
-        onLiveOffsetsChange={handleLiveOffsetsChange}
-      />
-
-      {!derived.isValidGeometry ? (
-        <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
-          Outer mat size needs to be larger than the opening size before the preview can be trusted.
-        </Text>
-      ) : null}
-
-      <AppCard
-        title="Artwork"
-        headerAccessory={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <HeaderToolIconButton
-              icon="swap-horizontal"
-              accessibilityLabel="Re-center horizontally"
-              onPress={() => setPreview({ offsetX: 0 })}
-            />
-            <HeaderToolIconButton
-              icon="swap-vertical"
-              accessibilityLabel="Re-center vertically"
-              onPress={() => setPreview({ offsetY: 0 })}
-            />
-            <HeaderToolIconButton
-              icon="locate-outline"
-              accessibilityLabel="Re-center all"
-              onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
-            />
-            {usingImportedArtwork ? (
-              <HeaderToolIconButton
-                icon="crop-outline"
-                accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
-                onPress={handleEditCrop}
-                color={cropNeedsReview ? colors.warning : colors.textSecondary}
-              />
-            ) : null}
-          </View>
-        }
+    <GuidanceProvider>
+      <FlowStepLayout
+        route="PreviewAdjust"
+        title="Preview and Adjust"
+        nextLabel="View Final Specs"
+        footerVariant="compactBackArrow"
+        scrollViewRef={previewAdjustScrollRef}
+        onScroll={handlePreviewAdjustScroll}
+        onMomentumScrollEnd={handlePreviewAdjustMomentumScrollEnd}
+        scrollEventThrottle={16}
       >
-        <Pressable
-          onPress={openArtworkSourceChooser}
-          style={{
-            minHeight: 42,
-            borderWidth: 1,
-            borderColor: colors.borderStrong,
-            borderRadius: radii.md,
-            backgroundColor: colors.backgroundInput,
-            paddingHorizontal: spacing.md,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Ionicons name="image-outline" size={16} color={colors.textPrimary} />
-            <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-              Upload Artwork
-            </Text>
-          </View>
-          <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
-        </Pressable>
+        <GuidanceAnchor id="preview-adjust-canvas">
+          <MatPreviewCanvas
+            artworkSize={derived.artworkSize}
+            openingSize={derived.openingSize}
+            outerMatSize={derived.outerMatSize}
+            frameProfileId={preview.frameProfileId}
+            frameColorHex={resolvedFrameColorHex}
+            matThicknessPly={preview.matThicknessPly}
+            matColorHex={preview.matColorHex}
+            matCoreColor={preview.matCoreColor}
+            mountingBoardColorHex={preview.mountingBoardColorHex}
+            offsetX={preview.offsetX}
+            offsetY={preview.offsetY}
+            snapIncrement={snapIncrement}
+            artworkSourceMode={preview.artworkSourceMode}
+            artworkImageUri={preview.artworkImageUri}
+            artworkCrop={preview.artworkCrop}
+            onAdjustOffsets={handleCommittedOffsets}
+            onLiveOffsetsChange={handleLiveOffsetsChange}
+          />
+        </GuidanceAnchor>
 
-        <AppSheetModal
-          visible={artworkSourceSheetVisible}
-          title="Upload artwork"
-          onClose={() => setArtworkSourceSheetVisible(false)}
-        >
-          <Pressable
-            onPress={() => {
-              setArtworkSourceSheetVisible(false);
-              setTimeout(() => {
-                void handlePickFromLibrary();
-              }, 220);
-            }}
-            style={{
-              minHeight: 46,
-              borderWidth: 1,
-              borderColor: colors.borderStrong,
-              borderRadius: radii.md,
-              backgroundColor: colors.backgroundInput,
-              paddingHorizontal: spacing.md,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-              <Ionicons name="images-outline" size={18} color={colors.textPrimary} />
-              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-                Photo Library
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-          </Pressable>
+        {!derived.isValidGeometry ? (
+          <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
+            Outer mat size needs to be larger than the opening size before the preview can be trusted.
+          </Text>
+        ) : null}
 
-          <Pressable
-            onPress={() => {
-              setArtworkSourceSheetVisible(false);
-              setTimeout(() => {
-                void handleTakePhoto();
-              }, 220);
-            }}
-            style={{
-              minHeight: 46,
-              borderWidth: 1,
-              borderColor: colors.borderStrong,
-              borderRadius: radii.md,
-              backgroundColor: colors.backgroundInput,
-              paddingHorizontal: spacing.md,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-              <Ionicons name="camera-outline" size={18} color={colors.textPrimary} />
-              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-                Take Photo
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-          </Pressable>
-        </AppSheetModal>
-      </AppCard>
-
-      <AppCard title="Preview options">
-        <View style={{ flexDirection: "row", gap: spacing.md }}>
-          <CompactOptionPicker
-            label="Mat thickness"
-            title="Mat thickness"
-            value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
-            onChange={(value) =>
-              setPreview({
-                matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
-              })
+        <View onLayout={handleLowerControlsAnchorLayout}>
+          <AppCard
+            title="Artwork"
+            headerAccessory={
+              <GuidanceAnchor id="preview-adjust-artwork-tools">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <HeaderToolIconButton
+                    icon="swap-horizontal"
+                    accessibilityLabel="Re-center horizontally"
+                    onPress={() => setPreview({ offsetX: 0 })}
+                  />
+                  <HeaderToolIconButton
+                    icon="swap-vertical"
+                    accessibilityLabel="Re-center vertically"
+                    onPress={() => setPreview({ offsetY: 0 })}
+                  />
+                  <HeaderToolIconButton
+                    icon="locate-outline"
+                    accessibilityLabel="Re-center all"
+                    onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
+                  />
+                  {usingImportedArtwork ? (
+                    <HeaderToolIconButton
+                      icon="crop-outline"
+                      accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
+                      onPress={handleEditCrop}
+                      color={cropNeedsReview ? colors.warning : colors.textSecondary}
+                    />
+                  ) : null}
+                </View>
+              </GuidanceAnchor>
             }
-            options={[
-              { label: "2 ply", value: "2" },
-              { label: "4 ply", value: "4" },
-              { label: "6 ply", value: "6" },
-              { label: "8 ply", value: "8" },
-            ]}
-          />
+          >
+            <GuidanceAnchor id="preview-adjust-upload-artwork">
+              <Pressable
+                onPress={openArtworkSourceChooser}
+                style={{
+                  minHeight: 42,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.md,
+                  backgroundColor: colors.backgroundInput,
+                  paddingHorizontal: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="image-outline" size={16} color={colors.textPrimary} />
+                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+                    Upload Artwork
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
+              </Pressable>
+            </GuidanceAnchor>
 
-          <CompactOptionPicker
-            label="Frame"
-            title="Frame"
-            value={preview.frameProfileId}
-            onChange={handleFramePresetChange}
-            options={FRAME_SELECTOR_OPTIONS}
-          />
+            <AppSheetModal
+              visible={artworkSourceSheetVisible}
+              title="Upload artwork"
+              onClose={() => setArtworkSourceSheetVisible(false)}
+            >
+              <Pressable
+                onPress={() => {
+                  setArtworkSourceSheetVisible(false);
+                  setTimeout(() => {
+                    void handlePickFromLibrary();
+                  }, 220);
+                }}
+                style={{
+                  minHeight: 46,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.md,
+                  backgroundColor: colors.backgroundInput,
+                  paddingHorizontal: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="images-outline" size={18} color={colors.textPrimary} />
+                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+                    Photo Library
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setArtworkSourceSheetVisible(false);
+                  setTimeout(() => {
+                    void handleTakePhoto();
+                  }, 220);
+                }}
+                style={{
+                  minHeight: 46,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.md,
+                  backgroundColor: colors.backgroundInput,
+                  paddingHorizontal: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Ionicons name="camera-outline" size={18} color={colors.textPrimary} />
+                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+                    Take Photo
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </Pressable>
+            </AppSheetModal>
+          </AppCard>
         </View>
 
-        <View style={{ flexDirection: "row", gap: spacing.md }}>
-          <ColorPickerField
-            label="Mat color"
-            title="Mat color"
-            value={preview.matColorHex}
-            defaultColors={MAT_DEFAULT_COLORS}
-            customPresets={matColorPresets}
-            onChange={(matColorHex) => setPreview({ matColorHex })}
-            onSavePreset={saveMatColorPreset}
+        <GuidanceAnchor id="preview-adjust-options-card">
+          <AppCard title="Matting & Framing">
+            <DetailSheetLauncher
+              label="Matting"
+              summary={mattingSummary}
+              onPress={() => setMattingSheetVisible(true)}
+            />
+
+            <DetailSheetLauncher
+              label="Framing"
+              summary={framingSummary}
+              onPress={() => setFramingSheetVisible(true)}
+            />
+          </AppCard>
+        </GuidanceAnchor>
+
+        <AppSheetModal
+          visible={mattingSheetVisible}
+          title="Matting"
+          onClose={() => setMattingSheetVisible(false)}
+        >
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            style={{ maxHeight: 460 }}
+            contentContainerStyle={{ gap: spacing.md }}
+          >
+            <PanelControlRow>
+              <ColorPickerField
+                label="Mat color"
+                title="Mat color"
+                value={preview.matColorHex}
+                defaultColors={MAT_DEFAULT_COLORS}
+                customPresets={matColorPresets}
+                onChange={(matColorHex) => setPreview({ matColorHex })}
+                onSavePreset={saveMatColorPreset}
+              />
+            </PanelControlRow>
+
+            <PanelControlRow>
+              <AppSegmentedControl
+                label="Mat core"
+                options={MAT_CORE_OPTIONS}
+                value={preview.matCoreColor}
+                onChange={(matCoreColor) => setPreview({ matCoreColor })}
+              />
+            </PanelControlRow>
+
+            <PanelControlRow>
+              <ColorPickerField
+                label="Mount board color"
+                title="Mount board color"
+                value={preview.mountingBoardColorHex}
+                defaultColors={MOUNTING_BOARD_DEFAULT_COLORS}
+                customPresets={matColorPresets}
+                onChange={(mountingBoardColorHex) => setPreview({ mountingBoardColorHex })}
+                onSavePreset={saveMatColorPreset}
+              />
+            </PanelControlRow>
+
+            <PanelControlRow>
+              <CompactOptionPicker
+                label="Mat thickness"
+                title="Mat thickness"
+                value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
+                onChange={(value) =>
+                  setPreview({
+                    matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
+                  })
+                }
+                options={[
+                  { label: "2 ply", value: "2" },
+                  { label: "4 ply", value: "4" },
+                  { label: "6 ply", value: "6" },
+                  { label: "8 ply", value: "8" },
+                ]}
+              />
+            </PanelControlRow>
+          </ScrollView>
+        </AppSheetModal>
+
+        <AppSheetModal
+          visible={framingSheetVisible}
+          title="Framing"
+          onClose={() => setFramingSheetVisible(false)}
+        >
+          <CompactOptionPicker
+            label="Frame style"
+            title="Frame style"
+            value={selectedFrameStyleValue}
+            onChange={handleFrameStyleChange}
+            options={FRAME_STYLE_OPTIONS}
           />
 
           <CompactOptionPicker
-            label="Frame color"
-            title="Frame color"
+            label="Frame profile / width"
+            title="Frame profile / width"
+            value={selectedFrameProfileValue}
+            onChange={(value) => {
+              if (value === "notApplicable") {
+                return;
+              }
+
+              handleFramePresetChange(value);
+            }}
+            options={frameProfilePickerOptions}
+            disabled={selectedFrameStyleValue === "none"}
+          />
+
+          <CompactOptionPicker
+            label="Frame finish"
+            title="Frame finish"
             value={selectedFrameColorValue}
             onChange={(value) => {
-              if (preview.frameProfileId === "basicNone") {
+              if (value === "notApplicable") {
                 return;
               }
 
               handleFrameFinishChange(value as FrameFinishId);
             }}
             options={frameColorPickerOptions}
-            disabled={preview.frameProfileId === "basicNone"}
+            disabled={selectedFrameStyleValue === "none"}
           />
-        </View>
-      </AppCard>
+        </AppSheetModal>
 
-      <AppCard title="Live margins">
-        <View style={{ flexDirection: "row", gap: 12 }}>
-          <DimensionChip label="Top" value={marginValue(liveMargins?.top)} />
-          <DimensionChip label="Right" value={marginValue(liveMargins?.right)} />
-        </View>
-        <View style={{ flexDirection: "row", gap: 12 }}>
-          <DimensionChip label="Bottom" value={marginValue(liveMargins?.bottom)} />
-          <DimensionChip label="Left" value={marginValue(liveMargins?.left)} />
-        </View>
-      </AppCard>
-    </FlowStepLayout>
+        <GuidanceAnchor id="preview-adjust-live-margins-card">
+          <AppCard title="Live margins">
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <DimensionChip label="Top" value={marginValue(liveMargins?.top)} />
+              <DimensionChip label="Right" value={marginValue(liveMargins?.right)} />
+            </View>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <DimensionChip label="Bottom" value={marginValue(liveMargins?.bottom)} />
+              <DimensionChip label="Left" value={marginValue(liveMargins?.left)} />
+            </View>
+          </AppCard>
+        </GuidanceAnchor>
+      </FlowStepLayout>
+
+      <GuidanceOverlay
+        visible={previewAdjustGuidanceVisible}
+        items={previewAdjustGuidanceItems}
+        currentIndex={guidanceIndex}
+        onNext={handleAdvanceGuidance}
+        onClose={handleCloseGuidance}
+        accentColor={colors.accent}
+        actionLabel="Got it"
+        showCloseButton={false}
+        dismissOnBackdropPress={false}
+      />
+    </GuidanceProvider>
   );
 }

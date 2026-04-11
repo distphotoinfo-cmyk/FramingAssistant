@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, type ScrollViewProps } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,6 +25,10 @@ interface FlowStepLayoutProps {
   footerVariant?: "default" | "compactBackArrow";
   scrollEnabled?: boolean;
   disableScrollViewPanResponder?: boolean;
+  scrollViewRef?: React.Ref<ScrollView>;
+  onScroll?: ScrollViewProps["onScroll"];
+  onMomentumScrollEnd?: ScrollViewProps["onMomentumScrollEnd"];
+  scrollEventThrottle?: number;
   shellBubble?: {
     visible: boolean;
     title: string;
@@ -44,6 +48,10 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
     footerVariant = "default",
     scrollEnabled = true,
     disableScrollViewPanResponder = false,
+    scrollViewRef,
+    onScroll,
+    onMomentumScrollEnd,
+    scrollEventThrottle,
     shellBubble,
   } = props;
   const insets = useSafeAreaInsets();
@@ -68,6 +76,7 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
       />
 
       <ScrollView
+        ref={scrollViewRef}
         style={{ flex: 1 }}
         contentContainerStyle={{
           paddingHorizontal: spacing.lg,
@@ -76,6 +85,9 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
         }}
         scrollEnabled={scrollEnabled}
         disableScrollViewPanResponder={disableScrollViewPanResponder}
+        onScroll={onScroll}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        scrollEventThrottle={scrollEventThrottle}
       >
         <View style={{ width: "100%", maxWidth: layout.contentMaxWidth, alignSelf: "center" }}>
           <StepProgress

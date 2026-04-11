@@ -4,6 +4,7 @@ export type MountStyle = "window" | "float" | "hinged";
 export type OpeningEdgeMode = "overlap" | "border";
 export type FractionDenominator = 8 | 16 | 32;
 export type MatThicknessPly = 2 | 4 | 6 | 8;
+export type MatCoreColor = "white" | "black";
 export type FrameFamily = "basic" | "nielsenFlorentine" | "nielsenMonochrome";
 export type FrameProfileId =
   | "basicNone"
@@ -71,6 +72,8 @@ export interface OuterMatSetupDraft {
 
 export interface PreviewDraft {
   matThicknessPly: MatThicknessPly;
+  matCoreColor: MatCoreColor;
+  mountingBoardColorHex: string;
   frameFamily: FrameFamily;
   frameProfileId: FrameProfileId;
   frameFinishId: FrameFinishId | null;

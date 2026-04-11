@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -57,6 +57,55 @@ function OptionButton({
   );
 }
 
+function ToggleRow({
+  label,
+  subtitle,
+  value,
+  onValueChange,
+}: {
+  label: string;
+  subtitle: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  const { colors, spacing, typography } = useAppTheme();
+
+  return (
+    <View
+      style={{
+        minHeight: 56,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: spacing.md,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={{ ...typography.sectionTitle, color: colors.textPrimary, marginBottom: 4 }}>
+          {label}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {subtitle}
+        </Text>
+      </View>
+
+      <Switch
+        value={value}
+        onValueChange={(nextValue) => {
+          void Haptics.selectionAsync();
+          onValueChange(nextValue);
+        }}
+        trackColor={{
+          false: colors.borderStrong,
+          true: colors.accent,
+        }}
+        thumbColor={colors.white}
+        ios_backgroundColor={colors.borderStrong}
+      />
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
@@ -65,10 +114,14 @@ export default function SettingsScreen() {
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const previewSnapIncrementInches = useAppSettingsStore((state) => state.previewSnapIncrementInches);
+  const alwaysShowGuidanceOnLaunch = useAppSettingsStore((state) => state.alwaysShowGuidanceOnLaunch);
   const setColorMode = useAppSettingsStore((state) => state.setColorMode);
   const setUnit = useAppSettingsStore((state) => state.setUnit);
   const setImperialPrecision = useAppSettingsStore((state) => state.setImperialPrecision);
   const setPreviewSnapIncrementInches = useAppSettingsStore((state) => state.setPreviewSnapIncrementInches);
+  const setAlwaysShowGuidanceOnLaunch = useAppSettingsStore(
+    (state) => state.setAlwaysShowGuidanceOnLaunch
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -195,6 +248,35 @@ export default function SettingsScreen() {
             The folder button in the header stays available throughout the flow so saved work can live outside the setup steps, similar to Darkroom Assistant&apos;s persistent shell actions.
           </Text>
         </AppCard>
+
+        {__DEV__ ? (
+          <View style={{ marginTop: 24 }}>
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: "600",
+                color: colors.textSecondary,
+                marginBottom: 10,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}
+            >
+              Developer Settings
+            </Text>
+
+            <AppCard
+              title="Guidance"
+              subtitle="Developer-only controls for replaying onboarding tips, cards, and bubbles."
+            >
+              <ToggleRow
+                label="Always show guidance on launch"
+                subtitle="Ignore persisted seen guidance on each fresh app launch so onboarding can be tested repeatedly."
+                value={alwaysShowGuidanceOnLaunch}
+                onValueChange={setAlwaysShowGuidanceOnLaunch}
+              />
+            </AppCard>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
