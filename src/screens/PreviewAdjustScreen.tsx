@@ -7,13 +7,13 @@ import {
   Pressable,
   ScrollView,
   Text,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { requireOptionalNativeModule } from "expo-modules-core";
 import FlowStepLayout from "../components/FlowStepLayout";
 import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
 import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
@@ -30,6 +30,7 @@ import { useAppTheme } from "../theme/AppThemeProvider";
 import type { FrameFamily, FrameFinishId, FrameProfileId, MatCoreColor } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import { getArtworkAspectRatio, isArtworkCropCompatible } from "../utils/artworkCrop";
+import { importArtworkFromCamera, importArtworkFromLibrary } from "../utils/artworkImport";
 import {
   getDefaultFinishForProfile,
   getFinishOptionsForProfile,
@@ -43,6 +44,7 @@ import {
 } from "../utils/formatters";
 
 const MAT_DEFAULT_COLORS = [
+  "#FFFFFF",
   "#F4F0E8",
   "#E7DED2",
   "#D8CCBE",
@@ -59,6 +61,9 @@ const MOUNTING_BOARD_DEFAULT_COLORS = [
 const GUIDANCE_SCROLL_SETTLE_DELAY_MS = 240;
 const GUIDANCE_SCROLL_FALLBACK_DELAY_MS = 900;
 const GUIDANCE_SCROLL_MIN_DELTA = 12;
+const TABLET_WIDTH_BREAKPOINT = 768;
+const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
+const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 
 type FrameStyleOptionId = "none" | FrameFamily;
 type FrameProfilePickerValue = FrameProfileId | "notApplicable";
@@ -87,31 +92,9 @@ const FRAME_PROFILE_OPTIONS_BY_STYLE: Record<
     { label: "Profile 93 - 7/16 in", value: "nielsenFlorentine93" },
   ],
   nielsenMonochrome: [
-    { label: "Profile 97 - 7/8 in", value: "nielsenMonochrome97" },
+  { label: "Profile 97 - 7/8 in", value: "nielsenMonochrome97" },
   ],
 };
-
-async function loadImagePickerModule() {
-  const nativeImagePicker = requireOptionalNativeModule("ExponentImagePicker");
-
-  if (!nativeImagePicker) {
-    Alert.alert(
-      "Rebuild required",
-      "Image import was added as a native module. Rebuild and reinstall Framing Assistant before using the photo library or camera."
-    );
-    return null;
-  }
-
-  try {
-    return await import("expo-image-picker");
-  } catch {
-    Alert.alert(
-      "Rebuild required",
-      "Image import was added as a native module. Rebuild and reinstall Framing Assistant before using the photo library or camera."
-    );
-    return null;
-  }
-}
 
 function DimensionChip({
   label,
@@ -226,6 +209,7 @@ function PanelControlRow({ children }: { children: React.ReactNode }) {
   return (
     <View
       style={{
+        width: "100%",
         borderWidth: 1,
         borderColor: colors.borderSubtle,
         borderRadius: radii.md,
@@ -235,6 +219,23 @@ function PanelControlRow({ children }: { children: React.ReactNode }) {
     >
       {children}
     </View>
+  );
+}
+
+function SheetFormContent({ children }: { children: React.ReactNode }) {
+  const { spacing } = useAppTheme();
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      style={{ maxHeight: 520 }}
+      contentContainerStyle={{
+        gap: spacing.md,
+        paddingBottom: spacing.xs,
+      }}
+    >
+      {children}
+    </ScrollView>
   );
 }
 
@@ -250,6 +251,7 @@ function getFrameStyleValue(
 }
 
 export default function PreviewAdjustScreen() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
@@ -279,6 +281,9 @@ export default function PreviewAdjustScreen() {
   const guidanceAfterInteractionsRef =
     useRef<ReturnType<typeof InteractionManager.runAfterInteractions> | null>(null);
   const preview = draft.preview ?? createInitialPreviewDraft();
+  const isTabletLandscape =
+    Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
+  const landscapePreviewHeight = Math.min(Math.max(windowHeight - 280, 460), 620);
 
   const derived = buildDerivedGeometry(draft);
   const artworkAspectRatio = getArtworkAspectRatio(derived.artworkSize);
@@ -533,88 +538,15 @@ export default function PreviewAdjustScreen() {
   );
 
   const handlePickFromLibrary = useCallback(async () => {
-    try {
-      const ImagePicker = await loadImagePickerModule();
-
-      if (!ImagePicker) {
-        return;
-      }
-
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (!permission.granted) {
-        Alert.alert(
-          "Photo access needed",
-          "Allow photo library access to place an artwork image into the preview."
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: false,
-        quality: 1,
-      });
-
-      if (result.canceled || !result.assets[0]?.uri) {
-        return;
-      }
-
-      openCropEditor(
-        result.assets[0].uri,
-        result.assets[0].width ?? null,
-        result.assets[0].height ?? null,
-        "import"
-      );
-    } catch {
-      Alert.alert(
-        "Unable to open photo library",
-        "Framing Assistant couldn't open the photo library. Please try again."
-      );
-    }
+    await importArtworkFromLibrary(({ imageUri, imageWidth, imageHeight }) => {
+      openCropEditor(imageUri, imageWidth, imageHeight, "import");
+    });
   }, [openCropEditor]);
 
   const handleTakePhoto = useCallback(async () => {
-    try {
-      const ImagePicker = await loadImagePickerModule();
-
-      if (!ImagePicker) {
-        return;
-      }
-
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-
-      if (!permission.granted) {
-        Alert.alert(
-          "Camera access needed",
-          "Allow camera access to capture an artwork image for the preview."
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        allowsEditing: false,
-        quality: 1,
-        cameraType: ImagePicker.CameraType.back,
-      });
-
-      if (result.canceled || !result.assets[0]?.uri) {
-        return;
-      }
-
-      openCropEditor(
-        result.assets[0].uri,
-        result.assets[0].width ?? null,
-        result.assets[0].height ?? null,
-        "import"
-      );
-    } catch {
-      Alert.alert(
-        "Unable to open camera",
-        "Framing Assistant couldn't open the camera. Please try again."
-      );
-    }
+    await importArtworkFromCamera(({ imageUri, imageWidth, imageHeight }) => {
+      openCropEditor(imageUri, imageWidth, imageHeight, "import");
+    });
   }, [openCropEditor]);
 
   const handleEditCrop = useCallback(() => {
@@ -772,6 +704,131 @@ export default function PreviewAdjustScreen() {
     clearGuidanceScrollWait();
   }, [clearGuidanceScrollWait]);
 
+  const previewCanvasSection = (
+    <GuidanceAnchor id="preview-adjust-canvas">
+      <MatPreviewCanvas
+        artworkSize={derived.artworkSize}
+        openingSize={derived.openingSize}
+        outerMatSize={derived.outerMatSize}
+        frameProfileId={preview.frameProfileId}
+        frameColorHex={resolvedFrameColorHex}
+        matThicknessPly={preview.matThicknessPly}
+        matColorHex={preview.matColorHex}
+        matCoreColor={preview.matCoreColor}
+        mountingBoardColorHex={preview.mountingBoardColorHex}
+        offsetX={preview.offsetX}
+        offsetY={preview.offsetY}
+        snapIncrement={snapIncrement}
+        artworkSourceMode={preview.artworkSourceMode}
+        artworkImageUri={preview.artworkImageUri}
+        artworkCrop={preview.artworkCrop}
+        onAdjustOffsets={handleCommittedOffsets}
+        onLiveOffsetsChange={handleLiveOffsetsChange}
+        canvasHeight={isTabletLandscape ? landscapePreviewHeight : undefined}
+        layoutVariant={isTabletLandscape ? "workspace" : "default"}
+      />
+    </GuidanceAnchor>
+  );
+
+  const previewWarningSection = !derived.isValidGeometry ? (
+    <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
+      Outer mat size needs to be larger than the opening size before the preview can be trusted.
+    </Text>
+  ) : null;
+
+  const artworkCardSection = (
+    <AppCard
+      title="Artwork"
+      headerAccessory={
+        <GuidanceAnchor id="preview-adjust-artwork-tools">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <HeaderToolIconButton
+              icon="swap-horizontal"
+              accessibilityLabel="Re-center horizontally"
+              onPress={() => setPreview({ offsetX: 0 })}
+            />
+            <HeaderToolIconButton
+              icon="swap-vertical"
+              accessibilityLabel="Re-center vertically"
+              onPress={() => setPreview({ offsetY: 0 })}
+            />
+            <HeaderToolIconButton
+              icon="locate-outline"
+              accessibilityLabel="Re-center all"
+              onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
+            />
+            {usingImportedArtwork ? (
+              <HeaderToolIconButton
+                icon="crop-outline"
+                accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
+                onPress={handleEditCrop}
+                color={cropNeedsReview ? colors.warning : colors.textSecondary}
+              />
+            ) : null}
+          </View>
+        </GuidanceAnchor>
+      }
+    >
+      <GuidanceAnchor id="preview-adjust-upload-artwork">
+        <Pressable
+          onPress={openArtworkSourceChooser}
+          style={{
+            minHeight: 42,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.md,
+            backgroundColor: colors.backgroundInput,
+            paddingHorizontal: spacing.md,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="image-outline" size={16} color={colors.textPrimary} />
+            <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+              Upload Artwork
+            </Text>
+          </View>
+          <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
+        </Pressable>
+      </GuidanceAnchor>
+    </AppCard>
+  );
+
+  const optionsCardSection = (
+    <GuidanceAnchor id="preview-adjust-options-card">
+      <AppCard title="Matting & Framing">
+        <DetailSheetLauncher
+          label="Matting"
+          summary={mattingSummary}
+          onPress={() => setMattingSheetVisible(true)}
+        />
+
+        <DetailSheetLauncher
+          label="Framing"
+          summary={framingSummary}
+          onPress={() => setFramingSheetVisible(true)}
+        />
+      </AppCard>
+    </GuidanceAnchor>
+  );
+
+  const liveMarginsCardSection = (
+    <GuidanceAnchor id="preview-adjust-live-margins-card">
+      <AppCard title="Live margins">
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <DimensionChip label="Top" value={marginValue(liveMargins?.top)} />
+          <DimensionChip label="Right" value={marginValue(liveMargins?.right)} />
+        </View>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <DimensionChip label="Bottom" value={marginValue(liveMargins?.bottom)} />
+          <DimensionChip label="Left" value={marginValue(liveMargins?.left)} />
+        </View>
+      </AppCard>
+    </GuidanceAnchor>
+  );
+
   return (
     <GuidanceProvider>
       <FlowStepLayout
@@ -783,183 +840,120 @@ export default function PreviewAdjustScreen() {
         onScroll={handlePreviewAdjustScroll}
         onMomentumScrollEnd={handlePreviewAdjustMomentumScrollEnd}
         scrollEventThrottle={16}
+        contentMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
+        footerMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
+        footerColumnWidth={isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined}
+        footerColumnAlign="center"
       >
-        <GuidanceAnchor id="preview-adjust-canvas">
-          <MatPreviewCanvas
-            artworkSize={derived.artworkSize}
-            openingSize={derived.openingSize}
-            outerMatSize={derived.outerMatSize}
-            frameProfileId={preview.frameProfileId}
-            frameColorHex={resolvedFrameColorHex}
-            matThicknessPly={preview.matThicknessPly}
-            matColorHex={preview.matColorHex}
-            matCoreColor={preview.matCoreColor}
-            mountingBoardColorHex={preview.mountingBoardColorHex}
-            offsetX={preview.offsetX}
-            offsetY={preview.offsetY}
-            snapIncrement={snapIncrement}
-            artworkSourceMode={preview.artworkSourceMode}
-            artworkImageUri={preview.artworkImageUri}
-            artworkCrop={preview.artworkCrop}
-            onAdjustOffsets={handleCommittedOffsets}
-            onLiveOffsetsChange={handleLiveOffsetsChange}
-          />
-        </GuidanceAnchor>
-
-        {!derived.isValidGeometry ? (
-          <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
-            Outer mat size needs to be larger than the opening size before the preview can be trusted.
-          </Text>
-        ) : null}
-
-        <View onLayout={handleLowerControlsAnchorLayout}>
-          <AppCard
-            title="Artwork"
-            headerAccessory={
-              <GuidanceAnchor id="preview-adjust-artwork-tools">
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <HeaderToolIconButton
-                    icon="swap-horizontal"
-                    accessibilityLabel="Re-center horizontally"
-                    onPress={() => setPreview({ offsetX: 0 })}
-                  />
-                  <HeaderToolIconButton
-                    icon="swap-vertical"
-                    accessibilityLabel="Re-center vertically"
-                    onPress={() => setPreview({ offsetY: 0 })}
-                  />
-                  <HeaderToolIconButton
-                    icon="locate-outline"
-                    accessibilityLabel="Re-center all"
-                    onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
-                  />
-                  {usingImportedArtwork ? (
-                    <HeaderToolIconButton
-                      icon="crop-outline"
-                      accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
-                      onPress={handleEditCrop}
-                      color={cropNeedsReview ? colors.warning : colors.textSecondary}
-                    />
-                  ) : null}
-                </View>
-              </GuidanceAnchor>
-            }
+        {isTabletLandscape ? (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "flex-start",
+              gap: spacing.xxxl,
+            }}
           >
-            <GuidanceAnchor id="preview-adjust-upload-artwork">
-              <Pressable
-                onPress={openArtworkSourceChooser}
-                style={{
-                  minHeight: 42,
-                  borderWidth: 1,
-                  borderColor: colors.borderStrong,
-                  borderRadius: radii.md,
-                  backgroundColor: colors.backgroundInput,
-                  paddingHorizontal: spacing.md,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Ionicons name="image-outline" size={16} color={colors.textPrimary} />
-                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-                    Upload Artwork
-                  </Text>
-                </View>
-                <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
-              </Pressable>
-            </GuidanceAnchor>
+            <View style={{ flex: 1, minWidth: 0, gap: spacing.lg }}>
+              {previewCanvasSection}
+              {previewWarningSection}
+            </View>
 
-            <AppSheetModal
-              visible={artworkSourceSheetVisible}
-              title="Upload artwork"
-              onClose={() => setArtworkSourceSheetVisible(false)}
+            <View
+              onLayout={handleLowerControlsAnchorLayout}
+              style={{
+                width: LANDSCAPE_CONTROLS_COLUMN_WIDTH,
+                maxWidth: "40%",
+                flexShrink: 0,
+                marginTop: spacing.xxl,
+                gap: spacing.lg,
+              }}
             >
-              <Pressable
-                onPress={() => {
-                  setArtworkSourceSheetVisible(false);
-                  setTimeout(() => {
-                    void handlePickFromLibrary();
-                  }, 220);
-                }}
-                style={{
-                  minHeight: 46,
-                  borderWidth: 1,
-                  borderColor: colors.borderStrong,
-                  borderRadius: radii.md,
-                  backgroundColor: colors.backgroundInput,
-                  paddingHorizontal: spacing.md,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Ionicons name="images-outline" size={18} color={colors.textPrimary} />
-                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-                    Photo Library
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-              </Pressable>
+              {artworkCardSection}
+              {optionsCardSection}
+              {liveMarginsCardSection}
+            </View>
+          </View>
+        ) : (
+          <>
+            {previewCanvasSection}
+            {previewWarningSection}
+            <View onLayout={handleLowerControlsAnchorLayout}>
+              {artworkCardSection}
+            </View>
+            {optionsCardSection}
+            {liveMarginsCardSection}
+          </>
+        )}
 
-              <Pressable
-                onPress={() => {
-                  setArtworkSourceSheetVisible(false);
-                  setTimeout(() => {
-                    void handleTakePhoto();
-                  }, 220);
-                }}
-                style={{
-                  minHeight: 46,
-                  borderWidth: 1,
-                  borderColor: colors.borderStrong,
-                  borderRadius: radii.md,
-                  backgroundColor: colors.backgroundInput,
-                  paddingHorizontal: spacing.md,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                  <Ionicons name="camera-outline" size={18} color={colors.textPrimary} />
-                  <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-                    Take Photo
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-              </Pressable>
-            </AppSheetModal>
-          </AppCard>
-        </View>
+        <AppSheetModal
+          visible={artworkSourceSheetVisible}
+          title="Upload artwork"
+          onClose={() => setArtworkSourceSheetVisible(false)}
+        >
+          <Pressable
+            onPress={() => {
+              setArtworkSourceSheetVisible(false);
+              setTimeout(() => {
+                void handlePickFromLibrary();
+              }, 220);
+            }}
+            style={{
+              minHeight: 46,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              borderRadius: radii.md,
+              backgroundColor: colors.backgroundInput,
+              paddingHorizontal: spacing.md,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="images-outline" size={18} color={colors.textPrimary} />
+              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+                Photo Library
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+          </Pressable>
 
-        <GuidanceAnchor id="preview-adjust-options-card">
-          <AppCard title="Matting & Framing">
-            <DetailSheetLauncher
-              label="Matting"
-              summary={mattingSummary}
-              onPress={() => setMattingSheetVisible(true)}
-            />
-
-            <DetailSheetLauncher
-              label="Framing"
-              summary={framingSummary}
-              onPress={() => setFramingSheetVisible(true)}
-            />
-          </AppCard>
-        </GuidanceAnchor>
+          <Pressable
+            onPress={() => {
+              setArtworkSourceSheetVisible(false);
+              setTimeout(() => {
+                void handleTakePhoto();
+              }, 220);
+            }}
+            style={{
+              minHeight: 46,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              borderRadius: radii.md,
+              backgroundColor: colors.backgroundInput,
+              paddingHorizontal: spacing.md,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Ionicons name="camera-outline" size={18} color={colors.textPrimary} />
+              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+                Take Photo
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+          </Pressable>
+        </AppSheetModal>
 
         <AppSheetModal
           visible={mattingSheetVisible}
           title="Matting"
           onClose={() => setMattingSheetVisible(false)}
+          showDoneButton
         >
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            style={{ maxHeight: 460 }}
-            contentContainerStyle={{ gap: spacing.md }}
-          >
+          <SheetFormContent>
             <PanelControlRow>
               <ColorPickerField
                 label="Mat color"
@@ -1011,65 +1005,61 @@ export default function PreviewAdjustScreen() {
                 ]}
               />
             </PanelControlRow>
-          </ScrollView>
+          </SheetFormContent>
         </AppSheetModal>
 
         <AppSheetModal
           visible={framingSheetVisible}
           title="Framing"
           onClose={() => setFramingSheetVisible(false)}
+          showDoneButton
         >
-          <CompactOptionPicker
-            label="Frame style"
-            title="Frame style"
-            value={selectedFrameStyleValue}
-            onChange={handleFrameStyleChange}
-            options={FRAME_STYLE_OPTIONS}
-          />
+          <SheetFormContent>
+            <PanelControlRow>
+              <CompactOptionPicker
+                label="Frame family / style"
+                title="Frame family / style"
+                value={selectedFrameStyleValue}
+                onChange={handleFrameStyleChange}
+                options={FRAME_STYLE_OPTIONS}
+              />
+            </PanelControlRow>
 
-          <CompactOptionPicker
-            label="Frame profile / width"
-            title="Frame profile / width"
-            value={selectedFrameProfileValue}
-            onChange={(value) => {
-              if (value === "notApplicable") {
-                return;
-              }
+            <PanelControlRow>
+              <CompactOptionPicker
+                label="Frame profile / width"
+                title="Frame profile / width"
+                value={selectedFrameProfileValue}
+                onChange={(value) => {
+                  if (value === "notApplicable") {
+                    return;
+                  }
 
-              handleFramePresetChange(value);
-            }}
-            options={frameProfilePickerOptions}
-            disabled={selectedFrameStyleValue === "none"}
-          />
+                  handleFramePresetChange(value);
+                }}
+                options={frameProfilePickerOptions}
+                disabled={selectedFrameStyleValue === "none"}
+              />
+            </PanelControlRow>
 
-          <CompactOptionPicker
-            label="Frame finish"
-            title="Frame finish"
-            value={selectedFrameColorValue}
-            onChange={(value) => {
-              if (value === "notApplicable") {
-                return;
-              }
+            <PanelControlRow>
+              <CompactOptionPicker
+                label="Frame finish / color"
+                title="Frame finish / color"
+                value={selectedFrameColorValue}
+                onChange={(value) => {
+                  if (value === "notApplicable") {
+                    return;
+                  }
 
-              handleFrameFinishChange(value as FrameFinishId);
-            }}
-            options={frameColorPickerOptions}
-            disabled={selectedFrameStyleValue === "none"}
-          />
+                  handleFrameFinishChange(value as FrameFinishId);
+                }}
+                options={frameColorPickerOptions}
+                disabled={selectedFrameStyleValue === "none"}
+              />
+            </PanelControlRow>
+          </SheetFormContent>
         </AppSheetModal>
-
-        <GuidanceAnchor id="preview-adjust-live-margins-card">
-          <AppCard title="Live margins">
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <DimensionChip label="Top" value={marginValue(liveMargins?.top)} />
-              <DimensionChip label="Right" value={marginValue(liveMargins?.right)} />
-            </View>
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <DimensionChip label="Bottom" value={marginValue(liveMargins?.bottom)} />
-              <DimensionChip label="Left" value={marginValue(liveMargins?.left)} />
-            </View>
-          </AppCard>
-        </GuidanceAnchor>
       </FlowStepLayout>
 
       <GuidanceOverlay

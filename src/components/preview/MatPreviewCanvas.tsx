@@ -37,6 +37,8 @@ interface MatPreviewCanvasProps {
   onAdjustOffsets: (offsetX: number, offsetY: number) => void;
   onLiveOffsetsChange?: (offsetX: number, offsetY: number) => void;
   onDragStateChange?: (isDragging: boolean) => void;
+  canvasHeight?: number;
+  layoutVariant?: "default" | "workspace";
 }
 
 interface FrameFacePalette {
@@ -390,6 +392,8 @@ export default function MatPreviewCanvas({
   onAdjustOffsets,
   onLiveOffsetsChange,
   onDragStateChange,
+  canvasHeight = 420,
+  layoutVariant = "default",
 }: MatPreviewCanvasProps) {
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const unit = useAppSettingsStore((state) => state.unit);
@@ -406,13 +410,15 @@ export default function MatPreviewCanvas({
   const liveOffsetsFrameRef = useRef<number | null>(null);
   const pendingLiveOffsetsRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
 
-  const previewInset = spacing.md;
+  const isWorkspaceLayout = layoutVariant === "workspace";
+  const previewInset = isWorkspaceLayout ? spacing.lg : spacing.md;
   const frameProfile = getFrameProfile(frameProfileId);
   const frameFaceWidth =
     unit === "cm" ? frameProfile.faceWidthInches * 2.54 : frameProfile.faceWidthInches;
   const frameColor = normalizeHex(frameColorHex, "#050505");
-  const matColor = normalizeHex(matColorHex, "#F4F0E8");
+  const matColor = normalizeHex(matColorHex, "#FFFFFF");
   const mountingBoardColor = normalizeHex(mountingBoardColorHex, "#FFFFFF");
+  const matLightness = hexToHsl(matColor).l;
   const isWhiteCore = matCoreColor === "white";
   const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
@@ -420,11 +426,20 @@ export default function MatPreviewCanvas({
   const previewCardColor = isDark ? "#E7DED2" : "#F3EEE6";
   const previewCardBorderColor = isDark ? "#CFC3B5" : "#DCD2C6";
   const previewLabelColor = isDark ? "#6F665B" : colors.textSecondary;
-  const previewCardPaddingTop = spacing.md;
-  const previewCardPaddingBottom = spacing.lg;
-  const previewStagePaddingHorizontal = isDark ? spacing.xl : spacing.lg;
-  const previewStagePaddingTop = spacing.md;
-  const previewStagePaddingBottom = isDark ? spacing.xl : spacing.lg;
+  const previewCardPaddingHorizontal = isWorkspaceLayout ? spacing.xl : spacing.lg;
+  const previewCardPaddingTop = isWorkspaceLayout ? spacing.lg : spacing.md;
+  const previewCardPaddingBottom = isWorkspaceLayout ? spacing.xl : spacing.lg;
+  const previewStagePaddingHorizontal = isWorkspaceLayout
+    ? spacing.xxxl
+    : isDark
+      ? spacing.xl
+      : spacing.lg;
+  const previewStagePaddingTop = isWorkspaceLayout ? spacing.xl : spacing.md;
+  const previewStagePaddingBottom = isWorkspaceLayout
+    ? spacing.xxxl
+    : isDark
+      ? spacing.xl
+      : spacing.lg;
   const bevelUnitScale = unit === "cm" ? 2.54 : 1;
   const bevelVisualScale = 1.5625;
   const bevelThicknessMultiplier = {
@@ -440,21 +455,44 @@ export default function MatPreviewCanvas({
     8: { physicalWidth: 0.14 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.08 },
   }[matThicknessPly];
   const minimumBevelInset = 0.85;
-  const topShadowEdgeColor = mixHexColors(coreFaceColor, "#000000", isWhiteCore ? 0.2 : 0.5);
-  const leftShadowEdgeColor = mixHexColors(coreFaceColor, "#000000", isWhiteCore ? 0.14 : 0.38);
+  const darkMatShadowLiftRatio =
+    !isWhiteCore && matLightness < 0.18 ? (0.18 - matLightness) / 0.18 : 0;
+  const useDarkMatShadowLift = darkMatShadowLiftRatio > 0;
+  const topShadowMixAmount = isWhiteCore ? 0.2 : 0.5 - darkMatShadowLiftRatio * 0.22;
+  const leftShadowMixAmount = isWhiteCore ? 0.14 : 0.38 - darkMatShadowLiftRatio * 0.16;
+  const darkMatTopOuterColor = mixHexColors(
+    matColor,
+    "#FFFFFF",
+    0.08 + darkMatShadowLiftRatio * 0.1
+  );
+  const darkMatLeftOuterColor = mixHexColors(
+    matColor,
+    "#FFFFFF",
+    0.06 + darkMatShadowLiftRatio * 0.08
+  );
+  const topShadowEdgeColor = useDarkMatShadowLift
+    ? darkMatTopOuterColor
+    : mixHexColors(coreFaceColor, "#000000", topShadowMixAmount);
+  const leftShadowEdgeColor = useDarkMatShadowLift
+    ? darkMatLeftOuterColor
+    : mixHexColors(coreFaceColor, "#000000", leftShadowMixAmount);
   const rightHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.16 : 0.26);
   const bottomHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.24 : 0.34);
   const bevelPalette = {
     face: coreFaceColor,
     top: {
       outer: topShadowEdgeColor,
-      inner: mixHexColors(coreFaceColor, topShadowEdgeColor, isWhiteCore ? 0.48 : 0.64),
-      midOffset: "40%",
+      inner: useDarkMatShadowLift
+        ? mixHexColors(coreFaceColor, topShadowEdgeColor, 0.28 + darkMatShadowLiftRatio * 0.12)
+        : mixHexColors(coreFaceColor, topShadowEdgeColor, isWhiteCore ? 0.48 : 0.64),
+      midOffset: useDarkMatShadowLift ? "48%" : "40%",
     },
     left: {
       outer: leftShadowEdgeColor,
-      inner: mixHexColors(coreFaceColor, leftShadowEdgeColor, isWhiteCore ? 0.42 : 0.58),
-      midOffset: "42%",
+      inner: useDarkMatShadowLift
+        ? mixHexColors(coreFaceColor, leftShadowEdgeColor, 0.24 + darkMatShadowLiftRatio * 0.1)
+        : mixHexColors(coreFaceColor, leftShadowEdgeColor, isWhiteCore ? 0.42 : 0.58),
+      midOffset: useDarkMatShadowLift ? "46%" : "42%",
     },
     right: {
       outer: rightHighlightEdgeColor,
@@ -913,7 +951,7 @@ export default function MatPreviewCanvas({
         borderWidth: 1,
         borderColor: previewCardBorderColor,
         backgroundColor: previewCardColor,
-        paddingHorizontal: spacing.lg,
+        paddingHorizontal: previewCardPaddingHorizontal,
         paddingTop: previewCardPaddingTop,
         paddingBottom: previewCardPaddingBottom,
       }}
@@ -929,7 +967,7 @@ export default function MatPreviewCanvas({
         }}
         style={{
           width: "100%",
-          height: 420,
+          height: canvasHeight,
           borderRadius: 0,
           backgroundColor: "transparent",
           alignItems: "center",

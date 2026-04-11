@@ -35,8 +35,8 @@ export default function CompactOptionPicker<T extends string>({
   );
 
   return (
-    <View style={{ flex: 1 }}>
-      <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
+    <View style={{ width: "100%", gap: spacing.xs }}>
+      <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
         {label}
       </Text>
 
@@ -54,15 +54,19 @@ export default function CompactOptionPicker<T extends string>({
           borderRadius: radii.md,
           backgroundColor: colors.backgroundInput,
           paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
           opacity: disabled ? 0.9 : 1,
+          gap: spacing.sm,
         }}
       >
-        <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }} numberOfLines={1}>
-          {selectedLabel}
-        </Text>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }} numberOfLines={1}>
+            {selectedLabel}
+          </Text>
+        </View>
         {!disabled ? <Ionicons name="chevron-down" size={16} color={colors.textSecondary} /> : null}
       </Pressable>
 

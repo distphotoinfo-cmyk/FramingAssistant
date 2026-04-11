@@ -1,14 +1,16 @@
 import React from "react";
-import { Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import AppCard from "../components/ui/AppCard";
+import AppSheetModal from "../components/ui/AppSheetModal";
 import MeasurementWheelField from "../components/ui/MeasurementWheelField";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
+import type { FractionDenominator } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import {
   DEFAULT_PREVIEW_SNAP_INCREMENT_INCHES,
@@ -62,16 +64,28 @@ function ToggleRow({
   subtitle,
   value,
   onValueChange,
+  disabled = false,
 }: {
   label: string;
   subtitle: string;
   value: boolean;
   onValueChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
-  const { colors, spacing, typography } = useAppTheme();
+  const { colors, radii, spacing, typography } = useAppTheme();
 
   return (
-    <View
+    <Pressable
+      onPress={() => {
+        if (disabled) {
+          return;
+        }
+        void Haptics.selectionAsync();
+        onValueChange(!value);
+      }}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value, disabled }}
+      accessibilityLabel={label}
       style={{
         minHeight: 56,
         flexDirection: "row",
@@ -81,44 +95,159 @@ function ToggleRow({
       }}
     >
       <View style={{ flex: 1 }}>
-        <Text style={{ ...typography.sectionTitle, color: colors.textPrimary, marginBottom: 4 }}>
+        <Text
+          style={{
+            ...typography.sectionTitle,
+            color: disabled ? colors.textSecondary : colors.textPrimary,
+            marginBottom: 4,
+          }}
+        >
           {label}
         </Text>
-        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+        <Text
+          style={{
+            ...typography.small,
+            color: disabled ? colors.textPlaceholder : colors.textSecondary,
+          }}
+        >
           {subtitle}
         </Text>
       </View>
 
-      <Switch
-        value={value}
-        onValueChange={(nextValue) => {
-          void Haptics.selectionAsync();
-          onValueChange(nextValue);
+      <View
+        style={{
+          width: 52,
+          height: 32,
+          borderRadius: radii.pill,
+          backgroundColor: value ? colors.accent : colors.backgroundMuted,
+          borderWidth: 1,
+          borderColor: value ? colors.accent : colors.borderStrong,
+          padding: 3,
+          justifyContent: "center",
         }}
-        trackColor={{
-          false: colors.borderStrong,
-          true: colors.accent,
+      >
+        <View
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: radii.pill,
+            backgroundColor: colors.white,
+            alignSelf: value ? "flex-end" : "flex-start",
+          }}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+function SelectorRow({
+  label,
+  title,
+  valueLabel,
+  value,
+  options,
+  onValueChange,
+}: {
+  label: string;
+  title?: string;
+  valueLabel: string;
+  value: FractionDenominator;
+  options: { label: string; value: FractionDenominator }[];
+  onValueChange: (value: FractionDenominator) => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const [visible, setVisible] = React.useState(false);
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setVisible(true)}
+        style={{
+          minHeight: 42,
+          borderRadius: radii.md,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          backgroundColor: colors.backgroundInput,
+          paddingHorizontal: spacing.md,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: spacing.md,
         }}
-        thumbColor={colors.white}
-        ios_backgroundColor={colors.borderStrong}
-      />
-    </View>
+      >
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {label}
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, minWidth: 0 }}>
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: "600",
+              color: colors.textPrimary,
+            }}
+            numberOfLines={1}
+          >
+            {valueLabel}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+        </View>
+      </Pressable>
+
+      <AppSheetModal visible={visible} title={title ?? label} onClose={() => setVisible(false)}>
+        {options.map((option) => {
+          const active = option.value === value;
+
+          return (
+            <Pressable
+              key={option.value}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                onValueChange(option.value);
+                setVisible(false);
+              }}
+              style={{
+                minHeight: 46,
+                borderWidth: 1,
+                borderColor: active ? colors.accent : colors.borderStrong,
+                borderRadius: radii.md,
+                backgroundColor: active ? colors.accentSoft : colors.backgroundInput,
+                paddingHorizontal: spacing.md,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: active ? "600" : "500",
+                  color: colors.textPrimary,
+                }}
+              >
+                {option.label}
+              </Text>
+              {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+            </Pressable>
+          );
+        })}
+      </AppSheetModal>
+    </>
   );
 }
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
-  const { colors } = useAppTheme();
-  const colorMode = useAppSettingsStore((state) => state.colorMode);
+  const { colors, spacing, typography } = useAppTheme();
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const previewSnapIncrementInches = useAppSettingsStore((state) => state.previewSnapIncrementInches);
+  const guidanceTestingEnabled = useAppSettingsStore((state) => state.guidanceTestingEnabled);
   const alwaysShowGuidanceOnLaunch = useAppSettingsStore((state) => state.alwaysShowGuidanceOnLaunch);
-  const setColorMode = useAppSettingsStore((state) => state.setColorMode);
   const setUnit = useAppSettingsStore((state) => state.setUnit);
   const setImperialPrecision = useAppSettingsStore((state) => state.setImperialPrecision);
   const setPreviewSnapIncrementInches = useAppSettingsStore((state) => state.setPreviewSnapIncrementInches);
+  const setGuidanceTestingEnabled = useAppSettingsStore((state) => state.setGuidanceTestingEnabled);
   const setAlwaysShowGuidanceOnLaunch = useAppSettingsStore(
     (state) => state.setAlwaysShowGuidanceOnLaunch
   );
@@ -164,71 +293,54 @@ export default function SettingsScreen() {
               letterSpacing: 1,
             }}
           >
-            Appearance
-          </Text>
-
-          <AppCard title="Color mode" subtitle="Framing Assistant now defaults to the darker Darkroom-like shell.">
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              <OptionButton label="Dark" selected={colorMode === "dark"} onPress={() => setColorMode("dark")} />
-              <OptionButton label="Light" selected={colorMode === "light"} onPress={() => setColorMode("light")} />
-            </View>
-          </AppCard>
-        </View>
-
-        <View style={{ marginBottom: 24 }}>
-          <Text
-            style={{
-              fontSize: 13,
-              fontWeight: "600",
-              color: colors.textSecondary,
-              marginBottom: 10,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-            }}
-          >
             Measurements
           </Text>
 
-          <AppCard title="Working units" subtitle="Units now live in Settings so the guided flow can begin immediately.">
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              <OptionButton label="Inches" selected={unit === "in"} onPress={() => setUnit("in")} />
-              <OptionButton label="Centimeters" selected={unit === "cm"} onPress={() => setUnit("cm")} />
-            </View>
-          </AppCard>
-        </View>
-
-        <View style={{ marginBottom: 24 }}>
-          <Text
-            style={{
-              fontSize: 13,
-              fontWeight: "600",
-              color: colors.textSecondary,
-              marginBottom: 10,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-            }}
+          <AppCard
+            title="Measurement preferences"
+            subtitle="Choose working units, fraction display, and default preview drag snapping."
           >
-            Precision
-          </Text>
-
-          <AppCard title="Imperial display precision" subtitle="Main UI measurements use fractions instead of decimals.">
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {FRACTION_PRECISION_OPTIONS.map((value) => (
-                <OptionButton
-                  key={`precision-${value}`}
-                  label={`1/${value}`}
-                  selected={imperialPrecision === value}
-                  onPress={() => setImperialPrecision(value)}
-                />
-              ))}
+            <View>
+              <Text
+                style={{
+                  ...typography.sectionTitle,
+                  color: colors.textPrimary,
+                  marginBottom: spacing.xs,
+                }}
+              >
+                Working units
+              </Text>
+              <Text
+                style={{
+                  ...typography.small,
+                  color: colors.textSecondary,
+                  marginBottom: spacing.sm,
+                }}
+              >
+                Inches is the default. Imperial-only display precision is hidden when centimeters are selected.
+              </Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                <OptionButton label="Inches" selected={unit === "in"} onPress={() => setUnit("in")} />
+                <OptionButton label="Centimeters" selected={unit === "cm"} onPress={() => setUnit("cm")} />
+              </View>
             </View>
-          </AppCard>
 
-          <View style={{ height: 12 }} />
+            {unit === "in" ? (
+              <SelectorRow
+                label="Imperial display precision"
+                title="Imperial display precision"
+                valueLabel={`1/${imperialPrecision} in`}
+                value={imperialPrecision}
+                options={FRACTION_PRECISION_OPTIONS.map((value) => ({
+                  label: `1/${value} in`,
+                  value,
+                }))}
+                onValueChange={setImperialPrecision}
+              />
+            ) : null}
 
-          <AppCard title="Preview drag snapping" subtitle="Set the default snap size for weighting the mat.">
             <MeasurementWheelField
-              label="Default snap"
+              label="Preview drag snapping"
               title="Preview drag snapping"
               value={String(previewSnapIncrementInches ?? DEFAULT_PREVIEW_SNAP_INCREMENT_INCHES)}
               unitLabel="in"
@@ -249,34 +361,39 @@ export default function SettingsScreen() {
           </Text>
         </AppCard>
 
-        {__DEV__ ? (
-          <View style={{ marginTop: 24 }}>
-            <Text
-              style={{
-                fontSize: 13,
-                fontWeight: "600",
-                color: colors.textSecondary,
-                marginBottom: 10,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-              }}
-            >
-              Developer Settings
-            </Text>
+        <View style={{ marginTop: 24 }}>
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "600",
+              color: colors.textSecondary,
+              marginBottom: 10,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+            }}
+          >
+            Developer Settings
+          </Text>
 
-            <AppCard
-              title="Guidance"
-              subtitle="Developer-only controls for replaying onboarding tips, cards, and bubbles."
-            >
-              <ToggleRow
-                label="Always show guidance on launch"
-                subtitle="Ignore persisted seen guidance on each fresh app launch so onboarding can be tested repeatedly."
-                value={alwaysShowGuidanceOnLaunch}
-                onValueChange={setAlwaysShowGuidanceOnLaunch}
-              />
-            </AppCard>
-          </View>
-        ) : null}
+          <AppCard>
+            <Text style={{ ...typography.small, color: colors.textSecondary }}>
+              Developer guidance controls are included in release builds, and both toggles start off by default.
+            </Text>
+            <ToggleRow
+              label="Guidance"
+              subtitle="Enable developer guidance testing controls for replaying onboarding copy and flow."
+              value={guidanceTestingEnabled}
+              onValueChange={setGuidanceTestingEnabled}
+            />
+            <ToggleRow
+              label="Always show guidance on launch"
+              subtitle="When off, guidance behaves normally and only appears once. When on, onboarding guidance replays on each fresh app launch."
+              value={alwaysShowGuidanceOnLaunch}
+              onValueChange={setAlwaysShowGuidanceOnLaunch}
+              disabled={!guidanceTestingEnabled}
+            />
+          </AppCard>
+        </View>
       </ScrollView>
     </View>
   );

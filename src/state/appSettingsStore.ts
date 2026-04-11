@@ -19,19 +19,32 @@ type GuideTipKey =
 type DismissedGuideTips = Partial<Record<GuideTipKey, boolean>>;
 
 const MAX_CUSTOM_COLOR_PRESETS = 5;
+const DEFAULT_IMPERIAL_PRECISION: FractionDenominator = 8;
+
+function normalizeImperialPrecision(
+  imperialPrecision: FractionDenominator | number | null | undefined
+): FractionDenominator {
+  if (imperialPrecision === 16 || imperialPrecision === 32) {
+    return imperialPrecision;
+  }
+
+  return DEFAULT_IMPERIAL_PRECISION;
+}
 
 function buildGuidanceSessionState({
+  guidanceTestingEnabled,
   alwaysShowGuidanceOnLaunch,
   hasSeenSetupIntro,
   hasSeenPreviewAdjustIntro,
   dismissedGuideTips,
 }: {
+  guidanceTestingEnabled: boolean;
   alwaysShowGuidanceOnLaunch: boolean;
   hasSeenSetupIntro: boolean;
   hasSeenPreviewAdjustIntro: boolean;
   dismissedGuideTips: DismissedGuideTips;
 }) {
-  if (alwaysShowGuidanceOnLaunch) {
+  if (guidanceTestingEnabled && alwaysShowGuidanceOnLaunch) {
     return {
       sessionHasSeenSetupIntro: false,
       sessionHasSeenPreviewAdjustIntro: false,
@@ -62,6 +75,7 @@ interface AppSettingsState {
   previewSnapIncrementInches: number;
   matColorPresets: string[];
   frameColorPresets: string[];
+  guidanceTestingEnabled: boolean;
   alwaysShowGuidanceOnLaunch: boolean;
   hasSeenSetupIntro: boolean;
   hasSeenPreviewAdjustIntro: boolean;
@@ -76,6 +90,7 @@ interface AppSettingsState {
   setPreviewSnapIncrementInches: (previewSnapIncrementInches: number | string) => void;
   saveMatColorPreset: (hex: string) => void;
   saveFrameColorPreset: (hex: string) => void;
+  setGuidanceTestingEnabled: (guidanceTestingEnabled: boolean) => void;
   setAlwaysShowGuidanceOnLaunch: (alwaysShowGuidanceOnLaunch: boolean) => void;
   markSetupIntroSeen: () => void;
   markPreviewAdjustIntroSeen: () => void;
@@ -91,6 +106,7 @@ type PersistedAppSettingsState = Pick<
   | "previewSnapIncrementInches"
   | "matColorPresets"
   | "frameColorPresets"
+  | "guidanceTestingEnabled"
   | "alwaysShowGuidanceOnLaunch"
   | "hasSeenSetupIntro"
   | "hasSeenPreviewAdjustIntro"
@@ -102,10 +118,11 @@ export const useAppSettingsStore = create<AppSettingsState>()(
     (set) => ({
       colorMode: "dark",
       unit: "in",
-      imperialPrecision: 16,
+      imperialPrecision: DEFAULT_IMPERIAL_PRECISION,
       previewSnapIncrementInches: DEFAULT_PREVIEW_SNAP_INCREMENT_INCHES,
       matColorPresets: [],
       frameColorPresets: [],
+      guidanceTestingEnabled: false,
       alwaysShowGuidanceOnLaunch: false,
       hasSeenSetupIntro: false,
       hasSeenPreviewAdjustIntro: false,
@@ -116,7 +133,8 @@ export const useAppSettingsStore = create<AppSettingsState>()(
       hasHydrated: false,
       setColorMode: (colorMode) => set({ colorMode }),
       setUnit: (unit) => set({ unit }),
-      setImperialPrecision: (imperialPrecision) => set({ imperialPrecision }),
+      setImperialPrecision: (imperialPrecision) =>
+        set({ imperialPrecision: normalizeImperialPrecision(imperialPrecision) }),
       setPreviewSnapIncrementInches: (previewSnapIncrementInches) =>
         set({
           previewSnapIncrementInches: sanitizePreviewSnapIncrementInches(previewSnapIncrementInches),
@@ -129,10 +147,29 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         set((state) => ({
           frameColorPresets: savePresetValue(state.frameColorPresets, hex),
         })),
+      setGuidanceTestingEnabled: (guidanceTestingEnabled) =>
+        set((state) => {
+          const nextAlwaysShowGuidanceOnLaunch = guidanceTestingEnabled
+            ? state.alwaysShowGuidanceOnLaunch
+            : false;
+
+          return {
+            guidanceTestingEnabled,
+            alwaysShowGuidanceOnLaunch: nextAlwaysShowGuidanceOnLaunch,
+            ...buildGuidanceSessionState({
+              guidanceTestingEnabled,
+              alwaysShowGuidanceOnLaunch: nextAlwaysShowGuidanceOnLaunch,
+              hasSeenSetupIntro: state.hasSeenSetupIntro,
+              hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
+              dismissedGuideTips: state.dismissedGuideTips,
+            }),
+          };
+        }),
       setAlwaysShowGuidanceOnLaunch: (alwaysShowGuidanceOnLaunch) =>
         set((state) => ({
           alwaysShowGuidanceOnLaunch,
           ...buildGuidanceSessionState({
+            guidanceTestingEnabled: state.guidanceTestingEnabled,
             alwaysShowGuidanceOnLaunch,
             hasSeenSetupIntro: state.hasSeenSetupIntro,
             hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
@@ -164,6 +201,7 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         set((state) => ({
           hasHydrated: true,
           ...buildGuidanceSessionState({
+            guidanceTestingEnabled: state.guidanceTestingEnabled,
             alwaysShowGuidanceOnLaunch: state.alwaysShowGuidanceOnLaunch,
             hasSeenSetupIntro: state.hasSeenSetupIntro,
             hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
@@ -181,6 +219,7 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         previewSnapIncrementInches: state.previewSnapIncrementInches,
         matColorPresets: state.matColorPresets,
         frameColorPresets: state.frameColorPresets,
+        guidanceTestingEnabled: state.guidanceTestingEnabled,
         alwaysShowGuidanceOnLaunch: state.alwaysShowGuidanceOnLaunch,
         hasSeenSetupIntro: state.hasSeenSetupIntro,
         hasSeenPreviewAdjustIntro: state.hasSeenPreviewAdjustIntro,
@@ -198,6 +237,7 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         return {
           ...currentState,
           ...restPersisted,
+          imperialPrecision: normalizeImperialPrecision(typedState.imperialPrecision),
           previewSnapIncrementInches: sanitizePreviewSnapIncrementInches(
             typedState.previewSnapIncrementInches ??
               (legacyPreviewSnapDenominator ? 1 / legacyPreviewSnapDenominator : undefined)

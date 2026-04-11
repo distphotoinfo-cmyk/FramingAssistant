@@ -29,6 +29,10 @@ interface FlowStepLayoutProps {
   onScroll?: ScrollViewProps["onScroll"];
   onMomentumScrollEnd?: ScrollViewProps["onMomentumScrollEnd"];
   scrollEventThrottle?: number;
+  contentMaxWidth?: number;
+  footerMaxWidth?: number;
+  footerColumnWidth?: number;
+  footerColumnAlign?: "center" | "start";
   shellBubble?: {
     visible: boolean;
     title: string;
@@ -52,6 +56,10 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
     onScroll,
     onMomentumScrollEnd,
     scrollEventThrottle,
+    contentMaxWidth,
+    footerMaxWidth,
+    footerColumnWidth,
+    footerColumnAlign = "center",
     shellBubble,
   } = props;
   const insets = useSafeAreaInsets();
@@ -89,7 +97,13 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={scrollEventThrottle}
       >
-        <View style={{ width: "100%", maxWidth: layout.contentMaxWidth, alignSelf: "center" }}>
+        <View
+          style={{
+            width: "100%",
+            maxWidth: contentMaxWidth ?? layout.contentMaxWidth,
+            alignSelf: "center",
+          }}
+        >
           <StepProgress
             currentStep={currentStep.stepNumber}
             totalSteps={totalSteps}
@@ -112,69 +126,83 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
           paddingBottom: Math.max(insets.bottom, spacing.lg),
         }}
       >
-        <View style={{ width: "100%", maxWidth: layout.contentMaxWidth, alignSelf: "center" }}>
+        <View
+          style={{
+            width: "100%",
+            maxWidth: footerMaxWidth ?? contentMaxWidth ?? layout.contentMaxWidth,
+            alignSelf: "center",
+          }}
+        >
           {footerNote && !compactBackArrowFooter ? (
             <Text style={{ ...typography.small, color: colors.textSecondary, textAlign: "center", marginBottom: spacing.sm }}>
               {footerNote}
             </Text>
           ) : null}
 
-          {compactBackArrowFooter ? (
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: spacing.sm,
-              }}
-            >
-              {previousStep ? (
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    goBack();
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Go back"
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: radii.pill,
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.18)",
-                    backgroundColor: "transparent",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons name="arrow-back" size={18} color="rgba(255,255,255,0.72)" />
-                </Pressable>
-              ) : null}
+          <View
+            style={{
+              width: "100%",
+              maxWidth: footerColumnWidth,
+              alignSelf: footerColumnAlign === "start" ? "flex-start" : "center",
+            }}
+          >
+            {compactBackArrowFooter ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                {previousStep ? (
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      goBack();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go back"
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: radii.pill,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.18)",
+                      backgroundColor: "transparent",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="arrow-back" size={18} color="rgba(255,255,255,0.72)" />
+                  </Pressable>
+                ) : null}
 
-              <AppButton
-                label={nextLabel ?? "Continue"}
-                onPress={onNext ?? goNext}
-                style={{ width: "52%" }}
-              />
-            </View>
-          ) : (
-            <>
-              <AppButton
-                label={nextLabel ?? "Continue"}
-                onPress={onNext ?? goNext}
-                style={{ width: "52%", alignSelf: "center" }}
-              />
-
-              {previousStep ? (
                 <AppButton
-                  variant="secondary"
-                  label="Back"
-                  onPress={goBack}
-                  style={{ width: "42%", alignSelf: "center", marginTop: spacing.sm }}
+                  label={nextLabel ?? "Continue"}
+                  onPress={onNext ?? goNext}
+                  style={{ width: "52%" }}
                 />
-              ) : null}
-            </>
-          )}
+              </View>
+            ) : (
+              <>
+                <AppButton
+                  label={nextLabel ?? "Continue"}
+                  onPress={onNext ?? goNext}
+                  style={{ width: "52%", alignSelf: "center" }}
+                />
+
+                {previousStep ? (
+                  <AppButton
+                    variant="secondary"
+                    label="Back"
+                    onPress={goBack}
+                    style={{ width: "42%", alignSelf: "center", marginTop: spacing.sm }}
+                  />
+                ) : null}
+              </>
+            )}
+          </View>
         </View>
       </View>
     </ScreenContainer>

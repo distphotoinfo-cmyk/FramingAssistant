@@ -327,8 +327,8 @@ export default function ColorPickerField({
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
+    <View style={{ width: "100%", gap: spacing.xs }}>
+      <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
         {label}
       </Text>
 
@@ -341,12 +341,14 @@ export default function ColorPickerField({
           borderRadius: radii.md,
           backgroundColor: colors.backgroundInput,
           paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: spacing.sm,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1, minWidth: 0 }}>
           <View
             style={{
               width: 18,
@@ -357,7 +359,7 @@ export default function ColorPickerField({
               borderColor: getSwatchBorderColor(normalizedValue, isDark),
             }}
           />
-          <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+          <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }} numberOfLines={1}>
             {normalizedValue}
           </Text>
         </View>

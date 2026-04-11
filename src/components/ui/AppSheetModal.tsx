@@ -7,9 +7,16 @@ interface AppSheetModalProps {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  showDoneButton?: boolean;
 }
 
-export default function AppSheetModal({ visible, title, onClose, children }: AppSheetModalProps) {
+export default function AppSheetModal({
+  visible,
+  title,
+  onClose,
+  children,
+  showDoneButton = false,
+}: AppSheetModalProps) {
   const { colors, radii, spacing, typography } = useAppTheme();
 
   return (
@@ -37,9 +44,32 @@ export default function AppSheetModal({ visible, title, onClose, children }: App
             gap: spacing.md,
           }}
         >
-          <Text style={{ ...typography.screenTitle, color: colors.textPrimary }}>
-            {title}
-          </Text>
+          <Pressable
+            onPress={() => undefined}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: spacing.md,
+              paddingHorizontal: showDoneButton ? spacing.sm : 0,
+            }}
+          >
+            <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
+              {title}
+            </Text>
+            {showDoneButton ? (
+              <Pressable
+                onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel={`Done with ${title}`}
+                hitSlop={8}
+              >
+                <Text style={{ ...typography.sectionTitle, color: colors.accent }}>
+                  Done
+                </Text>
+              </Pressable>
+            ) : null}
+          </Pressable>
           {children}
         </Pressable>
       </Pressable>

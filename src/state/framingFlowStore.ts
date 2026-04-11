@@ -9,7 +9,7 @@ import type {
   ProjectMeta,
   RevealSetupDraft,
 } from "../types/framing";
-import { normalizeFrameSelection } from "../utils/frameProfiles";
+import { FRAME_FINISHES, normalizeFrameSelection } from "../utils/frameProfiles";
 
 export function createInitialPreviewDraft(): PreviewDraft {
   return {
@@ -18,9 +18,9 @@ export function createInitialPreviewDraft(): PreviewDraft {
     mountingBoardColorHex: "#FFFFFF",
     frameFamily: "nielsenFlorentine",
     frameProfileId: "nielsenFlorentine93",
-    frameFinishId: "florentineBlack",
-    matColorHex: "#F4F0E8",
-    frameColorHex: "#050505",
+    frameFinishId: "florentineSilver",
+    matColorHex: "#FFFFFF",
+    frameColorHex: FRAME_FINISHES.florentineSilver.colorHex,
     offsetX: 0,
     offsetY: 0,
     artworkSourceMode: "placeholder",
