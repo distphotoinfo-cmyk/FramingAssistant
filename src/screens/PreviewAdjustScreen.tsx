@@ -331,7 +331,7 @@ export default function PreviewAdjustScreen() {
   const selectedFrameFinishId = (preview.frameFinishId ??
     selectedFrameProfile.defaultFinishId ??
     frameFinishOptions[0]?.value ??
-    "florentineBlack") as FrameFinishId;
+    "florentineGrey") as FrameFinishId;
   const selectedFrameColorValue =
     preview.frameProfileId === "basicNone" ? "notApplicable" : selectedFrameFinishId;
   const selectedFrameStyleValue = getFrameStyleValue(

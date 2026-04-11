@@ -142,7 +142,7 @@ export const FRAME_PROFILES: Record<FrameProfileId, FrameProfileDefinition> = {
     heightInches: 1,
     rabbetInches: null,
     finishIds: ["florentineBlack", "florentineGrey", "florentineSilver"],
-    defaultFinishId: "florentineBlack",
+    defaultFinishId: "florentineGrey",
     renderStyle: "florentine",
   },
   nielsenMonochrome95: {
@@ -211,7 +211,7 @@ export function resolveFrameColorHex(
 }
 
 function normalizeFlorentineFinishFromColor(colorHex: string | null | undefined): FrameFinishId {
-  const normalized = normalizeHex(colorHex, FRAME_FINISHES.florentineBlack.colorHex);
+  const normalized = normalizeHex(colorHex, FRAME_FINISHES.florentineGrey.colorHex);
 
   if (normalized === FRAME_FINISHES.florentineGrey.colorHex) {
     return "florentineGrey";
@@ -286,7 +286,7 @@ export function normalizeFrameSelection(
     frameColorHex: resolveFrameColorHex(
       "nielsenFlorentine93",
       normalizeFlorentineFinishFromColor(preview?.frameColorHex),
-      preview?.frameColorHex ?? FRAME_FINISHES.florentineBlack.colorHex
+      preview?.frameColorHex ?? FRAME_FINISHES.florentineGrey.colorHex
     ),
   };
 }

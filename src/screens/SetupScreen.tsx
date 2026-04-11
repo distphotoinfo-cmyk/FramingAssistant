@@ -17,6 +17,7 @@ import type { MeasurementUnit, SizeInput } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import { getArtworkAspectRatio } from "../utils/artworkCrop";
 import { importArtworkFromCamera, importArtworkFromLibrary } from "../utils/artworkImport";
+import { resolveFrameColorHex } from "../utils/frameProfiles";
 import { parseMeasurement } from "../utils/formatters";
 import {
   calculateOpeningSize,
@@ -37,8 +38,6 @@ const STEP_ONE_PREVIEW_OUTER_MARGINS: Record<MeasurementUnit, number> = {
   in: 2,
   cm: 5,
 };
-const STEP_ONE_PREVIEW_APPEARANCE = createInitialPreviewDraft();
-
 function resolvePreviewSize(size: SizeInput, fallback: NumericSize): NumericSize {
   return {
     width: parseMeasurement(size.width) ?? fallback.width,
@@ -129,6 +128,10 @@ export default function SetupScreen() {
   const isTabletLandscape = isTabletScreen && !isPortrait;
   const landscapePreviewHeight = Math.min(Math.max(windowHeight - 280, 460), 620);
   const preview = draft.preview ?? createInitialPreviewDraft();
+  const resolvedFrameColorHex = useMemo(
+    () => resolveFrameColorHex(preview.frameProfileId, preview.frameFinishId, preview.frameColorHex),
+    [preview.frameColorHex, preview.frameFinishId, preview.frameProfileId]
+  );
   const setupGuidanceItems = useMemo<GuidanceItem[]>(
     () => [
       {
@@ -295,12 +298,12 @@ export default function SetupScreen() {
             artworkSize={previewArtworkSize}
             openingSize={previewOpeningSize}
             outerMatSize={previewOuterMatSize}
-            frameProfileId={STEP_ONE_PREVIEW_APPEARANCE.frameProfileId}
-            frameColorHex={STEP_ONE_PREVIEW_APPEARANCE.frameColorHex}
-            matThicknessPly={STEP_ONE_PREVIEW_APPEARANCE.matThicknessPly}
-            matColorHex={STEP_ONE_PREVIEW_APPEARANCE.matColorHex}
-            matCoreColor={STEP_ONE_PREVIEW_APPEARANCE.matCoreColor}
-            mountingBoardColorHex={STEP_ONE_PREVIEW_APPEARANCE.mountingBoardColorHex}
+            frameProfileId={preview.frameProfileId}
+            frameColorHex={resolvedFrameColorHex}
+            matThicknessPly={preview.matThicknessPly}
+            matColorHex={preview.matColorHex}
+            matCoreColor={preview.matCoreColor}
+            mountingBoardColorHex={preview.mountingBoardColorHex}
             offsetX={0}
             offsetY={0}
             snapIncrement={0}
@@ -347,9 +350,15 @@ export default function SetupScreen() {
       openArtworkSourceChooser,
       preview.artworkCrop,
       preview.artworkImageUri,
+      preview.frameProfileId,
+      preview.matColorHex,
+      preview.matCoreColor,
+      preview.matThicknessPly,
+      preview.mountingBoardColorHex,
       previewOpeningSize,
       previewOuterMatSize,
       previewArtworkSize,
+      resolvedFrameColorHex,
       showStepOneArtworkOverlay,
       spacing.md,
       spacing.sm,
