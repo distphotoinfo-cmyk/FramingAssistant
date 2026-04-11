@@ -444,9 +444,9 @@ export default function MatPreviewCanvas({
   const bevelVisualScale = 1.5625;
   const bevelThicknessMultiplier = {
     2: 1,
-    4: 1.25,
+    4: 1,
     6: 1,
-    8: 1.25,
+    8: 1,
   }[matThicknessPly];
   const bevelProfile = {
     2: { physicalWidth: 0.045 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.045 },
