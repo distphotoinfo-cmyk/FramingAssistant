@@ -416,7 +416,7 @@ export default function MatPreviewCanvas({
   const frameFaceWidth =
     unit === "cm" ? frameProfile.faceWidthInches * 2.54 : frameProfile.faceWidthInches;
   const frameColor = normalizeHex(frameColorHex, "#050505");
-  const matColor = normalizeHex(matColorHex, "#FFFFFF");
+  const matColor = normalizeHex(matColorHex, "#F4F0E8");
   const mountingBoardColor = normalizeHex(mountingBoardColorHex, "#FFFFFF");
   const matLightness = hexToHsl(matColor).l;
   const isWhiteCore = matCoreColor === "white";

@@ -44,7 +44,6 @@ import {
 } from "../utils/formatters";
 
 const MAT_DEFAULT_COLORS = [
-  "#FFFFFF",
   "#F4F0E8",
   "#E7DED2",
   "#D8CCBE",

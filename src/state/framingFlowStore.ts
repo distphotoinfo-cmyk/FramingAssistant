@@ -19,7 +19,7 @@ export function createInitialPreviewDraft(): PreviewDraft {
     frameFamily: "nielsenFlorentine",
     frameProfileId: "nielsenFlorentine93",
     frameFinishId: "florentineSilver",
-    matColorHex: "#FFFFFF",
+    matColorHex: "#F4F0E8",
     frameColorHex: FRAME_FINISHES.florentineSilver.colorHex,
     offsetX: 0,
     offsetY: 0,

@@ -1,18 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useCallback } from "react";
 import type { View } from "react-native";
 import { useGuidance } from "./GuidanceProvider";
 
 export default function useGuidanceAnchorRef<T extends View = View>(id: string) {
   const { registerAnchor, unregisterAnchor } = useGuidance();
-  const ref = useRef<T | null>(null);
 
-  useEffect(() => {
-    registerAnchor(id, ref.current as View | null);
-  });
+  return useCallback(
+    (node: T | null) => {
+      if (node) {
+        registerAnchor(id, node as View);
+        return;
+      }
 
-  useEffect(() => {
-    return () => unregisterAnchor(id);
-  }, [id, unregisterAnchor]);
-
-  return ref;
+      unregisterAnchor(id);
+    },
+    [id, registerAnchor, unregisterAnchor]
+  );
 }

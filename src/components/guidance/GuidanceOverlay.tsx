@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
+import { InteractionManager, Pressable, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -19,6 +19,7 @@ import {
   GUIDANCE_BUBBLE_BACKDROP_COLOR,
   GUIDANCE_BUBBLE_ENTER_DURATION,
   GUIDANCE_BUBBLE_EXIT_DURATION,
+  GUIDANCE_LAYOUT_SETTLE_DELAY_MS,
   GUIDANCE_MAX_ANCHOR_MEASURE_ATTEMPTS,
 } from "./guidanceTransitionConfig";
 
@@ -137,7 +138,7 @@ export default function GuidanceOverlay({
   dismissOnBackdropPress = false,
 }: GuidanceOverlayProps) {
   const { colors } = useAppTheme();
-  const { measureAnchor } = useGuidance();
+  const { layoutRevision, measureAnchor } = useGuidance();
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const itemCount = items.length;
@@ -155,8 +156,18 @@ export default function GuidanceOverlay({
   const transitionLockRef = useRef(false);
   const lastEnteredItemIdRef = useRef<string | null>(null);
   const isLast = displayedIndex === itemCount - 1;
+  const bubbleWidth = anchorRect
+    ? clamp(anchorRect.width, 300, screenWidth - EDGE_PADDING * 2)
+    : null;
   const surfaceReady = Boolean(
-    isRendered && visible && item && itemId && contentSize.width > 0 && contentSize.height > 0 && anchorRect
+    isRendered &&
+      visible &&
+      item &&
+      itemId &&
+      anchorRect &&
+      bubbleWidth &&
+      contentSize.width > 0 &&
+      contentSize.height > 0
   );
 
   const stopAnimations = useCallback(() => {
@@ -164,11 +175,15 @@ export default function GuidanceOverlay({
     cancelAnimation(backdropOpacity);
   }, [backdropOpacity, surfaceOpacity]);
 
-  const resetMeasuredState = useCallback(() => {
+  const clearMeasuredGeometry = useCallback(() => {
     setAnchorRect(null);
     setContentSize({ width: 0, height: 0 });
-    lastEnteredItemIdRef.current = null;
   }, []);
+
+  const resetMeasuredState = useCallback(() => {
+    clearMeasuredGeometry();
+    lastEnteredItemIdRef.current = null;
+  }, [clearMeasuredGeometry]);
 
   const resetHiddenState = useCallback(() => {
     stopAnimations();
@@ -307,9 +322,30 @@ export default function GuidanceOverlay({
       return;
     }
 
+    clearMeasuredGeometry();
+  }, [
+    clearMeasuredGeometry,
+    displayedIndex,
+    insets.bottom,
+    insets.top,
+    isRendered,
+    item,
+    layoutRevision,
+    screenHeight,
+    screenWidth,
+    visible,
+  ]);
+
+  useEffect(() => {
+    if (!item || !isRendered || !visible) {
+      return;
+    }
+
     let active = true;
     let attempts = 0;
     let previousRect: GuidanceAnchorRect | null = null;
+    let settleTimeout: ReturnType<typeof setTimeout> | null = null;
+    let interactionHandle: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
 
     const finishAnchorResolution = (rect: GuidanceAnchorRect | null) => {
       if (rect) {
@@ -351,12 +387,40 @@ export default function GuidanceOverlay({
       });
     };
 
-    requestAnimationFrame(tryMeasure);
+    const startMeasurement = () => {
+      if (!active) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(tryMeasure);
+      });
+    };
+
+    interactionHandle = InteractionManager.runAfterInteractions(() => {
+      settleTimeout = setTimeout(startMeasurement, GUIDANCE_LAYOUT_SETTLE_DELAY_MS);
+    });
 
     return () => {
       active = false;
+      interactionHandle?.cancel();
+
+      if (settleTimeout) {
+        clearTimeout(settleTimeout);
+      }
     };
-  }, [displayedIndex, isRendered, item, measureAnchor, visible]);
+  }, [
+    displayedIndex,
+    insets.bottom,
+    insets.top,
+    isRendered,
+    item,
+    layoutRevision,
+    measureAnchor,
+    screenHeight,
+    screenWidth,
+    visible,
+  ]);
 
   const layout = useMemo(() => {
     if (!item || !anchorRect || !contentSize.width || !contentSize.height) {
@@ -502,13 +566,8 @@ export default function GuidanceOverlay({
         height: Math.max(0, anchorHitRect.bottom - anchorHitRect.top + 24),
       }
     : null;
-  const bubbleWidth = clamp(
-    anchorRect?.width ?? screenWidth - EDGE_PADDING * 2,
-    300,
-    screenWidth - EDGE_PADDING * 2
-  );
   const visibleLayout = surfaceReady ? layout : null;
-  const surfaceContent = (
+  const surfaceContent = bubbleWidth ? (
     <GuideBubble
       text={item.text}
       actionLabel={actionLabel}
@@ -520,7 +579,7 @@ export default function GuidanceOverlay({
       accentColor={accentColor}
       accentText={colors.white}
     />
-  );
+  ) : null;
 
   const renderBackdropSegment = (
     key: string,
@@ -640,7 +699,7 @@ export default function GuidanceOverlay({
         >
           {surfaceContent}
         </Animated.View>
-      ) : (
+      ) : surfaceContent ? (
         <View
           key={`measure-${itemId ?? displayedIndex}`}
           pointerEvents="none"
@@ -660,7 +719,7 @@ export default function GuidanceOverlay({
         >
           {surfaceContent}
         </View>
-      )}
+      ) : null}
     </View>
   );
 }
