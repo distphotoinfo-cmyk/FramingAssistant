@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActionSheetIOS,
   Alert,
-  InteractionManager,
   Platform,
   Pressable,
   ScrollView,
@@ -14,16 +13,21 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import FlowStepLayout from "../components/FlowStepLayout";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AppHeader from "../components/AppHeader";
+import ScreenContainer from "../components/ScreenContainer";
+import StepProgress from "../components/StepProgress";
 import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
 import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
 import { GuidanceProvider } from "../components/guidance/GuidanceProvider";
 import MatPreviewCanvas from "../components/preview/MatPreviewCanvas";
+import AppButton from "../components/ui/AppButton";
 import AppCard from "../components/ui/AppCard";
 import AppSegmentedControl from "../components/ui/AppSegmentedControl";
 import AppSheetModal from "../components/ui/AppSheetModal";
 import ColorPickerField from "../components/ui/ColorPickerField";
 import CompactOptionPicker from "../components/ui/CompactOptionPicker";
+import { useStepNavigation } from "../hooks/useStepNavigation";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import { createInitialPreviewDraft, useFramingFlowStore } from "../state/framingFlowStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
@@ -57,12 +61,14 @@ const MOUNTING_BOARD_DEFAULT_COLORS = [
   "#C8CCC8",
   "#252525",
 ];
-const GUIDANCE_SCROLL_SETTLE_DELAY_MS = 240;
-const GUIDANCE_SCROLL_FALLBACK_DELAY_MS = 900;
-const GUIDANCE_SCROLL_MIN_DELTA = 12;
 const TABLET_WIDTH_BREAKPOINT = 768;
 const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
 const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
+const PREVIEW_ADJUST_SHEET_GUIDANCE_TARGET_IDS = new Set([
+  "preview-adjust-upload-artwork",
+  "preview-adjust-options-card",
+  "preview-adjust-live-margins-card",
+]);
 
 type FrameStyleOptionId = "none" | FrameFamily;
 type FrameProfilePickerValue = FrameProfileId | "notApplicable";
@@ -161,47 +167,6 @@ function HeaderToolIconButton({
   );
 }
 
-function DetailSheetLauncher({
-  label,
-  summary,
-  onPress,
-}: {
-  label: string;
-  summary: string;
-  onPress: () => void;
-}) {
-  const { colors, radii, spacing, typography } = useAppTheme();
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        minHeight: 64,
-        borderWidth: 1,
-        borderColor: colors.borderStrong,
-        borderRadius: radii.md,
-        backgroundColor: colors.backgroundInput,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: spacing.md,
-      }}
-    >
-      <View style={{ flex: 1, gap: 4 }}>
-        <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
-          {label}
-        </Text>
-        <Text style={{ ...typography.small, color: colors.textSecondary }}>
-          {summary}
-        </Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-    </Pressable>
-  );
-}
-
 function PanelControlRow({ children }: { children: React.ReactNode }) {
   const { colors, radii, spacing } = useAppTheme();
 
@@ -221,20 +186,121 @@ function PanelControlRow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SheetFormContent({ children }: { children: React.ReactNode }) {
-  const { spacing } = useAppTheme();
+function PreviewAdjustBottomSheet({
+  visible,
+  title,
+  maxHeight,
+  onClose,
+  children,
+}: {
+  visible: boolean;
+  title: string;
+  maxHeight: number;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  if (!visible) {
+    return null;
+  }
 
   return (
-    <ScrollView
-      showsVerticalScrollIndicator={false}
-      style={{ maxHeight: 520 }}
-      contentContainerStyle={{
-        gap: spacing.md,
-        paddingBottom: spacing.xs,
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 100,
+        elevation: 100,
       }}
     >
-      {children}
-    </ScrollView>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Close ${title}`}
+        onPress={onClose}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: colors.overlay,
+        }}
+      />
+
+      <View
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          maxHeight,
+          backgroundColor: colors.backgroundCard,
+          borderTopLeftRadius: radii.xl,
+          borderTopRightRadius: radii.xl,
+          borderWidth: 2,
+          borderBottomWidth: 0,
+          borderColor: colors.borderStrong,
+          paddingTop: spacing.sm,
+          paddingHorizontal: spacing.lg,
+          paddingBottom: Math.max(insets.bottom, spacing.lg),
+          gap: spacing.md,
+        }}
+      >
+        <View
+          style={{
+            alignSelf: "center",
+            width: 42,
+            height: 4,
+            borderRadius: radii.pill,
+            backgroundColor: colors.borderStrong,
+            opacity: 0.45,
+          }}
+        />
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing.md,
+          }}
+        >
+          <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
+            {title}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Close ${title}`}
+            onPress={onClose}
+            hitSlop={8}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              backgroundColor: colors.backgroundInput,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="close" size={18} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+          showsVerticalScrollIndicator
+        >
+          {children}
+        </ScrollView>
+      </View>
+    </View>
   );
 }
 
@@ -251,7 +317,10 @@ function getFrameStyleValue(
 
 export default function PreviewAdjustScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
+  const { currentStep, totalSteps, previousStep, goBack, goNext } =
+    useStepNavigation("PreviewAdjust");
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const previewSnapIncrementInches = useAppSettingsStore((state) => state.previewSnapIncrementInches);
@@ -263,26 +332,27 @@ export default function PreviewAdjustScreen() {
   const markPreviewAdjustIntroSeen = useAppSettingsStore((state) => state.markPreviewAdjustIntroSeen);
   const draft = useFramingFlowStore((state) => state.draft);
   const setPreview = useFramingFlowStore((state) => state.setPreview);
-  const { colors, radii, spacing, typography } = useAppTheme();
+  const { colors, layout, radii, spacing, typography } = useAppTheme();
   const [liveDragOffsets, setLiveDragOffsets] = useState<{ offsetX: number; offsetY: number } | null>(null);
   const [artworkSourceSheetVisible, setArtworkSourceSheetVisible] = useState(false);
-  const [mattingSheetVisible, setMattingSheetVisible] = useState(false);
-  const [framingSheetVisible, setFramingSheetVisible] = useState(false);
+  const [artworkFrameSheetVisible, setArtworkFrameSheetVisible] = useState(false);
   const [guidanceIndex, setGuidanceIndex] = useState(0);
-  const [isGuidanceAutoScrolling, setIsGuidanceAutoScrolling] = useState(false);
+  const [readyGuidanceTargetId, setReadyGuidanceTargetId] = useState<string | null>(null);
+  const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
   const lastLiveOffsetsUpdateRef = useRef(0);
-  const previewAdjustScrollRef = useRef<ScrollView | null>(null);
-  const lowerControlsAnchorYRef = useRef<number | null>(null);
-  const currentScrollOffsetYRef = useRef(0);
-  const pendingGuidanceResumeIndexRef = useRef<number | null>(null);
-  const guidanceScrollFallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const guidanceSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const guidanceAfterInteractionsRef =
-    useRef<ReturnType<typeof InteractionManager.runAfterInteractions> | null>(null);
   const preview = draft.preview ?? createInitialPreviewDraft();
+  const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT;
   const isTabletLandscape =
-    Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
-  const landscapePreviewHeight = Math.min(Math.max(windowHeight - 280, 460), 620);
+    isTabletScreen && windowWidth > windowHeight;
+  const isShortViewport = windowHeight < 620;
+  const measuredPreviewHeight = previewAreaSize.height > 0 ? previewAreaSize.height : windowHeight * 0.42;
+  const previewCanvasHeight = Math.max(
+    isShortViewport ? 100 : 180,
+    Math.min(
+      isTabletLandscape ? 620 : isTabletScreen ? 520 : 360,
+      measuredPreviewHeight - (isTabletLandscape ? 66 : 58)
+    )
+  );
 
   const derived = buildDerivedGeometry(draft);
   const artworkAspectRatio = getArtworkAspectRatio(derived.artworkSize);
@@ -365,8 +435,6 @@ export default function PreviewAdjustScreen() {
     selectedFrameStyleValue === "none"
       ? "No frame selected"
       : `${selectedFrameStyleLabel}, ${selectedFrameProfileLabel}, ${selectedFrameFinishLabel}`;
-  const previewAdjustGuidanceVisible =
-    shouldShowPreviewAdjustGuidance && !isGuidanceAutoScrolling;
   const previewAdjustGuidanceItems = useMemo<GuidanceItem[]>(
     () => [
       {
@@ -376,15 +444,15 @@ export default function PreviewAdjustScreen() {
         preferredPlacement: "bottom",
       },
       {
-        id: "preview-adjust-upload-bubble",
-        targetId: "preview-adjust-upload-artwork",
-        text: "Upload the artwork you want to display inside the mat.",
-        preferredPlacement: "bottom",
-      },
-      {
         id: "preview-adjust-tools-bubble",
         targetId: "preview-adjust-artwork-tools",
         text: "Re-center, adjust, and crop your artwork to refine the composition.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "preview-adjust-upload-bubble",
+        targetId: "preview-adjust-upload-artwork",
+        text: "Upload the artwork you want to display inside the mat.",
         preferredPlacement: "bottom",
       },
       {
@@ -399,80 +467,21 @@ export default function PreviewAdjustScreen() {
         text: "These are the final mat margins to cut for your print.",
         preferredPlacement: "top",
       },
+      {
+        id: "preview-adjust-next-bubble",
+        targetId: "preview-adjust-next",
+        text: "When the preview looks right, continue to the final specs.",
+        preferredPlacement: "top",
+      },
     ],
     []
   );
-
-  const clearGuidanceScrollWait = useCallback(() => {
-    if (guidanceScrollFallbackTimeoutRef.current) {
-      clearTimeout(guidanceScrollFallbackTimeoutRef.current);
-      guidanceScrollFallbackTimeoutRef.current = null;
-    }
-
-    if (guidanceSettleTimeoutRef.current) {
-      clearTimeout(guidanceSettleTimeoutRef.current);
-      guidanceSettleTimeoutRef.current = null;
-    }
-
-    guidanceAfterInteractionsRef.current?.cancel();
-    guidanceAfterInteractionsRef.current = null;
-  }, []);
-
-  const finishGuidanceAutoScroll = useCallback(() => {
-    const nextIndex = pendingGuidanceResumeIndexRef.current;
-
-    if (nextIndex === null) {
-      return;
-    }
-
-    clearGuidanceScrollWait();
-    guidanceAfterInteractionsRef.current = InteractionManager.runAfterInteractions(() => {
-      guidanceSettleTimeoutRef.current = setTimeout(() => {
-        pendingGuidanceResumeIndexRef.current = null;
-        setGuidanceIndex(nextIndex);
-        setIsGuidanceAutoScrolling(false);
-      }, GUIDANCE_SCROLL_SETTLE_DELAY_MS);
-    });
-  }, [clearGuidanceScrollWait]);
-
-  const beginGuidanceAutoScroll = useCallback(
-    (nextIndex: number) => {
-      pendingGuidanceResumeIndexRef.current = nextIndex;
-      setIsGuidanceAutoScrolling(true);
-      clearGuidanceScrollWait();
-
-      const scrollTargetY = lowerControlsAnchorYRef.current;
-      const targetOffsetY = Math.max(0, (scrollTargetY ?? 0) - spacing.md);
-      const scrollView = previewAdjustScrollRef.current;
-
-      if (!scrollView) {
-        finishGuidanceAutoScroll();
-        return;
-      }
-
-      if (
-        scrollTargetY !== null &&
-        Math.abs(targetOffsetY - currentScrollOffsetYRef.current) <= GUIDANCE_SCROLL_MIN_DELTA
-      ) {
-        finishGuidanceAutoScroll();
-        return;
-      }
-
-      guidanceScrollFallbackTimeoutRef.current = setTimeout(() => {
-        finishGuidanceAutoScroll();
-      }, GUIDANCE_SCROLL_FALLBACK_DELAY_MS);
-
-      requestAnimationFrame(() => {
-        if (scrollTargetY === null) {
-          scrollView.scrollToEnd({ animated: true });
-          return;
-        }
-
-        scrollView.scrollTo({ y: targetOffsetY, animated: true });
-      });
-    },
-    [clearGuidanceScrollWait, finishGuidanceAutoScroll, spacing.md]
-  );
+  const activeGuidanceTargetId = previewAdjustGuidanceItems[guidanceIndex]?.targetId ?? null;
+  const activeGuidanceTargetIsInSheet = activeGuidanceTargetId
+    ? PREVIEW_ADJUST_SHEET_GUIDANCE_TARGET_IDS.has(activeGuidanceTargetId)
+    : false;
+  const previewAdjustGuidanceVisible =
+    shouldShowPreviewAdjustGuidance && readyGuidanceTargetId === activeGuidanceTargetId;
 
   useEffect(() => {
     if (
@@ -650,82 +659,85 @@ export default function PreviewAdjustScreen() {
   );
 
   const handleAdvanceGuidance = useCallback(() => {
-    if (guidanceIndex === 0) {
-      beginGuidanceAutoScroll(1);
-      return;
-    }
-
     setGuidanceIndex((current) => Math.min(current + 1, previewAdjustGuidanceItems.length - 1));
-  }, [beginGuidanceAutoScroll, guidanceIndex, previewAdjustGuidanceItems.length]);
+  }, [previewAdjustGuidanceItems.length]);
 
   const handleCloseGuidance = useCallback(() => {
-    pendingGuidanceResumeIndexRef.current = null;
-    clearGuidanceScrollWait();
-    setIsGuidanceAutoScrolling(false);
+    setReadyGuidanceTargetId(null);
+    setArtworkFrameSheetVisible(false);
     markPreviewAdjustIntroSeen();
-  }, [clearGuidanceScrollWait, markPreviewAdjustIntroSeen]);
+  }, [markPreviewAdjustIntroSeen]);
 
-  const handlePreviewAdjustScroll = useCallback<NonNullable<React.ComponentProps<typeof FlowStepLayout>["onScroll"]>>(
-    (event) => {
-      currentScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
-    },
-    []
-  );
+  const handlePreviewAreaLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
 
-  const handlePreviewAdjustMomentumScrollEnd = useCallback<
-    NonNullable<React.ComponentProps<typeof FlowStepLayout>["onMomentumScrollEnd"]>
-  >(
-    (event) => {
-      currentScrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
-
-      if (pendingGuidanceResumeIndexRef.current !== null) {
-        finishGuidanceAutoScroll();
-      }
-    },
-    [finishGuidanceAutoScroll]
-  );
-
-  const handleLowerControlsAnchorLayout = useCallback((event: LayoutChangeEvent) => {
-    lowerControlsAnchorYRef.current = event.nativeEvent.layout.y;
+    setPreviewAreaSize((currentSize) =>
+      Math.abs(currentSize.width - width) < 1 && Math.abs(currentSize.height - height) < 1
+        ? currentSize
+        : { width, height }
+    );
   }, []);
 
   useEffect(() => {
     if (shouldShowPreviewAdjustGuidance) {
-      pendingGuidanceResumeIndexRef.current = null;
-      clearGuidanceScrollWait();
       setGuidanceIndex(0);
-      setIsGuidanceAutoScrolling(false);
     }
-  }, [clearGuidanceScrollWait, shouldShowPreviewAdjustGuidance]);
+  }, [shouldShowPreviewAdjustGuidance]);
 
-  useEffect(() => () => {
-    pendingGuidanceResumeIndexRef.current = null;
-    clearGuidanceScrollWait();
-  }, [clearGuidanceScrollWait]);
+  useEffect(() => {
+    if (!shouldShowPreviewAdjustGuidance || !activeGuidanceTargetId) {
+      setReadyGuidanceTargetId(null);
+      return;
+    }
+
+    setReadyGuidanceTargetId(null);
+    setArtworkFrameSheetVisible(activeGuidanceTargetIsInSheet);
+
+    const settleDelay = activeGuidanceTargetIsInSheet ? 320 : 140;
+    const timeout = setTimeout(() => {
+      setReadyGuidanceTargetId(activeGuidanceTargetId);
+    }, settleDelay);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [
+    activeGuidanceTargetId,
+    activeGuidanceTargetIsInSheet,
+    shouldShowPreviewAdjustGuidance,
+  ]);
 
   const previewCanvasSection = (
-    <GuidanceAnchor id="preview-adjust-canvas">
-      <MatPreviewCanvas
-        artworkSize={derived.artworkSize}
-        openingSize={derived.openingSize}
-        outerMatSize={derived.outerMatSize}
-        frameProfileId={preview.frameProfileId}
-        frameColorHex={resolvedFrameColorHex}
-        matThicknessPly={preview.matThicknessPly}
-        matColorHex={preview.matColorHex}
-        matCoreColor={preview.matCoreColor}
-        mountingBoardColorHex={preview.mountingBoardColorHex}
-        offsetX={preview.offsetX}
-        offsetY={preview.offsetY}
-        snapIncrement={snapIncrement}
-        artworkSourceMode={preview.artworkSourceMode}
-        artworkImageUri={preview.artworkImageUri}
-        artworkCrop={preview.artworkCrop}
-        onAdjustOffsets={handleCommittedOffsets}
-        onLiveOffsetsChange={handleLiveOffsetsChange}
-        canvasHeight={isTabletLandscape ? landscapePreviewHeight : undefined}
-        layoutVariant={isTabletLandscape ? "workspace" : "default"}
-      />
+    <GuidanceAnchor
+      id="preview-adjust-canvas"
+      style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+    >
+      <View
+        onLayout={handlePreviewAreaLayout}
+        style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+      >
+        <MatPreviewCanvas
+          artworkSize={derived.artworkSize}
+          openingSize={derived.openingSize}
+          outerMatSize={derived.outerMatSize}
+          frameProfileId={preview.frameProfileId}
+          frameColorHex={resolvedFrameColorHex}
+          matThicknessPly={preview.matThicknessPly}
+          matColorHex={preview.matColorHex}
+          matCoreColor={preview.matCoreColor}
+          mountingBoardColorHex={preview.mountingBoardColorHex}
+          offsetX={preview.offsetX}
+          offsetY={preview.offsetY}
+          snapIncrement={snapIncrement}
+          artworkSourceMode={preview.artworkSourceMode}
+          artworkImageUri={preview.artworkImageUri}
+          artworkCrop={preview.artworkCrop}
+          onAdjustOffsets={handleCommittedOffsets}
+          onLiveOffsetsChange={handleLiveOffsetsChange}
+          canvasHeight={previewCanvasHeight}
+          layoutVariant="workspace"
+        />
+      </View>
     </GuidanceAnchor>
   );
 
@@ -735,39 +747,60 @@ export default function PreviewAdjustScreen() {
     </Text>
   ) : null;
 
-  const artworkCardSection = (
-    <AppCard
-      title="Artwork"
-      headerAccessory={
-        <GuidanceAnchor id="preview-adjust-artwork-tools">
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+  const positioningToolbarSection = (
+    <GuidanceAnchor id="preview-adjust-artwork-tools">
+      <View
+        style={{
+          minHeight: 58,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          borderRadius: radii.xl,
+          backgroundColor: colors.backgroundCard,
+          paddingHorizontal: spacing.md,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.md,
+        }}
+      >
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+            Position
+          </Text>
+          <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+            Re-center artwork in the mat
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <HeaderToolIconButton
+            icon="swap-horizontal"
+            accessibilityLabel="Re-center horizontally"
+            onPress={() => setPreview({ offsetX: 0 })}
+          />
+          <HeaderToolIconButton
+            icon="swap-vertical"
+            accessibilityLabel="Re-center vertically"
+            onPress={() => setPreview({ offsetY: 0 })}
+          />
+          <HeaderToolIconButton
+            icon="locate-outline"
+            accessibilityLabel="Re-center all"
+            onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
+          />
+          {usingImportedArtwork ? (
             <HeaderToolIconButton
-              icon="swap-horizontal"
-              accessibilityLabel="Re-center horizontally"
-              onPress={() => setPreview({ offsetX: 0 })}
+              icon="crop-outline"
+              accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
+              onPress={handleEditCrop}
+              color={cropNeedsReview ? colors.warning : colors.textSecondary}
             />
-            <HeaderToolIconButton
-              icon="swap-vertical"
-              accessibilityLabel="Re-center vertically"
-              onPress={() => setPreview({ offsetY: 0 })}
-            />
-            <HeaderToolIconButton
-              icon="locate-outline"
-              accessibilityLabel="Re-center all"
-              onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
-            />
-            {usingImportedArtwork ? (
-              <HeaderToolIconButton
-                icon="crop-outline"
-                accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
-                onPress={handleEditCrop}
-                color={cropNeedsReview ? colors.warning : colors.textSecondary}
-              />
-            ) : null}
-          </View>
-        </GuidanceAnchor>
-      }
-    >
+          ) : null}
+        </View>
+      </View>
+    </GuidanceAnchor>
+  );
+
+  const artworkUploadCardSection = (
+    <AppCard title="Artwork">
       <GuidanceAnchor id="preview-adjust-upload-artwork">
         <Pressable
           onPress={openArtworkSourceChooser}
@@ -798,17 +831,107 @@ export default function PreviewAdjustScreen() {
   const optionsCardSection = (
     <GuidanceAnchor id="preview-adjust-options-card">
       <AppCard title="Matting & Framing">
-        <DetailSheetLauncher
-          label="Matting"
-          summary={mattingSummary}
-          onPress={() => setMattingSheetVisible(true)}
-        />
+        <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+          Matting
+        </Text>
+        <PanelControlRow>
+          <ColorPickerField
+            label="Mat color"
+            title="Mat color"
+            value={preview.matColorHex}
+            defaultColors={MAT_DEFAULT_COLORS}
+            customPresets={matColorPresets}
+            onChange={(matColorHex) => setPreview({ matColorHex })}
+            onSavePreset={saveMatColorPreset}
+          />
+        </PanelControlRow>
 
-        <DetailSheetLauncher
-          label="Framing"
-          summary={framingSummary}
-          onPress={() => setFramingSheetVisible(true)}
-        />
+        <PanelControlRow>
+          <AppSegmentedControl
+            label="Mat core"
+            options={MAT_CORE_OPTIONS}
+            value={preview.matCoreColor}
+            onChange={(matCoreColor) => setPreview({ matCoreColor })}
+          />
+        </PanelControlRow>
+
+        <PanelControlRow>
+          <ColorPickerField
+            label="Mount board color"
+            title="Mount board color"
+            value={preview.mountingBoardColorHex}
+            defaultColors={MOUNTING_BOARD_DEFAULT_COLORS}
+            customPresets={matColorPresets}
+            onChange={(mountingBoardColorHex) => setPreview({ mountingBoardColorHex })}
+            onSavePreset={saveMatColorPreset}
+          />
+        </PanelControlRow>
+
+        <PanelControlRow>
+          <CompactOptionPicker
+            label="Mat thickness"
+            title="Mat thickness"
+            value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
+            onChange={(value) =>
+              setPreview({
+                matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
+              })
+            }
+            options={[
+              { label: "2 ply", value: "2" },
+              { label: "4 ply", value: "4" },
+              { label: "6 ply", value: "6" },
+              { label: "8 ply", value: "8" },
+            ]}
+          />
+        </PanelControlRow>
+
+        <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+          Framing
+        </Text>
+        <PanelControlRow>
+          <CompactOptionPicker
+            label="Frame family / style"
+            title="Frame family / style"
+            value={selectedFrameStyleValue}
+            onChange={handleFrameStyleChange}
+            options={FRAME_STYLE_OPTIONS}
+          />
+        </PanelControlRow>
+
+        <PanelControlRow>
+          <CompactOptionPicker
+            label="Frame profile / width"
+            title="Frame profile / width"
+            value={selectedFrameProfileValue}
+            onChange={(value) => {
+              if (value === "notApplicable") {
+                return;
+              }
+
+              handleFramePresetChange(value);
+            }}
+            options={frameProfilePickerOptions}
+            disabled={selectedFrameStyleValue === "none"}
+          />
+        </PanelControlRow>
+
+        <PanelControlRow>
+          <CompactOptionPicker
+            label="Frame finish / color"
+            title="Frame finish / color"
+            value={selectedFrameColorValue}
+            onChange={(value) => {
+              if (value === "notApplicable") {
+                return;
+              }
+
+              handleFrameFinishChange(value as FrameFinishId);
+            }}
+            options={frameColorPickerOptions}
+            disabled={selectedFrameStyleValue === "none"}
+          />
+        </PanelControlRow>
       </AppCard>
     </GuidanceAnchor>
   );
@@ -828,61 +951,154 @@ export default function PreviewAdjustScreen() {
     </GuidanceAnchor>
   );
 
+  const artworkFrameSheetMaxHeight = Math.min(windowHeight * 0.76, isTabletLandscape ? 700 : 640);
+
   return (
     <GuidanceProvider>
-      <FlowStepLayout
-        route="PreviewAdjust"
-        title="Preview and Adjust"
-        nextLabel="View Final Specs"
-        footerVariant="compactBackArrow"
-        scrollViewRef={previewAdjustScrollRef}
-        onScroll={handlePreviewAdjustScroll}
-        onMomentumScrollEnd={handlePreviewAdjustMomentumScrollEnd}
-        scrollEventThrottle={16}
-        contentMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
-        footerMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
-        footerColumnWidth={isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined}
-        footerColumnAlign="center"
-      >
-        {isTabletLandscape ? (
+      <ScreenContainer>
+        <AppHeader
+          onOpenProjects={() => navigation.navigate("SavedProjects")}
+          onOpenSettings={() => navigation.navigate("Settings")}
+        />
+
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: spacing.md,
+          }}
+        >
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "flex-start",
-              gap: spacing.xxxl,
+              flex: 1,
+              minHeight: 0,
+              width: "100%",
+              maxWidth: isTabletLandscape
+                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                : layout.contentMaxWidth,
+              alignSelf: "center",
             }}
           >
-            <View style={{ flex: 1, minWidth: 0, gap: spacing.lg }}>
+            <StepProgress
+              currentStep={currentStep.stepNumber}
+              totalSteps={totalSteps}
+              label={currentStep.shortLabel}
+            />
+
+            <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
               {previewCanvasSection}
               {previewWarningSection}
-            </View>
-
-            <View
-              onLayout={handleLowerControlsAnchorLayout}
-              style={{
-                width: LANDSCAPE_CONTROLS_COLUMN_WIDTH,
-                maxWidth: "40%",
-                flexShrink: 0,
-                marginTop: spacing.xxl,
-                gap: spacing.lg,
-              }}
-            >
-              {artworkCardSection}
-              {optionsCardSection}
-              {liveMarginsCardSection}
+              {positioningToolbarSection}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open Artwork and Frame settings"
+                onPress={() => setArtworkFrameSheetVisible(true)}
+                style={({ pressed }) => ({
+                  minHeight: 58,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.xl,
+                  backgroundColor: pressed ? colors.backgroundMuted : colors.backgroundCard,
+                  paddingHorizontal: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.md,
+                })}
+              >
+                <View
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: colors.accentSoft,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+                    Artwork & Frame
+                  </Text>
+                  <Text
+                    style={{ ...typography.small, color: colors.textSecondary }}
+                    numberOfLines={1}
+                  >
+                    {mattingSummary} · {framingSummary}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-up" size={18} color={colors.textSecondary} />
+              </Pressable>
             </View>
           </View>
-        ) : (
-          <>
-            {previewCanvasSection}
-            {previewWarningSection}
-            <View onLayout={handleLowerControlsAnchorLayout}>
-              {artworkCardSection}
+        </View>
+
+        <View
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.08)",
+            backgroundColor: colors.headerBackground,
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: Math.max(insets.bottom, spacing.md),
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: isTabletLandscape
+                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                : layout.contentMaxWidth,
+              alignSelf: "center",
+            }}
+          >
+            <View
+              style={{
+                width: "100%",
+                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                alignSelf: "center",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: spacing.sm,
+              }}
+            >
+              {previousStep ? (
+                <AppButton
+                  variant="secondary"
+                  label="Back"
+                  onPress={goBack}
+                  style={{ width: 96 }}
+                />
+              ) : null}
+
+              <GuidanceAnchor
+                id="preview-adjust-next"
+                style={{
+                  width: previousStep ? undefined : "52%",
+                  flex: previousStep ? 1 : undefined,
+                  maxWidth: 360,
+                }}
+              >
+                <AppButton label="View Final Specs" onPress={goNext} style={{ width: "100%" }} />
+              </GuidanceAnchor>
             </View>
-            {optionsCardSection}
-            {liveMarginsCardSection}
-          </>
-        )}
+          </View>
+        </View>
+
+        <PreviewAdjustBottomSheet
+          visible={artworkFrameSheetVisible}
+          title="Artwork & Frame"
+          maxHeight={artworkFrameSheetMaxHeight}
+          onClose={() => setArtworkFrameSheetVisible(false)}
+        >
+          {artworkUploadCardSection}
+          {liveMarginsCardSection}
+          {optionsCardSection}
+        </PreviewAdjustBottomSheet>
 
         <AppSheetModal
           visible={artworkSourceSheetVisible}
@@ -945,121 +1161,7 @@ export default function PreviewAdjustScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
           </Pressable>
         </AppSheetModal>
-
-        <AppSheetModal
-          visible={mattingSheetVisible}
-          title="Matting"
-          onClose={() => setMattingSheetVisible(false)}
-          showDoneButton
-        >
-          <SheetFormContent>
-            <PanelControlRow>
-              <ColorPickerField
-                label="Mat color"
-                title="Mat color"
-                value={preview.matColorHex}
-                defaultColors={MAT_DEFAULT_COLORS}
-                customPresets={matColorPresets}
-                onChange={(matColorHex) => setPreview({ matColorHex })}
-                onSavePreset={saveMatColorPreset}
-              />
-            </PanelControlRow>
-
-            <PanelControlRow>
-              <AppSegmentedControl
-                label="Mat core"
-                options={MAT_CORE_OPTIONS}
-                value={preview.matCoreColor}
-                onChange={(matCoreColor) => setPreview({ matCoreColor })}
-              />
-            </PanelControlRow>
-
-            <PanelControlRow>
-              <ColorPickerField
-                label="Mount board color"
-                title="Mount board color"
-                value={preview.mountingBoardColorHex}
-                defaultColors={MOUNTING_BOARD_DEFAULT_COLORS}
-                customPresets={matColorPresets}
-                onChange={(mountingBoardColorHex) => setPreview({ mountingBoardColorHex })}
-                onSavePreset={saveMatColorPreset}
-              />
-            </PanelControlRow>
-
-            <PanelControlRow>
-              <CompactOptionPicker
-                label="Mat thickness"
-                title="Mat thickness"
-                value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
-                onChange={(value) =>
-                  setPreview({
-                    matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
-                  })
-                }
-                options={[
-                  { label: "2 ply", value: "2" },
-                  { label: "4 ply", value: "4" },
-                  { label: "6 ply", value: "6" },
-                  { label: "8 ply", value: "8" },
-                ]}
-              />
-            </PanelControlRow>
-          </SheetFormContent>
-        </AppSheetModal>
-
-        <AppSheetModal
-          visible={framingSheetVisible}
-          title="Framing"
-          onClose={() => setFramingSheetVisible(false)}
-          showDoneButton
-        >
-          <SheetFormContent>
-            <PanelControlRow>
-              <CompactOptionPicker
-                label="Frame family / style"
-                title="Frame family / style"
-                value={selectedFrameStyleValue}
-                onChange={handleFrameStyleChange}
-                options={FRAME_STYLE_OPTIONS}
-              />
-            </PanelControlRow>
-
-            <PanelControlRow>
-              <CompactOptionPicker
-                label="Frame profile / width"
-                title="Frame profile / width"
-                value={selectedFrameProfileValue}
-                onChange={(value) => {
-                  if (value === "notApplicable") {
-                    return;
-                  }
-
-                  handleFramePresetChange(value);
-                }}
-                options={frameProfilePickerOptions}
-                disabled={selectedFrameStyleValue === "none"}
-              />
-            </PanelControlRow>
-
-            <PanelControlRow>
-              <CompactOptionPicker
-                label="Frame finish / color"
-                title="Frame finish / color"
-                value={selectedFrameColorValue}
-                onChange={(value) => {
-                  if (value === "notApplicable") {
-                    return;
-                  }
-
-                  handleFrameFinishChange(value as FrameFinishId);
-                }}
-                options={frameColorPickerOptions}
-                disabled={selectedFrameStyleValue === "none"}
-              />
-            </PanelControlRow>
-          </SheetFormContent>
-        </AppSheetModal>
-      </FlowStepLayout>
+      </ScreenContainer>
 
       <GuidanceOverlay
         visible={previewAdjustGuidanceVisible}

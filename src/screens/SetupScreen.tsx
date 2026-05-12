@@ -1,15 +1,30 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActionSheetIOS, Alert, Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
+import {
+  ActionSheetIOS,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import FlowStepLayout from "../components/FlowStepLayout";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AppHeader from "../components/AppHeader";
+import ScreenContainer from "../components/ScreenContainer";
+import StepProgress from "../components/StepProgress";
 import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
 import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
 import { GuidanceProvider } from "../components/guidance/GuidanceProvider";
 import MatPreviewCanvas from "../components/preview/MatPreviewCanvas";
+import AppButton from "../components/ui/AppButton";
 import AppCard from "../components/ui/AppCard";
 import MeasurementWheelField from "../components/ui/MeasurementWheelField";
+import { useStepNavigation } from "../hooks/useStepNavigation";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import { createInitialPreviewDraft, useFramingFlowStore } from "../state/framingFlowStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
@@ -38,6 +53,13 @@ const STEP_ONE_PREVIEW_OUTER_MARGINS: Record<MeasurementUnit, number> = {
   in: 2,
   cm: 5,
 };
+const SETUP_SHEET_GUIDANCE_TARGET_IDS = new Set([
+  "setup-artwork-size",
+  "setup-mat-window-opening",
+  "setup-visible-border",
+  "setup-outer-mat-size",
+]);
+
 function resolvePreviewSize(size: SizeInput, fallback: NumericSize): NumericSize {
   return {
     width: parseMeasurement(size.width) ?? fallback.width,
@@ -103,22 +125,145 @@ function SetupOptionRow({ label, selected, onPress }: SetupOptionRowProps) {
   );
 }
 
+function SetupBottomSheet({
+  visible,
+  title,
+  maxHeight,
+  onClose,
+  children,
+}: {
+  visible: boolean;
+  title: string;
+  maxHeight: number;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 100,
+        elevation: 100,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Close ${title}`}
+        onPress={onClose}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: colors.overlay,
+        }}
+      />
+
+      <View
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          maxHeight,
+          backgroundColor: colors.backgroundCard,
+          borderTopLeftRadius: radii.xl,
+          borderTopRightRadius: radii.xl,
+          borderWidth: 2,
+          borderBottomWidth: 0,
+          borderColor: colors.borderStrong,
+          paddingTop: spacing.sm,
+          paddingHorizontal: spacing.lg,
+          paddingBottom: Math.max(insets.bottom, spacing.lg),
+          gap: spacing.md,
+        }}
+      >
+        <View
+          style={{
+            alignSelf: "center",
+            width: 42,
+            height: 4,
+            borderRadius: radii.pill,
+            backgroundColor: colors.borderStrong,
+            opacity: 0.45,
+          }}
+        />
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing.md,
+          }}
+        >
+          <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
+            {title}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Close ${title}`}
+            onPress={onClose}
+            hitSlop={8}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              backgroundColor: colors.backgroundInput,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="close" size={18} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+          showsVerticalScrollIndicator
+        >
+          {children}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
 export default function SetupScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
+  const { currentStep, totalSteps, previousStep, goBack, goNext } = useStepNavigation("Setup");
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const shouldShowSetupGuidance = useAppSettingsStore(
     (state) => state.hasHydrated && !state.sessionHasSeenSetupIntro
   );
   const markSetupIntroSeen = useAppSettingsStore((state) => state.markSetupIntroSeen);
-  const { colors, spacing } = useAppTheme();
+  const { colors, layout, radii, spacing, typography } = useAppTheme();
   const draft = useFramingFlowStore((state) => state.draft);
   const setArtwork = useFramingFlowStore((state) => state.setArtwork);
   const setReveal = useFramingFlowStore((state) => state.setReveal);
   const setOuterMat = useFramingFlowStore((state) => state.setOuterMat);
   const [borderPickerOpenSignal, setBorderPickerOpenSignal] = useState(0);
   const [guidanceIndex, setGuidanceIndex] = useState(0);
+  const [setupSheetVisible, setSetupSheetVisible] = useState(false);
+  const [readyGuidanceTargetId, setReadyGuidanceTargetId] = useState<string | null>(null);
+  const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
 
   const fractionStep = unit === "in" ? imperialPrecision : undefined;
   const artworkSize = parseSizeInput(draft.artwork.artworkSize);
@@ -126,7 +271,15 @@ export default function SetupScreen() {
   const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT;
   const isPortrait = windowHeight > windowWidth;
   const isTabletLandscape = isTabletScreen && !isPortrait;
-  const landscapePreviewHeight = Math.min(Math.max(windowHeight - 280, 460), 620);
+  const isShortViewport = windowHeight < 620;
+  const measuredPreviewHeight = previewAreaSize.height > 0 ? previewAreaSize.height : windowHeight * 0.42;
+  const previewCanvasHeight = Math.max(
+    isShortViewport ? 100 : 180,
+    Math.min(
+      isTabletLandscape ? 620 : isTabletScreen ? 520 : 360,
+      measuredPreviewHeight - (isTabletLandscape ? 66 : 58)
+    )
+  );
   const preview = draft.preview ?? createInitialPreviewDraft();
   const resolvedFrameColorHex = useMemo(
     () => resolveFrameColorHex(preview.frameProfileId, preview.frameFinishId, preview.frameColorHex),
@@ -134,6 +287,12 @@ export default function SetupScreen() {
   );
   const setupGuidanceItems = useMemo<GuidanceItem[]>(
     () => [
+      {
+        id: "setup-preview-bubble",
+        targetId: "setup-preview",
+        text: "Use this live preview to check the overall artwork, mat, and frame proportions as you enter setup values.",
+        preferredPlacement: "bottom",
+      },
       {
         id: "setup-artwork-size-bubble",
         targetId: "setup-artwork-size",
@@ -147,14 +306,32 @@ export default function SetupScreen() {
         preferredPlacement: "bottom",
       },
       {
+        id: "setup-visible-border-bubble",
+        targetId: "setup-visible-border",
+        text: "Set the visible border or overlap amount. This value updates the mat window in the preview.",
+        preferredPlacement: "top",
+      },
+      {
         id: "setup-outer-mat-size-bubble",
         targetId: "setup-outer-mat-size",
         text: "Enter the outer dimensions of your full mat size.",
         preferredPlacement: "top",
       },
+      {
+        id: "setup-next-bubble",
+        targetId: "setup-next",
+        text: "When the setup preview looks right, continue to refine color, frame, and artwork placement.",
+        preferredPlacement: "top",
+      },
     ],
     []
   );
+  const activeGuidanceTargetId = setupGuidanceItems[guidanceIndex]?.targetId ?? null;
+  const activeGuidanceTargetIsInSheet = activeGuidanceTargetId
+    ? SETUP_SHEET_GUIDANCE_TARGET_IDS.has(activeGuidanceTargetId)
+    : false;
+  const guidanceOverlayVisible =
+    shouldShowSetupGuidance && readyGuidanceTargetId === activeGuidanceTargetId;
   const openingSize = useMemo(
     () => calculateOpeningSize(artworkSize, draft.reveal.openingBehavior, openingAmount),
     [artworkSize, draft.reveal.openingBehavior, openingAmount]
@@ -183,8 +360,19 @@ export default function SetupScreen() {
     setGuidanceIndex((current) => Math.min(current + 1, setupGuidanceItems.length - 1));
   }, [setupGuidanceItems.length]);
   const handleCloseGuidance = useCallback(() => {
+    setReadyGuidanceTargetId(null);
+    setSetupSheetVisible(false);
     markSetupIntroSeen();
   }, [markSetupIntroSeen]);
+  const handlePreviewAreaLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+
+    setPreviewAreaSize((currentSize) =>
+      Math.abs(currentSize.width - width) < 1 && Math.abs(currentSize.height - height) < 1
+        ? currentSize
+        : { width, height }
+    );
+  }, []);
 
   useEffect(() => {
     const nextVisibleRevealAmount = draft.reveal.openingBehavior === "border" ? openingAmount : "0";
@@ -238,6 +426,25 @@ export default function SetupScreen() {
       setGuidanceIndex(0);
     }
   }, [shouldShowSetupGuidance]);
+
+  useEffect(() => {
+    if (!shouldShowSetupGuidance || !activeGuidanceTargetId) {
+      setReadyGuidanceTargetId(null);
+      return;
+    }
+
+    setReadyGuidanceTargetId(null);
+    setSetupSheetVisible(activeGuidanceTargetIsInSheet);
+
+    const settleDelay = activeGuidanceTargetIsInSheet ? 320 : 140;
+    const timeout = setTimeout(() => {
+      setReadyGuidanceTargetId(activeGuidanceTargetId);
+    }, settleDelay);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [activeGuidanceTargetId, activeGuidanceTargetIsInSheet, shouldShowSetupGuidance]);
 
   const openCropEditor = useCallback(
     (imageUri: string, imageWidth?: number | null, imageHeight?: number | null) => {
@@ -446,32 +653,32 @@ export default function SetupScreen() {
             />
           </View>
 
-          {draft.reveal.openingBehavior === "overlap" ? (
-            <MeasurementWheelField
-              label="Overlap"
-              title="Overlap amount"
-              unitLabel={unit}
-              value={openingAmount}
-              onChange={(value) => setReveal({ openingAmount: value })}
-              maxWhole={unit === "in" ? 4 : 10}
-              fractionStep={fractionStep}
-              variant="compact"
-            />
-          ) : null}
-
-          {draft.reveal.openingBehavior === "border" ? (
-            <MeasurementWheelField
-              label="Visible border"
-              title="Visible border amount"
-              unitLabel={unit}
-              value={openingAmount}
-              onChange={(value) => setReveal({ openingAmount: value })}
-              maxWhole={unit === "in" ? 4 : 10}
-              fractionStep={fractionStep}
-              variant="compact"
-              openSignal={borderPickerOpenSignal}
-            />
-          ) : null}
+          <GuidanceAnchor id="setup-visible-border">
+            {draft.reveal.openingBehavior === "overlap" ? (
+              <MeasurementWheelField
+                label="Overlap"
+                title="Overlap amount"
+                unitLabel={unit}
+                value={openingAmount}
+                onChange={(value) => setReveal({ openingAmount: value })}
+                maxWhole={unit === "in" ? 4 : 10}
+                fractionStep={fractionStep}
+                variant="compact"
+              />
+            ) : (
+              <MeasurementWheelField
+                label="Visible border"
+                title="Visible border amount"
+                unitLabel={unit}
+                value={openingAmount}
+                onChange={(value) => setReveal({ openingAmount: value })}
+                maxWhole={unit === "in" ? 4 : 10}
+                fractionStep={fractionStep}
+                variant="compact"
+                openSignal={borderPickerOpenSignal}
+              />
+            )}
+          </GuidanceAnchor>
         </AppCard>
       </GuidanceAnchor>
 
@@ -520,55 +727,162 @@ export default function SetupScreen() {
     </>
   );
 
+  const setupSheetMaxHeight = Math.min(windowHeight * 0.74, isTabletLandscape ? 680 : 620);
+
   return (
     <GuidanceProvider>
-      <FlowStepLayout
-        route="Setup"
-        title="Setup"
-        nextLabel="Next"
-        contentMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
-        footerMaxWidth={isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined}
-        footerColumnWidth={isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined}
-        footerColumnAlign="center"
-      >
-        {isTabletLandscape ? (
+      <ScreenContainer>
+        <AppHeader
+          onOpenProjects={() => navigation.navigate("SavedProjects")}
+          onOpenSettings={() => navigation.navigate("Settings")}
+        />
+
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: spacing.md,
+          }}
+        >
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "flex-start",
-              gap: spacing.xxxl,
+              flex: 1,
+              minHeight: 0,
+              width: "100%",
+              maxWidth: isTabletLandscape
+                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                : layout.contentMaxWidth,
+              alignSelf: "center",
             }}
           >
-            <View style={{ flex: 1, minWidth: 0, gap: spacing.lg }}>
-              {renderStepOnePreview("workspace", landscapePreviewHeight)}
-            </View>
+            <StepProgress
+              currentStep={currentStep.stepNumber}
+              totalSteps={totalSteps}
+              label={currentStep.shortLabel}
+            />
 
+            <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
+              <GuidanceAnchor
+                id="setup-preview"
+                style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+              >
+                <View
+                  onLayout={handlePreviewAreaLayout}
+                  style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+                >
+                  {renderStepOnePreview("workspace", previewCanvasHeight)}
+                </View>
+              </GuidanceAnchor>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open Artwork Setup"
+                onPress={() => setSetupSheetVisible(true)}
+                style={({ pressed }) => ({
+                  minHeight: 58,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.xl,
+                  backgroundColor: pressed ? colors.backgroundMuted : colors.backgroundCard,
+                  paddingHorizontal: spacing.md,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.md,
+                })}
+              >
+                <View
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: colors.accentSoft,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="options-outline" size={18} color={colors.accent} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+                    Artwork Setup
+                  </Text>
+                  <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+                    Artwork size, mat window, border, and outer mat
+                  </Text>
+                </View>
+                <Ionicons name="chevron-up" size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        <View
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.08)",
+            backgroundColor: colors.headerBackground,
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: Math.max(insets.bottom, spacing.md),
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: isTabletLandscape
+                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                : layout.contentMaxWidth,
+              alignSelf: "center",
+            }}
+          >
             <View
               style={{
-                width: LANDSCAPE_CONTROLS_COLUMN_WIDTH,
-                maxWidth: "40%",
-                flexShrink: 0,
-                marginTop: spacing.xxl,
-                gap: spacing.lg,
+                width: "100%",
+                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                alignSelf: "center",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: spacing.sm,
               }}
             >
-              {renderSetupCards()}
+              {previousStep ? (
+                <AppButton
+                  variant="secondary"
+                  label="Back"
+                  onPress={goBack}
+                  style={{ width: 96 }}
+                />
+              ) : null}
+
+              <GuidanceAnchor
+                id="setup-next"
+                style={{
+                  width: previousStep ? undefined : "52%",
+                  flex: previousStep ? 1 : undefined,
+                  maxWidth: 360,
+                }}
+              >
+                <AppButton label="Next" onPress={goNext} style={{ width: "100%" }} />
+              </GuidanceAnchor>
             </View>
           </View>
-        ) : isTabletScreen ? (
-          <>
-            {renderStepOnePreview("default")}
-            {renderSetupCards()}
-          </>
-        ) : (
-          <View style={{ gap: spacing.xl }}>
-            {renderSetupCards()}
-          </View>
-        )}
-      </FlowStepLayout>
+        </View>
+
+        <SetupBottomSheet
+          visible={setupSheetVisible}
+          title="Artwork Setup"
+          maxHeight={setupSheetMaxHeight}
+          onClose={() => setSetupSheetVisible(false)}
+        >
+          {renderSetupCards()}
+        </SetupBottomSheet>
+      </ScreenContainer>
 
       <GuidanceOverlay
-        visible={shouldShowSetupGuidance}
+        visible={guidanceOverlayVisible}
         items={setupGuidanceItems}
         currentIndex={guidanceIndex}
         onNext={handleAdvanceGuidance}
