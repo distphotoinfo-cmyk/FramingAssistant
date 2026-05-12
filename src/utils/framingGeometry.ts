@@ -1,5 +1,11 @@
-import type { FramingProjectDraft, MeasurementUnit, SizeInput } from "../types/framing";
+import type {
+  FrameProfileId,
+  FramingProjectDraft,
+  MeasurementUnit,
+  SizeInput,
+} from "../types/framing";
 import { parseMeasurement, roundMeasurementString } from "./formatters";
+import { getFrameProfile } from "./frameProfiles";
 
 export interface NumericSize {
   width: number;
@@ -132,4 +138,30 @@ export function toStoredSize(size: NumericSize | null): SizeInput {
 
 export function getDefaultOpeningAmount(unit: MeasurementUnit) {
   return unit === "in" ? "0.125" : "0.3";
+}
+
+export function measurementToInches(value: number, unit: MeasurementUnit) {
+  return unit === "cm" ? value / 2.54 : value;
+}
+
+export function inchesToMeasurementUnit(value: number, unit: MeasurementUnit) {
+  return unit === "cm" ? value * 2.54 : value;
+}
+
+export function getFinishedFrameOuterSizeInches(
+  outerMatSize: NumericSize | null,
+  frameProfileId: FrameProfileId,
+  unit: MeasurementUnit
+): NumericSize | null {
+  if (!outerMatSize) {
+    return null;
+  }
+
+  const frameProfile = getFrameProfile(frameProfileId);
+  const frameFaceWidth = frameProfile.renderStyle === "none" ? 0 : frameProfile.faceWidthInches;
+
+  return {
+    width: measurementToInches(outerMatSize.width, unit) + frameFaceWidth * 2,
+    height: measurementToInches(outerMatSize.height, unit) + frameFaceWidth * 2,
+  };
 }

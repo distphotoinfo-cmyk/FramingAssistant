@@ -11,7 +11,7 @@ import { useFramingFlowStore } from "../state/framingFlowStore";
 import { useSavedProjectsStore } from "../state/savedProjectsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import type { FramingRootStackParamList } from "../types/navigation";
-import { buildDerivedGeometry } from "../utils/framingGeometry";
+import { buildDerivedGeometry, getFinishedFrameOuterSizeInches } from "../utils/framingGeometry";
 import { formatMeasurement, formatSize } from "../utils/formatters";
 
 function SpecRow({
@@ -42,10 +42,15 @@ export default function FinalSpecsScreen() {
   const draft = useFramingFlowStore((state) => state.draft);
   const setMeta = useFramingFlowStore((state) => state.setMeta);
   const resetDraft = useFramingFlowStore((state) => state.resetDraft);
-  const saveProject = useSavedProjectsStore((state) => state.saveProject);
+  const saveFramedArtwork = useSavedProjectsStore((state) => state.saveFramedArtwork);
   const { colors, typography, spacing } = useAppTheme();
 
   const derived = buildDerivedGeometry(draft);
+  const finalOuterSizeInches = getFinishedFrameOuterSizeInches(
+    derived.outerMatSize,
+    draft.preview.frameProfileId,
+    unit
+  );
   const specSummary = useMemo(
     () =>
       [
@@ -60,15 +65,27 @@ export default function FinalSpecsScreen() {
     [derived.margins?.bottom, derived.margins?.left, derived.margins?.right, derived.margins?.top, draft.artwork.artworkSize, draft.outerMat.outerMatSize, draft.reveal.matOpeningSize, imperialPrecision, unit]
   );
 
-  const handleSaveProject = () => {
-    const projectName = draft.meta.projectName.trim() || "Untitled project";
-    saveProject({
-      name: projectName,
+  const handleSaveFramedArtwork = () => {
+    if (!derived.isValidGeometry || !finalOuterSizeInches) {
+      Alert.alert(
+        "Specs not ready",
+        "Finish valid artwork and mat dimensions before saving this framed artwork."
+      );
+      return;
+    }
+
+    const artworkName = draft.meta.projectName.trim() || "Untitled framed artwork";
+    const savedArtwork = saveFramedArtwork({
+      name: artworkName,
       notes: draft.meta.notes,
-      draft,
+      draft: JSON.parse(JSON.stringify(draft)),
+      unit,
+      finalOuterSizeInches,
     });
-    Alert.alert("Project Saved", `"${projectName}" is now available from Saved Projects.`);
-    navigation.navigate("SavedProjects");
+    Alert.alert(
+      "Framed Artwork Saved",
+      `"${savedArtwork.name}" is now available in Room View.`
+    );
   };
 
   return (
@@ -76,11 +93,10 @@ export default function FinalSpecsScreen() {
       route="FinalSpecs"
       title="Final Specs"
       intro="Review the final cut numbers, add a project name if you want one, and save or export the summary from here."
-      nextLabel="Start New Draft"
+      nextLabel="View on Wall"
       footerVariant="compactBackArrow"
       onNext={() => {
-        resetDraft();
-        navigation.navigate("Setup");
+        navigation.navigate("RoomView");
       }}
     >
       <AppCard title="Final cut dimensions">
@@ -108,7 +124,11 @@ export default function FinalSpecsScreen() {
         />
 
         <View style={{ gap: spacing.sm }}>
-          <AppButton label="Save Project" onPress={handleSaveProject} style={{ width: "60%", alignSelf: "center" }} />
+          <AppButton
+            label="Save Framed Artwork"
+            onPress={handleSaveFramedArtwork}
+            style={{ width: "60%", alignSelf: "center" }}
+          />
           <AppButton
             variant="secondary"
             label="Export Summary"
@@ -116,6 +136,15 @@ export default function FinalSpecsScreen() {
               void Share.share({
                 message: specSummary,
               });
+            }}
+            style={{ width: "60%", alignSelf: "center" }}
+          />
+          <AppButton
+            variant="secondary"
+            label="Start New Draft"
+            onPress={() => {
+              resetDraft();
+              navigation.navigate("Setup");
             }}
             style={{ width: "60%", alignSelf: "center" }}
           />

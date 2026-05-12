@@ -23,6 +23,14 @@ export type FrameFinishId =
   | "monochromeMatteWhite"
   | "monochromePaintedBlack";
 export type ArtworkPreviewSourceMode = "placeholder" | "import";
+export type RoomViewSourceMode = "myWall" | "presetRoom";
+export type RoomPresetSceneOrientation = "landscape" | "portrait";
+export type RoomSceneLightingDirection =
+  | "left"
+  | "right"
+  | "center"
+  | "upperLeft"
+  | "upperRight";
 
 export interface ArtworkCropState {
   sourceWidth: number;
@@ -86,10 +94,94 @@ export interface PreviewDraft {
   artworkCrop: ArtworkCropState | null;
 }
 
+export type RoomKnownMeasurementMode = "letterLongEdge" | "custom";
+
+export interface RoomViewPoint {
+  x: number;
+  y: number;
+}
+
+export interface RoomViewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface RoomViewLine {
+  start: RoomViewPoint;
+  end: RoomViewPoint;
+}
+
+export interface RoomPresetScene {
+  id: string;
+  title: string;
+  description: string;
+  orientation: RoomPresetSceneOrientation;
+  imagePath: string;
+  sourceImageDimensions: {
+    width: number;
+    height: number;
+  };
+  wallRegion: RoomViewRect;
+  safePlacementRegion?: RoomViewRect;
+  wallPhysicalWidthInches?: number;
+  wallPhysicalHeightInches?: number;
+  floorLine?: RoomViewLine;
+  lightingDirection?: RoomSceneLightingDirection;
+  defaultShadow?: {
+    opacity: number;
+    offsetX: number;
+    offsetY: number;
+    blurRadius: number;
+  };
+  pixelsPerInch: number;
+}
+
+export interface RoomWallPhotoDraft {
+  imageUri: string;
+  imageWidth: number | null;
+  imageHeight: number | null;
+}
+
+export interface RoomScaleCalibrationDraft {
+  start: RoomViewPoint;
+  end: RoomViewPoint;
+  measurementMode: RoomKnownMeasurementMode;
+  customMeasurement: string;
+  customMeasurementUnit: MeasurementUnit;
+  pixelsPerInch: number | null;
+}
+
+export interface RoomArtworkPlacementDraft {
+  id: string;
+  framedArtworkId: string | null;
+  sourceMode: RoomViewSourceMode;
+  sourceId: string;
+  center: RoomViewPoint;
+  scale: number;
+  rotationDegrees: number;
+  zIndex: number;
+}
+
+export interface RoomViewDraft {
+  sourceMode: RoomViewSourceMode;
+  wallPhoto: RoomWallPhotoDraft | null;
+  presetSceneId: string | null;
+  calibration: RoomScaleCalibrationDraft;
+  isCalibrationRulerVisible: boolean;
+  snapToGridEnabled: boolean;
+  gridSize: string;
+  gridSizeUnit: MeasurementUnit;
+  placements: RoomArtworkPlacementDraft[];
+  activePlacementId: string | null;
+}
+
 export interface FramingProjectDraft {
   meta: ProjectMeta;
   artwork: ArtworkSetupDraft;
   reveal: RevealSetupDraft;
   outerMat: OuterMatSetupDraft;
   preview: PreviewDraft;
+  roomView: RoomViewDraft;
 }

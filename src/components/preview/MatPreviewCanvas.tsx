@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, PixelRatio, Text, View } from "react-native";
+import { Image, PixelRatio, Text, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
@@ -39,6 +39,26 @@ interface MatPreviewCanvasProps {
   onDragStateChange?: (isDragging: boolean) => void;
   canvasHeight?: number;
   layoutVariant?: "default" | "workspace";
+}
+
+export interface FinishedFramedArtworkProps {
+  artworkSize: NumericSize | null;
+  openingSize: NumericSize | null;
+  outerMatSize: NumericSize | null;
+  frameProfileId: FrameProfileId;
+  frameColorHex: string;
+  matThicknessPly: MatThicknessPly;
+  matColorHex: string;
+  matCoreColor: MatCoreColor;
+  mountingBoardColorHex: string;
+  offsetX: number;
+  offsetY: number;
+  artworkSourceMode: ArtworkPreviewSourceMode;
+  artworkImageUri: string | null;
+  artworkCrop: ArtworkCropState | null;
+  physicalScale: number;
+  showShadow?: boolean;
+  style?: ViewStyle;
 }
 
 interface FrameFacePalette {
@@ -371,6 +391,406 @@ function snapToIncrement(value: number, increment: number) {
   }
 
   return Math.round(value / increment) * increment;
+}
+
+export function FinishedFramedArtwork({
+  artworkSize,
+  openingSize,
+  outerMatSize,
+  frameProfileId,
+  frameColorHex,
+  matThicknessPly,
+  matColorHex,
+  matCoreColor,
+  mountingBoardColorHex,
+  offsetX,
+  offsetY,
+  artworkSourceMode,
+  artworkImageUri,
+  artworkCrop,
+  physicalScale,
+  showShadow = true,
+  style,
+}: FinishedFramedArtworkProps) {
+  const { isDark } = useAppTheme();
+  const unit = useAppSettingsStore((state) => state.unit);
+  const frameProfile = getFrameProfile(frameProfileId);
+  const frameFaceWidth =
+    unit === "cm" ? frameProfile.faceWidthInches * 2.54 : frameProfile.faceWidthInches;
+  const frameColor = normalizeHex(frameColorHex, "#050505");
+  const matColor = normalizeHex(matColorHex, "#F4F0E8");
+  const mountingBoardColor = normalizeHex(mountingBoardColorHex, "#FFFFFF");
+  const matLightness = hexToHsl(matColor).l;
+  const isWhiteCore = matCoreColor === "white";
+  const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
+  const isFlorentineFrame = frameProfile.renderStyle === "florentine";
+  const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
+  const bevelUnitScale = unit === "cm" ? 2.54 : 1;
+  const bevelVisualScale = 1.5625;
+  const bevelThicknessMultiplier = {
+    2: 1,
+    4: 1,
+    6: 1,
+    8: 1,
+  }[matThicknessPly];
+  const bevelProfile = {
+    2: { physicalWidth: 0.045 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.045 },
+    4: { physicalWidth: 0.08 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.06 },
+    6: { physicalWidth: 0.11 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.07 },
+    8: { physicalWidth: 0.14 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.08 },
+  }[matThicknessPly];
+  const minimumBevelInset = 0.85;
+  const darkMatShadowLiftRatio =
+    !isWhiteCore && matLightness < 0.18 ? (0.18 - matLightness) / 0.18 : 0;
+  const useDarkMatShadowLift = darkMatShadowLiftRatio > 0;
+  const topShadowMixAmount = isWhiteCore ? 0.2 : 0.5 - darkMatShadowLiftRatio * 0.22;
+  const leftShadowMixAmount = isWhiteCore ? 0.14 : 0.38 - darkMatShadowLiftRatio * 0.16;
+  const darkMatTopOuterColor = mixHexColors(
+    matColor,
+    "#FFFFFF",
+    0.08 + darkMatShadowLiftRatio * 0.1
+  );
+  const darkMatLeftOuterColor = mixHexColors(
+    matColor,
+    "#FFFFFF",
+    0.06 + darkMatShadowLiftRatio * 0.08
+  );
+  const topShadowEdgeColor = useDarkMatShadowLift
+    ? darkMatTopOuterColor
+    : mixHexColors(coreFaceColor, "#000000", topShadowMixAmount);
+  const leftShadowEdgeColor = useDarkMatShadowLift
+    ? darkMatLeftOuterColor
+    : mixHexColors(coreFaceColor, "#000000", leftShadowMixAmount);
+  const rightHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.16 : 0.26);
+  const bottomHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.24 : 0.34);
+  const bevelPalette = {
+    face: coreFaceColor,
+    top: {
+      outer: topShadowEdgeColor,
+      inner: useDarkMatShadowLift
+        ? mixHexColors(coreFaceColor, topShadowEdgeColor, 0.28 + darkMatShadowLiftRatio * 0.12)
+        : mixHexColors(coreFaceColor, topShadowEdgeColor, isWhiteCore ? 0.48 : 0.64),
+      midOffset: useDarkMatShadowLift ? "48%" : "40%",
+    },
+    left: {
+      outer: leftShadowEdgeColor,
+      inner: useDarkMatShadowLift
+        ? mixHexColors(coreFaceColor, leftShadowEdgeColor, 0.24 + darkMatShadowLiftRatio * 0.1)
+        : mixHexColors(coreFaceColor, leftShadowEdgeColor, isWhiteCore ? 0.42 : 0.58),
+      midOffset: useDarkMatShadowLift ? "46%" : "42%",
+    },
+    right: {
+      outer: rightHighlightEdgeColor,
+      inner: mixHexColors(coreFaceColor, rightHighlightEdgeColor, isWhiteCore ? 0.34 : 0.46),
+      midOffset: "60%",
+    },
+    bottom: {
+      outer: bottomHighlightEdgeColor,
+      inner: mixHexColors(coreFaceColor, bottomHighlightEdgeColor, isWhiteCore ? 0.44 : 0.56),
+      midOffset: "62%",
+    },
+  };
+  const apertureEdgeColor = `rgba(0,0,0,${bevelProfile.apertureEdgeAlpha})`;
+  const frameLightness = hexToHsl(frameColor).l;
+  const frameFinishPalette: FrameFacePalette = {
+    base: frameColor,
+    outerLight: mixHexColors(
+      frameColor,
+      "#FFFFFF",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.08 : 0.06
+        : isMonochromeFrame
+          ? 0.05
+          : 0.04
+    ),
+    outerShadow: mixHexColors(
+      frameColor,
+      "#000000",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.14 : 0.18
+        : isMonochromeFrame
+          ? 0.16
+          : 0.12
+    ),
+    innerLight: mixHexColors(
+      frameColor,
+      "#FFFFFF",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.18 : 0.16
+        : isMonochromeFrame
+          ? 0.1
+          : 0.1
+    ),
+    innerShadow: mixHexColors(
+      frameColor,
+      "#000000",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.08 : 0.1
+        : isMonochromeFrame
+          ? 0.08
+          : 0.06
+    ),
+    brushedHighlight: mixHexColors(
+      frameColor,
+      "#FFFFFF",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.08 : 0.12
+        : isMonochromeFrame
+          ? 0.03
+          : 0.04
+    ),
+    brushedShadow: mixHexColors(
+      frameColor,
+      "#000000",
+      isFlorentineFrame
+        ? frameLightness > 0.55 ? 0.08 : 0.1
+        : isMonochromeFrame
+          ? 0.04
+          : 0.05
+    ),
+  };
+
+  const geometry = useMemo(() => {
+    if (!artworkSize || !openingSize || !outerMatSize || physicalScale <= 0) {
+      return null;
+    }
+
+    const frameThickness =
+      frameProfile.renderStyle === "none"
+        ? 0
+        : roundToPixel(Math.max(frameFaceWidth * physicalScale, 0));
+    const matWidth = roundToPixel(outerMatSize.width * physicalScale);
+    const matHeight = roundToPixel(outerMatSize.height * physicalScale);
+    const openingWidth = roundToPixel(openingSize.width * physicalScale);
+    const openingHeight = roundToPixel(openingSize.height * physicalScale);
+    const openingBaseLeft = roundToPixel(((outerMatSize.width - openingSize.width) / 2) * physicalScale);
+    const openingBaseTop = roundToPixel(((outerMatSize.height - openingSize.height) / 2) * physicalScale);
+    const scaledBevelInset = bevelProfile.physicalWidth * physicalScale;
+    const bevelInset = roundToPixel(Math.max(
+      minimumBevelInset,
+      Math.min(
+        scaledBevelInset,
+        openingWidth / 8,
+        openingHeight / 8,
+        openingBaseLeft,
+        openingBaseTop
+      )
+    ));
+    const artworkWidth = roundToPixel(artworkSize.width * physicalScale);
+    const artworkHeight = roundToPixel(artworkSize.height * physicalScale);
+
+    return {
+      frameThickness,
+      frameOuterWidth: roundToPixel(matWidth + frameThickness * 2),
+      frameOuterHeight: roundToPixel(matHeight + frameThickness * 2),
+      matWidth,
+      matHeight,
+      openingWidth,
+      openingHeight,
+      bevelOuterWidth: openingWidth + bevelInset * 2,
+      bevelOuterHeight: openingHeight + bevelInset * 2,
+      artworkWidth,
+      artworkHeight,
+      openingBaseLeft,
+      openingBaseTop,
+      bevelBaseLeft: openingBaseLeft - bevelInset,
+      bevelBaseTop: openingBaseTop - bevelInset,
+      bevelInset,
+      apertureWidth: openingWidth,
+      apertureHeight: openingHeight,
+    };
+  }, [
+    artworkSize,
+    bevelProfile.physicalWidth,
+    frameFaceWidth,
+    frameProfile.renderStyle,
+    minimumBevelInset,
+    openingSize,
+    outerMatSize,
+    physicalScale,
+  ]);
+
+  const artworkAspectRatio = getArtworkAspectRatio(artworkSize);
+  const importedArtworkMetrics = useMemo(() => {
+    if (
+      !geometry ||
+      artworkSourceMode !== "import" ||
+      !artworkImageUri ||
+      !artworkCrop?.sourceWidth ||
+      !artworkCrop?.sourceHeight
+    ) {
+      return null;
+    }
+
+    return resolveArtworkCropMetrics({
+      crop: artworkCrop,
+      sourceWidth: artworkCrop.sourceWidth,
+      sourceHeight: artworkCrop.sourceHeight,
+      viewportWidth: geometry.artworkWidth,
+      viewportHeight: geometry.artworkHeight,
+      aspectRatio: artworkAspectRatio,
+    });
+  }, [
+    artworkAspectRatio,
+    artworkCrop,
+    artworkImageUri,
+    artworkSourceMode,
+    geometry,
+  ]);
+
+  const renderArtworkContent = useCallback(() => {
+    if (!geometry) {
+      return null;
+    }
+
+    if (artworkSourceMode === "import" && artworkImageUri) {
+      return (
+        <View
+          style={{
+            width: geometry.artworkWidth,
+            height: geometry.artworkHeight,
+            overflow: "hidden",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Image
+            source={{ uri: artworkImageUri }}
+            style={
+              importedArtworkMetrics
+                ? {
+                    width: importedArtworkMetrics.imageWidth * importedArtworkMetrics.zoomScale,
+                    height: importedArtworkMetrics.imageHeight * importedArtworkMetrics.zoomScale,
+                    transform: [
+                      { translateX: importedArtworkMetrics.offsetX },
+                      { translateY: importedArtworkMetrics.offsetY },
+                    ],
+                  }
+                : {
+                    width: geometry.artworkWidth,
+                    height: geometry.artworkHeight,
+                  }
+            }
+            resizeMode="cover"
+          />
+        </View>
+      );
+    }
+
+    return (
+      <View
+        style={{
+          width: geometry.artworkWidth,
+          height: geometry.artworkHeight,
+          backgroundColor: "#DDD6CC",
+          alignItems: "center",
+          justifyContent: "center",
+          borderWidth: 1,
+          borderColor: "rgba(0,0,0,0.08)",
+        }}
+      >
+        <Ionicons name="image-outline" size={Math.max(12, Math.min(24, geometry.artworkWidth / 5))} color="#857B70" />
+      </View>
+    );
+  }, [artworkImageUri, artworkSourceMode, geometry, importedArtworkMetrics]);
+
+  if (!geometry) {
+    return null;
+  }
+
+  const bevelOpeningContent = (
+    <View
+      style={{
+        position: "absolute",
+        left: geometry.bevelBaseLeft + offsetX * physicalScale,
+        top: geometry.bevelBaseTop + offsetY * physicalScale,
+        width: geometry.bevelOuterWidth,
+        height: geometry.bevelOuterHeight,
+        backgroundColor: bevelPalette.face,
+        overflow: "hidden",
+      }}
+    >
+      <MatBevelOverlay
+        width={geometry.bevelOuterWidth}
+        height={geometry.bevelOuterHeight}
+        inset={geometry.bevelInset}
+        palette={bevelPalette}
+      />
+
+      <View
+        style={{
+          position: "absolute",
+          left: geometry.bevelInset,
+          top: geometry.bevelInset,
+          width: geometry.apertureWidth,
+          height: geometry.apertureHeight,
+          backgroundColor: mountingBoardColor,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: apertureEdgeColor,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {renderArtworkContent()}
+      </View>
+    </View>
+  );
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        {
+          width: geometry.frameOuterWidth,
+          height: geometry.frameOuterHeight,
+          backgroundColor: geometry.frameThickness > 0 ? frameFinishPalette.base : "transparent",
+          overflow: "hidden",
+          shadowColor: "#000",
+          shadowOpacity: showShadow ? (isDark ? 0.28 : 0.18) : 0,
+          shadowRadius: showShadow ? 12 : 0,
+          shadowOffset: { width: 0, height: showShadow ? 6 : 0 },
+        },
+        style,
+      ]}
+    >
+      {geometry.frameThickness > 0 ? (
+        <>
+          <FrameFaceOverlay
+            width={geometry.frameOuterWidth}
+            height={geometry.frameOuterHeight}
+            thickness={geometry.frameThickness}
+            palette={frameFinishPalette}
+            renderStyle={frameProfile.renderStyle}
+          />
+          <View
+            style={{
+              position: "absolute",
+              left: geometry.frameThickness,
+              top: geometry.frameThickness,
+              width: geometry.matWidth,
+              height: geometry.matHeight,
+              backgroundColor: matColor,
+              overflow: "hidden",
+            }}
+          >
+            {bevelOpeningContent}
+          </View>
+        </>
+      ) : (
+        <View
+          style={{
+            width: geometry.matWidth,
+            height: geometry.matHeight,
+            backgroundColor: matColor,
+            overflow: "hidden",
+          }}
+        >
+          {bevelOpeningContent}
+        </View>
+      )}
+    </View>
+  );
 }
 
 export default function MatPreviewCanvas({

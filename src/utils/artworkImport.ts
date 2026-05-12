@@ -7,6 +7,39 @@ export interface ArtworkImportSelection {
   imageHeight: number | null;
 }
 
+interface ImageImportCopy {
+  mediaLibraryPermissionTitle: string;
+  mediaLibraryPermissionMessage: string;
+  cameraPermissionTitle: string;
+  cameraPermissionMessage: string;
+  libraryErrorTitle: string;
+  libraryErrorMessage: string;
+  cameraErrorTitle: string;
+  cameraErrorMessage: string;
+}
+
+const ARTWORK_IMPORT_COPY: ImageImportCopy = {
+  mediaLibraryPermissionTitle: "Photo access needed",
+  mediaLibraryPermissionMessage: "Allow photo library access to place an artwork image into the preview.",
+  cameraPermissionTitle: "Camera access needed",
+  cameraPermissionMessage: "Allow camera access to capture an artwork image for the preview.",
+  libraryErrorTitle: "Unable to open photo library",
+  libraryErrorMessage: "Framing Assistant couldn't open the photo library. Please try again.",
+  cameraErrorTitle: "Unable to open camera",
+  cameraErrorMessage: "Framing Assistant couldn't open the camera. Please try again.",
+};
+
+const WALL_PHOTO_IMPORT_COPY: ImageImportCopy = {
+  mediaLibraryPermissionTitle: "Photo access needed",
+  mediaLibraryPermissionMessage: "Allow photo library access to choose a wall photo for Room View.",
+  cameraPermissionTitle: "Camera access needed",
+  cameraPermissionMessage: "Allow camera access to capture a wall photo for Room View.",
+  libraryErrorTitle: "Unable to open photo library",
+  libraryErrorMessage: "Framing Assistant couldn't open the photo library. Please try again.",
+  cameraErrorTitle: "Unable to open camera",
+  cameraErrorMessage: "Framing Assistant couldn't open the camera. Please try again.",
+};
+
 async function loadImagePickerModule() {
   const nativeImagePicker = requireOptionalNativeModule("ExponentImagePicker");
 
@@ -29,9 +62,13 @@ async function loadImagePickerModule() {
   }
 }
 
-export async function importArtworkFromLibrary(
-  onSelect: (selection: ArtworkImportSelection) => void
-) {
+async function importImageFromLibrary({
+  copy,
+  onSelect,
+}: {
+  copy: ImageImportCopy;
+  onSelect: (selection: ArtworkImportSelection) => void;
+}) {
   try {
     const ImagePicker = await loadImagePickerModule();
 
@@ -43,8 +80,8 @@ export async function importArtworkFromLibrary(
 
     if (!permission.granted) {
       Alert.alert(
-        "Photo access needed",
-        "Allow photo library access to place an artwork image into the preview."
+        copy.mediaLibraryPermissionTitle,
+        copy.mediaLibraryPermissionMessage
       );
       return;
     }
@@ -66,15 +103,19 @@ export async function importArtworkFromLibrary(
     });
   } catch {
     Alert.alert(
-      "Unable to open photo library",
-      "Framing Assistant couldn't open the photo library. Please try again."
+      copy.libraryErrorTitle,
+      copy.libraryErrorMessage
     );
   }
 }
 
-export async function importArtworkFromCamera(
-  onSelect: (selection: ArtworkImportSelection) => void
-) {
+async function importImageFromCamera({
+  copy,
+  onSelect,
+}: {
+  copy: ImageImportCopy;
+  onSelect: (selection: ArtworkImportSelection) => void;
+}) {
   try {
     const ImagePicker = await loadImagePickerModule();
 
@@ -86,8 +127,8 @@ export async function importArtworkFromCamera(
 
     if (!permission.granted) {
       Alert.alert(
-        "Camera access needed",
-        "Allow camera access to capture an artwork image for the preview."
+        copy.cameraPermissionTitle,
+        copy.cameraPermissionMessage
       );
       return;
     }
@@ -110,8 +151,32 @@ export async function importArtworkFromCamera(
     });
   } catch {
     Alert.alert(
-      "Unable to open camera",
-      "Framing Assistant couldn't open the camera. Please try again."
+      copy.cameraErrorTitle,
+      copy.cameraErrorMessage
     );
   }
+}
+
+export async function importArtworkFromLibrary(
+  onSelect: (selection: ArtworkImportSelection) => void
+) {
+  return importImageFromLibrary({ copy: ARTWORK_IMPORT_COPY, onSelect });
+}
+
+export async function importArtworkFromCamera(
+  onSelect: (selection: ArtworkImportSelection) => void
+) {
+  return importImageFromCamera({ copy: ARTWORK_IMPORT_COPY, onSelect });
+}
+
+export async function importWallPhotoFromLibrary(
+  onSelect: (selection: ArtworkImportSelection) => void
+) {
+  return importImageFromLibrary({ copy: WALL_PHOTO_IMPORT_COPY, onSelect });
+}
+
+export async function importWallPhotoFromCamera(
+  onSelect: (selection: ArtworkImportSelection) => void
+) {
+  return importImageFromCamera({ copy: WALL_PHOTO_IMPORT_COPY, onSelect });
 }

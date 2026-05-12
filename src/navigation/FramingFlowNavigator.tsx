@@ -5,6 +5,7 @@ import type { FramingRootStackParamList } from "../types/navigation";
 import FinalSpecsScreen from "../screens/FinalSpecsScreen";
 import ArtworkCropScreen from "../screens/ArtworkCropScreen";
 import PreviewAdjustScreen from "../screens/PreviewAdjustScreen";
+import RoomViewScreen from "../screens/RoomViewScreen";
 import SavedProjectsScreen from "../screens/SavedProjectsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import SetupScreen from "../screens/SetupScreen";
@@ -27,6 +28,7 @@ export default function FramingFlowNavigator() {
       <Stack.Screen name="Setup" component={SetupScreen} />
       <Stack.Screen name="PreviewAdjust" component={PreviewAdjustScreen} />
       <Stack.Screen name="FinalSpecs" component={FinalSpecsScreen} />
+      <Stack.Screen name="RoomView" component={RoomViewScreen} />
       <Stack.Screen
         name="ArtworkCrop"
         component={ArtworkCropScreen}

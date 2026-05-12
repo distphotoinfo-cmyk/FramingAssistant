@@ -1,0 +1,42 @@
+{
+  "id": "serene-minimalist-living-room-portrait",
+  "title": "Serene Minimalist Living Room",
+  "description": "Portrait room scene with a tall open wall for framed artwork.",
+  "orientation": "portrait",
+  "imagePath": "assets/mockups/portrait/Serene minimalist living room interior.png",
+  "sourceImageDimensions": {
+    "width": 1086,
+    "height": 1448
+  },
+  "wallRegion": {
+    "x": 0.29,
+    "y": 0.08,
+    "width": 0.5,
+    "height": 0.63
+  },
+  "safePlacementRegion": {
+    "x": 0.35,
+    "y": 0.12,
+    "width": 0.38,
+    "height": 0.52
+  },
+  "wallPhysicalWidthInches": 84,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.78
+    },
+    "end": {
+      "x": 1,
+      "y": 0.78
+    }
+  },
+  "lightingDirection": "left",
+  "defaultShadow": {
+    "opacity": 0.2,
+    "offsetX": 10,
+    "offsetY": 16,
+    "blurRadius": 22
+  },
+  "pixelsPerInch": 18
+}

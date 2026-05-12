@@ -1,0 +1,42 @@
+{
+  "id": "calm-cozy-modern-living-room-landscape",
+  "title": "Calm and Cozy Modern Living Room",
+  "description": "Landscape living room with a broad wall above the sofa.",
+  "orientation": "landscape",
+  "imagePath": "assets/mockups/landscape/Calm and cozy modern living room.png",
+  "sourceImageDimensions": {
+    "width": 1448,
+    "height": 1086
+  },
+  "wallRegion": {
+    "x": 0.27,
+    "y": 0.14,
+    "width": 0.52,
+    "height": 0.4
+  },
+  "safePlacementRegion": {
+    "x": 0.32,
+    "y": 0.17,
+    "width": 0.42,
+    "height": 0.31
+  },
+  "wallPhysicalWidthInches": 108,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.78
+    },
+    "end": {
+      "x": 1,
+      "y": 0.78
+    }
+  },
+  "lightingDirection": "upperLeft",
+  "defaultShadow": {
+    "opacity": 0.22,
+    "offsetX": 12,
+    "offsetY": 18,
+    "blurRadius": 24
+  },
+  "pixelsPerInch": 17
+}

@@ -1,0 +1,3256 @@
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  ActionSheetIOS,
+  Alert,
+  Animated,
+  Image,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  Text,
+  useWindowDimensions,
+  View,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  type PanResponderGestureState,
+} from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import * as Haptics from "expo-haptics";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, {
+  Image as SvgImage,
+  Rect as SvgRect,
+} from "react-native-svg";
+import AppHeader from "../components/AppHeader";
+import ScreenContainer from "../components/ScreenContainer";
+import StepProgress from "../components/StepProgress";
+import { FinishedFramedArtwork } from "../components/preview/MatPreviewCanvas";
+import PresetRoomSceneImage from "../components/room/PresetRoomSceneImage";
+import AppButton from "../components/ui/AppButton";
+import AppCard from "../components/ui/AppCard";
+import AppSegmentedControl from "../components/ui/AppSegmentedControl";
+import AppSheetModal from "../components/ui/AppSheetModal";
+import AppTextField from "../components/ui/AppTextField";
+import { useStepNavigation } from "../hooks/useStepNavigation";
+import {
+  DEFAULT_PRESET_ROOM_SCENE_ID,
+  PRESET_ROOM_SCENES,
+  ROOM_SCENE_ORIENTATION_LABELS,
+  getPresetRoomScenesByOrientation,
+  getPresetRoomSceneById,
+  type RegisteredRoomPresetScene,
+} from "../data/presetRoomScenes";
+import { useAppSettingsStore } from "../state/appSettingsStore";
+import {
+  createInitialRoomViewDraft,
+  createRoomArtworkPlacement,
+  useFramingFlowStore,
+} from "../state/framingFlowStore";
+import { useSavedProjectsStore, type SavedFramedArtwork } from "../state/savedProjectsStore";
+import { useAppTheme } from "../theme/AppThemeProvider";
+import type {
+  MeasurementUnit,
+  FractionDenominator,
+  RoomArtworkPlacementDraft,
+  RoomKnownMeasurementMode,
+  RoomViewRect,
+  RoomViewPoint,
+  RoomViewSourceMode,
+} from "../types/framing";
+import type { FramingRootStackParamList } from "../types/navigation";
+import { importWallPhotoFromCamera, importWallPhotoFromLibrary } from "../utils/artworkImport";
+import { normalizeHex } from "../utils/color";
+import { formatMeasurement, parseMeasurement, roundMeasurementString } from "../utils/formatters";
+import { FRAME_FINISHES, getFrameProfile, resolveFrameColorHex } from "../utils/frameProfiles";
+import {
+  buildDerivedGeometry,
+  getFinishedFrameOuterSizeInches,
+  inchesToMeasurementUnit,
+  measurementToInches,
+  type NumericSize,
+} from "../utils/framingGeometry";
+import {
+  calculateCalibrationPixelsPerInch,
+  clampRoomPoint,
+  getDefaultRoomGridSize,
+  getDisplayPixelsPerInch,
+  MY_WALL_SCENE_SOURCE_ID,
+  getPresetScenePixelsPerInch,
+  getRoomGridSizeInches,
+  getRoomKnownMeasurementOptions,
+  getRoomSourceId,
+  getStandardCalibrationMeasurementLabel,
+  getStandardCalibrationPaperLabel,
+  getWallPhotoAspectRatio,
+} from "../utils/roomView";
+
+const CALIBRATION_HANDLE_SIZE = 38;
+const CALIBRATION_RULER_HEIGHT = 24;
+const CALIBRATION_RULER_HIT_HEIGHT = 46;
+const CALIBRATION_LOUPE_SIZE = 116;
+const CALIBRATION_LOUPE_ZOOM = 2.6;
+const MAX_EXPORT_WIDTH = 1800;
+const TABLET_WIDTH_BREAKPOINT = 768;
+const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
+const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
+const ARTWORK_THUMBNAIL_WIDTH = 58;
+const ARTWORK_THUMBNAIL_HEIGHT = 68;
+
+type ArtworkSortMode = "recent" | "name" | "size";
+type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
+
+const ROOM_SOURCE_OPTIONS: {
+  label: string;
+  value: RoomViewSourceMode;
+}[] = [
+  { label: "My Wall", value: "myWall" },
+  { label: "Preset Rooms", value: "presetRoom" },
+];
+
+const ARTWORK_SORT_OPTIONS: {
+  label: string;
+  value: ArtworkSortMode;
+}[] = [
+  { label: "Most Recent", value: "recent" },
+  { label: "Name A-Z", value: "name" },
+  { label: "Size", value: "size" },
+];
+
+const ROOM_VIEW_DOCK_ITEMS: {
+  label: string;
+  sheet: RoomViewDockSheet;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { label: "Artwork", sheet: "artwork", icon: "images-outline" },
+  { label: "Interiors", sheet: "interiors", icon: "home-outline" },
+  { label: "Layouts", sheet: "layouts", icon: "grid-outline" },
+  { label: "Settings", sheet: "settings", icon: "options-outline" },
+  { label: "Export", sheet: "export", icon: "share-outline" },
+];
+
+type SvgElementRef = React.ElementRef<typeof Svg> & {
+  toDataURL?: (
+    callback: (base64: string) => void,
+    options?: { width?: number; height?: number }
+  ) => void;
+};
+
+interface WallArtworkRenderItem {
+  placement: RoomArtworkPlacementDraft;
+  artwork: SavedFramedArtwork;
+  displaySize: {
+    width: number;
+    height: number;
+  };
+  frameColorHex: string;
+  physicalScale: number;
+  renderGeometry: {
+    artworkSize: NumericSize | null;
+    openingSize: NumericSize | null;
+    outerMatSize: NumericSize | null;
+    offsetX: number;
+    offsetY: number;
+  };
+}
+
+interface DisplayedImageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function getFittedStageSize({
+  containerWidth,
+  containerHeight,
+  aspectRatio,
+}: {
+  containerWidth: number;
+  containerHeight: number;
+  aspectRatio: number;
+}) {
+  if (containerWidth <= 0 || containerHeight <= 0 || aspectRatio <= 0) {
+    return null;
+  }
+
+  let width = containerWidth;
+  let height = width / aspectRatio;
+
+  if (height > containerHeight) {
+    height = containerHeight;
+    width = height * aspectRatio;
+  }
+
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
+}
+
+function WallPhotoSourceOption({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  const { colors, radii, spacing } = useAppTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        minHeight: 46,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        borderRadius: radii.md,
+        backgroundColor: colors.backgroundInput,
+        paddingHorizontal: spacing.md,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+        <Ionicons name={icon} size={18} color={colors.textPrimary} />
+        <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
+          {label}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
+function PresetRoomSceneOption({
+  scene,
+  selected,
+  onPress,
+}: {
+  scene: RegisteredRoomPresetScene;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        borderWidth: 1,
+        borderColor: selected ? colors.accent : colors.borderStrong,
+        borderRadius: radii.md,
+        backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+        padding: spacing.sm,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.md,
+      }}
+    >
+      <PresetRoomSceneImage
+        scene={scene}
+        style={{
+          width: 76,
+          height: 48,
+          borderRadius: radii.sm,
+          overflow: "hidden",
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+        }}
+      />
+
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{ fontSize: 15, fontWeight: "700", color: colors.textPrimary }}
+          numberOfLines={1}
+        >
+          {scene.title}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={2}>
+          {scene.description}
+        </Text>
+      </View>
+
+      {selected ? (
+        <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
+      ) : null}
+    </Pressable>
+  );
+}
+
+function RoomViewBottomDock({
+  activeSheet,
+  onOpenSheet,
+}: {
+  activeSheet: RoomViewDockSheet | null;
+  onOpenSheet: (sheet: RoomViewDockSheet) => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        borderRadius: radii.xl,
+        backgroundColor: colors.backgroundCard,
+        padding: spacing.xs,
+        flexDirection: "row",
+        gap: spacing.xs,
+      }}
+    >
+      {ROOM_VIEW_DOCK_ITEMS.map((item) => {
+        const selected = activeSheet === item.sheet;
+
+        return (
+          <Pressable
+            key={item.sheet}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${item.label}`}
+            onPress={() => onOpenSheet(item.sheet)}
+            style={{
+              flex: 1,
+              minHeight: 58,
+              borderRadius: radii.lg,
+              backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              paddingHorizontal: 4,
+            }}
+          >
+            <Ionicons
+              name={item.icon}
+              size={20}
+              color={selected ? colors.accent : colors.textSecondary}
+            />
+            <Text
+              style={{
+                ...typography.small,
+                color: selected ? colors.accent : colors.textSecondary,
+                fontWeight: "700",
+                textAlign: "center",
+              }}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {item.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function RoomViewBottomSheet({
+  visible,
+  title,
+  maxHeight,
+  onClose,
+  children,
+}: {
+  visible: boolean;
+  title: string;
+  maxHeight: number;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable
+        onPress={onClose}
+        style={{
+          flex: 1,
+          backgroundColor: colors.overlay,
+          justifyContent: "flex-end",
+        }}
+      >
+        <Pressable
+          onPress={() => undefined}
+          style={{
+            width: "100%",
+            maxHeight,
+            backgroundColor: colors.backgroundCard,
+            borderTopLeftRadius: radii.xl,
+            borderTopRightRadius: radii.xl,
+            borderWidth: 2,
+            borderBottomWidth: 0,
+            borderColor: colors.borderStrong,
+            paddingTop: spacing.sm,
+            paddingHorizontal: spacing.lg,
+            paddingBottom: Math.max(insets.bottom, spacing.lg),
+            gap: spacing.md,
+          }}
+        >
+          <View
+            style={{
+              alignSelf: "center",
+              width: 42,
+              height: 4,
+              borderRadius: radii.pill,
+              backgroundColor: colors.borderStrong,
+              opacity: 0.45,
+            }}
+          />
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: spacing.md,
+            }}
+          >
+            <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
+              {title}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Close ${title}`}
+              onPress={onClose}
+              hitSlop={8}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 17,
+                borderWidth: 1,
+                borderColor: colors.borderStrong,
+                backgroundColor: colors.backgroundInput,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="close" size={18} color={colors.textPrimary} />
+            </Pressable>
+          </View>
+          <ScrollView
+            contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+            showsVerticalScrollIndicator
+          >
+            {children}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function getArtworkCenterBounds({
+  stageWidth,
+  stageHeight,
+  artworkWidth,
+  artworkHeight,
+  placementBounds,
+}: {
+  stageWidth: number;
+  stageHeight: number;
+  artworkWidth: number | null;
+  artworkHeight: number | null;
+  placementBounds: RoomViewRect;
+}) {
+  if (!artworkWidth || !artworkHeight || stageWidth <= 0 || stageHeight <= 0) {
+    return {
+      minX: placementBounds.x,
+      maxX: placementBounds.x + placementBounds.width,
+      minY: placementBounds.y,
+      maxY: placementBounds.y + placementBounds.height,
+    };
+  }
+
+  const halfWidthRatio = artworkWidth / stageWidth / 2;
+  const halfHeightRatio = artworkHeight / stageHeight / 2;
+  const boundsMaxX = placementBounds.x + placementBounds.width;
+  const boundsMaxY = placementBounds.y + placementBounds.height;
+
+  return {
+    minX:
+      halfWidthRatio * 2 >= placementBounds.width
+        ? placementBounds.x + placementBounds.width / 2
+        : placementBounds.x + halfWidthRatio,
+    maxX:
+      halfWidthRatio * 2 >= placementBounds.width
+        ? placementBounds.x + placementBounds.width / 2
+        : boundsMaxX - halfWidthRatio,
+    minY:
+      halfHeightRatio * 2 >= placementBounds.height
+        ? placementBounds.y + placementBounds.height / 2
+        : placementBounds.y + halfHeightRatio,
+    maxY:
+      halfHeightRatio * 2 >= placementBounds.height
+        ? placementBounds.y + placementBounds.height / 2
+        : boundsMaxY - halfHeightRatio,
+  };
+}
+
+function convertSizeToUnit(
+  size: NumericSize | null,
+  sourceUnit: MeasurementUnit,
+  targetUnit: MeasurementUnit
+): NumericSize | null {
+  if (!size) {
+    return null;
+  }
+
+  return {
+    width: inchesToMeasurementUnit(measurementToInches(size.width, sourceUnit), targetUnit),
+    height: inchesToMeasurementUnit(measurementToInches(size.height, sourceUnit), targetUnit),
+  };
+}
+
+function convertMeasurementToUnit(
+  value: number,
+  sourceUnit: MeasurementUnit,
+  targetUnit: MeasurementUnit
+) {
+  return inchesToMeasurementUnit(measurementToInches(value, sourceUnit), targetUnit);
+}
+
+function getPlacementScale(placement: RoomArtworkPlacementDraft) {
+  return Number.isFinite(placement.scale) && placement.scale > 0 ? placement.scale : 1;
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isNonNullable<T>(value: T): value is NonNullable<T> {
+  return value !== null && value !== undefined;
+}
+
+function getSavedArtworkFinalOuterSizeInches(
+  artwork: SavedFramedArtwork,
+  derived = buildDerivedGeometry(artwork.draft)
+): NumericSize | null {
+  const storedSize = artwork.finalOuterSizeInches;
+
+  if (
+    isPositiveFiniteNumber(storedSize?.width) &&
+    isPositiveFiniteNumber(storedSize?.height)
+  ) {
+    return storedSize;
+  }
+
+  return getFinishedFrameOuterSizeInches(
+    derived.outerMatSize,
+    artwork.draft.preview.frameProfileId,
+    artwork.unit
+  );
+}
+
+function getSavedArtworkSizeLabel(
+  artwork: SavedFramedArtwork,
+  unit: MeasurementUnit,
+  imperialPrecision: FractionDenominator
+) {
+  const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork);
+
+  if (!finalOuterSize) {
+    return "Size not set";
+  }
+
+  return `${formatMeasurement(
+    inchesToMeasurementUnit(finalOuterSize.width, unit),
+    unit,
+    imperialPrecision
+  )} x ${formatMeasurement(
+    inchesToMeasurementUnit(finalOuterSize.height, unit),
+    unit,
+    imperialPrecision
+  )}`;
+}
+
+function getSavedArtworkSummary(artwork: SavedFramedArtwork) {
+  const preview = artwork.draft.preview;
+  const profile = getFrameProfile(preview.frameProfileId);
+  const finishLabel = preview.frameFinishId ? FRAME_FINISHES[preview.frameFinishId]?.label : null;
+  const frameLabel =
+    profile.renderStyle === "none"
+      ? "No frame"
+      : [profile.profileCode ? `Profile ${profile.profileCode}` : profile.label, finishLabel]
+          .filter(Boolean)
+          .join(", ");
+  const matLabel = preview.matCoreColor === "black" ? "black core mat" : "white core mat";
+
+  return `${frameLabel} · ${matLabel}`;
+}
+
+function sortFramedArtworks(
+  artworks: SavedFramedArtwork[],
+  sortMode: ArtworkSortMode
+) {
+  return [...artworks].sort((first, second) => {
+    if (sortMode === "name") {
+      return first.name.localeCompare(second.name);
+    }
+
+    if (sortMode === "size") {
+      const firstSize = getSavedArtworkFinalOuterSizeInches(first);
+      const secondSize = getSavedArtworkFinalOuterSizeInches(second);
+      const firstArea = firstSize ? firstSize.width * firstSize.height : 0;
+      const secondArea = secondSize ? secondSize.width * secondSize.height : 0;
+
+      return secondArea - firstArea;
+    }
+
+    return new Date(second.savedAt).getTime() - new Date(first.savedAt).getTime();
+  });
+}
+
+function clampArtworkCenter({
+  point,
+  stageWidth,
+  stageHeight,
+  artworkWidth,
+  artworkHeight,
+  placementBounds,
+}: {
+  point: RoomViewPoint;
+  stageWidth: number;
+  stageHeight: number;
+  artworkWidth: number | null;
+  artworkHeight: number | null;
+  placementBounds: RoomViewRect;
+}) {
+  const bounds = getArtworkCenterBounds({
+    stageWidth,
+    stageHeight,
+    artworkWidth,
+    artworkHeight,
+    placementBounds,
+  });
+
+  return {
+    x: Math.max(bounds.minX, Math.min(bounds.maxX, point.x)),
+    y: Math.max(bounds.minY, Math.min(bounds.maxY, point.y)),
+  };
+}
+
+function snapArtworkCenterToGrid({
+  point,
+  stageWidth,
+  stageHeight,
+  artworkWidth,
+  artworkHeight,
+  placementBounds,
+  snapGridSizePixels,
+}: {
+  point: RoomViewPoint;
+  stageWidth: number;
+  stageHeight: number;
+  artworkWidth: number | null;
+  artworkHeight: number | null;
+  placementBounds: RoomViewRect;
+  snapGridSizePixels: number | null;
+}) {
+  const clampedPoint = clampArtworkCenter({
+    point,
+    stageWidth,
+    stageHeight,
+    artworkWidth,
+    artworkHeight,
+    placementBounds,
+  });
+
+  if (
+    snapGridSizePixels === null ||
+    !Number.isFinite(snapGridSizePixels) ||
+    snapGridSizePixels <= 0 ||
+    stageWidth <= 0 ||
+    stageHeight <= 0
+  ) {
+    return clampedPoint;
+  }
+
+  const snappedPoint = {
+    x: Math.round((clampedPoint.x * stageWidth) / snapGridSizePixels) *
+      snapGridSizePixels /
+      stageWidth,
+    y: Math.round((clampedPoint.y * stageHeight) / snapGridSizePixels) *
+      snapGridSizePixels /
+      stageHeight,
+  };
+
+  return clampArtworkCenter({
+    point: snappedPoint,
+    stageWidth,
+    stageHeight,
+    artworkWidth,
+    artworkHeight,
+    placementBounds,
+  });
+}
+
+function addRoomPoint(point: RoomViewPoint, delta: RoomViewPoint): RoomViewPoint {
+  return {
+    x: point.x + delta.x,
+    y: point.y + delta.y,
+  };
+}
+
+function getClampedRulerMoveDelta({
+  start,
+  end,
+  delta,
+}: {
+  start: RoomViewPoint;
+  end: RoomViewPoint;
+  delta: RoomViewPoint;
+}): RoomViewPoint {
+  const minX = Math.min(start.x, end.x);
+  const maxX = Math.max(start.x, end.x);
+  const minY = Math.min(start.y, end.y);
+  const maxY = Math.max(start.y, end.y);
+
+  return {
+    x: Math.max(-minX, Math.min(1 - maxX, delta.x)),
+    y: Math.max(-minY, Math.min(1 - maxY, delta.y)),
+  };
+}
+
+function getDisplayedImageRect({
+  stageSize,
+  imageWidth,
+  imageHeight,
+}: {
+  stageSize: { width: number; height: number };
+  imageWidth: number | null | undefined;
+  imageHeight: number | null | undefined;
+}): DisplayedImageRect {
+  if (stageSize.width <= 0 || stageSize.height <= 0 || !imageWidth || !imageHeight) {
+    return {
+      left: 0,
+      top: 0,
+      width: stageSize.width,
+      height: stageSize.height,
+    };
+  }
+
+  const stageAspectRatio = stageSize.width / stageSize.height;
+  const imageAspectRatio = imageWidth / imageHeight;
+
+  if (stageAspectRatio > imageAspectRatio) {
+    const height = stageSize.height;
+    const width = height * imageAspectRatio;
+
+    return {
+      left: (stageSize.width - width) / 2,
+      top: 0,
+      width,
+      height,
+    };
+  }
+
+  const width = stageSize.width;
+  const height = width / imageAspectRatio;
+
+  return {
+    left: 0,
+    top: (stageSize.height - height) / 2,
+    width,
+    height,
+  };
+}
+
+function roomPointToDisplayPoint(point: RoomViewPoint, imageRect: DisplayedImageRect) {
+  return {
+    x: imageRect.left + point.x * imageRect.width,
+    y: imageRect.top + point.y * imageRect.height,
+  };
+}
+
+function gestureTranslationToRoomDelta(
+  gestureState: PanResponderGestureState,
+  imageRect: DisplayedImageRect
+): RoomViewPoint {
+  if (imageRect.width <= 0 || imageRect.height <= 0) {
+    return { x: 0, y: 0 };
+  }
+
+  return {
+    x: gestureState.dx / imageRect.width,
+    y: gestureState.dy / imageRect.height,
+  };
+}
+
+function roomPointsAreClose(first: RoomViewPoint, second: RoomViewPoint) {
+  return Math.abs(first.x - second.x) < 0.0001 && Math.abs(first.y - second.y) < 0.0001;
+}
+
+function getLoupePosition({
+  point,
+  stageSize,
+}: {
+  point: { x: number; y: number };
+  stageSize: { width: number; height: number };
+}) {
+  const margin = 8;
+  const preferredLeft = point.x - CALIBRATION_LOUPE_SIZE / 2;
+  const preferredTop = point.y - CALIBRATION_LOUPE_SIZE - 14;
+  const fallbackTop = point.y + 14;
+  const top = preferredTop >= margin ? preferredTop : fallbackTop;
+
+  return {
+    left: Math.max(
+      margin,
+      Math.min(stageSize.width - CALIBRATION_LOUPE_SIZE - margin, preferredLeft)
+    ),
+    top: Math.max(margin, Math.min(stageSize.height - CALIBRATION_LOUPE_SIZE - margin, top)),
+  };
+}
+
+type CalibrationDragTarget = "start" | "end" | "body";
+
+function CalibrationLoupe({
+  imageUri,
+  displayPoint,
+  normalizedPoint,
+  imageRect,
+  stageSize,
+}: {
+  imageUri: string;
+  displayPoint: { x: number; y: number };
+  normalizedPoint: RoomViewPoint;
+  imageRect: DisplayedImageRect;
+  stageSize: { width: number; height: number };
+}) {
+  const { colors } = useAppTheme();
+  const position = getLoupePosition({ point: displayPoint, stageSize });
+  const cropSize = CALIBRATION_LOUPE_SIZE / CALIBRATION_LOUPE_ZOOM;
+  const imageLocalPoint = {
+    x: normalizedPoint.x * imageRect.width,
+    y: normalizedPoint.y * imageRect.height,
+  };
+  const maxCropLeft = Math.max(0, imageRect.width - cropSize);
+  const maxCropTop = Math.max(0, imageRect.height - cropSize);
+  const cropLeft = Math.max(0, Math.min(maxCropLeft, imageLocalPoint.x - cropSize / 2));
+  const cropTop = Math.max(0, Math.min(maxCropTop, imageLocalPoint.y - cropSize / 2));
+  const cropScale = CALIBRATION_LOUPE_SIZE / cropSize;
+  const crosshairPoint = {
+    x: (imageLocalPoint.x - cropLeft) * cropScale,
+    y: (imageLocalPoint.y - cropTop) * cropScale,
+  };
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: position.left,
+        top: position.top,
+        width: CALIBRATION_LOUPE_SIZE,
+        height: CALIBRATION_LOUPE_SIZE,
+        borderRadius: CALIBRATION_LOUPE_SIZE / 2,
+        borderWidth: 2,
+        borderColor: colors.white,
+        backgroundColor: colors.backgroundCard,
+        overflow: "hidden",
+        zIndex: 140,
+        shadowColor: "#000",
+        shadowOpacity: 0.26,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
+      }}
+    >
+      <Image
+        source={{ uri: imageUri }}
+        resizeMode="stretch"
+        style={{
+          position: "absolute",
+          width: imageRect.width * cropScale,
+          height: imageRect.height * cropScale,
+          left: -cropLeft * cropScale,
+          top: -cropTop * cropScale,
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          left: crosshairPoint.x - 0.5,
+          top: 10,
+          bottom: 10,
+          width: 1,
+          backgroundColor: "rgba(0,0,0,0.55)",
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          top: crosshairPoint.y - 0.5,
+          left: 10,
+          right: 10,
+          height: 1,
+          backgroundColor: "rgba(0,0,0,0.55)",
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          left: crosshairPoint.x - 3,
+          top: crosshairPoint.y - 3,
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: "#F3C94A",
+          borderWidth: 1,
+          borderColor: "#2D2508",
+        }}
+      />
+    </View>
+  );
+}
+
+function CalibrationRuler({
+  start,
+  end,
+  imageRect,
+  stageSize,
+  wallPhotoUri,
+  onChange,
+  onDragStart,
+  onDragEnd,
+}: {
+  start: RoomViewPoint;
+  end: RoomViewPoint;
+  imageRect: DisplayedImageRect;
+  stageSize: { width: number; height: number };
+  wallPhotoUri: string;
+  onChange: (start: RoomViewPoint, end: RoomViewPoint) => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}) {
+  const { colors } = useAppTheme();
+  const [liveStart, setLiveStart] = useState(start);
+  const [liveEnd, setLiveEnd] = useState(end);
+  const [loupePoint, setLoupePoint] = useState<RoomViewPoint | null>(null);
+  const liveStartRef = useRef(start);
+  const liveEndRef = useRef(end);
+  const dragStartRef = useRef({ start, end });
+  const isDraggingRef = useRef(false);
+
+  useEffect(() => {
+    if (isDraggingRef.current) {
+      return;
+    }
+
+    liveStartRef.current = start;
+    liveEndRef.current = end;
+    setLiveStart(start);
+    setLiveEnd(end);
+  }, [end, start]);
+
+  const updateLiveRuler = useCallback(
+    (nextStart: RoomViewPoint, nextEnd: RoomViewPoint, activePoint: RoomViewPoint) => {
+      const clampedStart = clampRoomPoint(nextStart);
+      const clampedEnd = clampRoomPoint(nextEnd);
+      const clampedActivePoint = clampRoomPoint(activePoint);
+
+      liveStartRef.current = clampedStart;
+      liveEndRef.current = clampedEnd;
+      setLiveStart(clampedStart);
+      setLiveEnd(clampedEnd);
+      setLoupePoint(clampedActivePoint);
+    },
+    []
+  );
+
+  const finishDrag = useCallback(() => {
+    onChange(liveStartRef.current, liveEndRef.current);
+    setLoupePoint(null);
+    isDraggingRef.current = false;
+    onDragEnd();
+  }, [onChange, onDragEnd]);
+
+  const makePanResponder = useCallback(
+    (target: CalibrationDragTarget) =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: () => {
+          dragStartRef.current = {
+            start: liveStartRef.current,
+            end: liveEndRef.current,
+          };
+          isDraggingRef.current = true;
+          onDragStart();
+
+          const activePoint =
+            target === "end"
+              ? liveEndRef.current
+              : target === "body"
+                ? {
+                    x: (liveStartRef.current.x + liveEndRef.current.x) / 2,
+                    y: (liveStartRef.current.y + liveEndRef.current.y) / 2,
+                  }
+                : liveStartRef.current;
+
+          setLoupePoint(activePoint);
+        },
+        onPanResponderMove: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          if (imageRect.width <= 0 || imageRect.height <= 0) {
+            return;
+          }
+
+          const delta = gestureTranslationToRoomDelta(gestureState, imageRect);
+          const dragStart = dragStartRef.current;
+
+          if (target === "start") {
+            const nextStart = clampRoomPoint(addRoomPoint(dragStart.start, delta));
+            updateLiveRuler(nextStart, dragStart.end, nextStart);
+            return;
+          }
+
+          if (target === "end") {
+            const nextEnd = clampRoomPoint(addRoomPoint(dragStart.end, delta));
+            updateLiveRuler(dragStart.start, nextEnd, nextEnd);
+            return;
+          }
+
+          const clampedDelta = getClampedRulerMoveDelta({
+            start: dragStart.start,
+            end: dragStart.end,
+            delta,
+          });
+          const nextStart = addRoomPoint(dragStart.start, clampedDelta);
+          const nextEnd = addRoomPoint(dragStart.end, clampedDelta);
+
+          updateLiveRuler(nextStart, nextEnd, {
+            x: (nextStart.x + nextEnd.x) / 2,
+            y: (nextStart.y + nextEnd.y) / 2,
+          });
+        },
+        onPanResponderRelease: finishDrag,
+        onPanResponderTerminate: finishDrag,
+      }),
+    [finishDrag, imageRect, onDragStart, updateLiveRuler]
+  );
+
+  const startPanResponder = useMemo(() => makePanResponder("start"), [makePanResponder]);
+  const endPanResponder = useMemo(() => makePanResponder("end"), [makePanResponder]);
+  const bodyPanResponder = useMemo(() => makePanResponder("body"), [makePanResponder]);
+
+  if (stageSize.width <= 0 || stageSize.height <= 0 || imageRect.width <= 0 || imageRect.height <= 0) {
+    return null;
+  }
+
+  const startPoint = roomPointToDisplayPoint(liveStart, imageRect);
+  const endPoint = roomPointToDisplayPoint(liveEnd, imageRect);
+  const dx = endPoint.x - startPoint.x;
+  const dy = endPoint.y - startPoint.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const angle = Math.atan2(dy, dx);
+  const midpoint = {
+    x: (startPoint.x + endPoint.x) / 2,
+    y: (startPoint.y + endPoint.y) / 2,
+  };
+  const tickCount = Math.max(6, Math.min(18, Math.floor(length / 20)));
+
+  return (
+    <>
+      <View
+        {...bodyPanResponder.panHandlers}
+        accessibilityRole="adjustable"
+        accessibilityLabel="Calibration ruler"
+        style={{
+          position: "absolute",
+          left: midpoint.x - length / 2,
+          top: midpoint.y - CALIBRATION_RULER_HIT_HEIGHT / 2,
+          width: length,
+          height: CALIBRATION_RULER_HIT_HEIGHT,
+          justifyContent: "center",
+          zIndex: 120,
+          transform: [{ rotate: `${angle}rad` }],
+        }}
+      >
+        <View
+          style={{
+            height: CALIBRATION_RULER_HEIGHT,
+            borderWidth: 1,
+            borderColor: "#31280A",
+            backgroundColor: "#F3C94A",
+            overflow: "hidden",
+            shadowColor: "#000",
+            shadowOpacity: 0.18,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
+          }}
+        >
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 3,
+              backgroundColor: "rgba(49,40,10,0.22)",
+            }}
+          />
+          {Array.from({ length: tickCount + 1 }).map((_, index) => {
+            const isMajorTick = index === 0 || index === tickCount || index % 4 === 0;
+            const isMidTick = index % 2 === 0;
+
+            return (
+              <View
+                key={index}
+                style={{
+                  position: "absolute",
+                  left: `${(index / tickCount) * 100}%`,
+                  top: 1,
+                  width: isMajorTick ? 2 : 1,
+                  height: isMajorTick ? 17 : isMidTick ? 13 : 9,
+                  backgroundColor: "#31280A",
+                }}
+              />
+            );
+          })}
+        </View>
+      </View>
+
+      {[
+        { point: startPoint, panHandlers: startPanResponder.panHandlers, label: "Calibration ruler start" },
+        { point: endPoint, panHandlers: endPanResponder.panHandlers, label: "Calibration ruler end" },
+      ].map(({ point, panHandlers, label }) => (
+        <View
+          key={label}
+          {...panHandlers}
+          accessibilityRole="adjustable"
+          accessibilityLabel={label}
+          style={{
+            position: "absolute",
+            left: point.x - CALIBRATION_HANDLE_SIZE / 2,
+            top: point.y - CALIBRATION_HANDLE_SIZE / 2,
+            width: CALIBRATION_HANDLE_SIZE,
+            height: CALIBRATION_HANDLE_SIZE,
+            borderRadius: CALIBRATION_HANDLE_SIZE / 2,
+            borderWidth: 3,
+            borderColor: colors.white,
+            backgroundColor: "#F3C94A",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 130,
+            shadowColor: "#000",
+            shadowOpacity: 0.26,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 2 },
+          }}
+        >
+          <View
+            style={{
+              width: 9,
+              height: 9,
+              backgroundColor: "#31280A",
+            }}
+          />
+        </View>
+      ))}
+
+      {loupePoint ? (
+        <CalibrationLoupe
+          imageUri={wallPhotoUri}
+          displayPoint={roomPointToDisplayPoint(loupePoint, imageRect)}
+          normalizedPoint={loupePoint}
+          imageRect={imageRect}
+          stageSize={stageSize}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function SavedFramedArtworkPickerRow({
+  artwork,
+  selected,
+  unit,
+  imperialPrecision,
+  onPress,
+}: {
+  artwork: SavedFramedArtwork;
+  selected: boolean;
+  unit: MeasurementUnit;
+  imperialPrecision: FractionDenominator;
+  onPress: () => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const preview = artwork.draft.preview;
+  const frameColorHex = resolveFrameColorHex(
+    preview.frameProfileId,
+    preview.frameFinishId,
+    preview.frameColorHex
+  );
+  const thumbnailGeometry = useMemo(() => {
+    const derived = buildDerivedGeometry(artwork.draft);
+    const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork, derived);
+
+    if (!derived.isValidGeometry || !finalOuterSize) {
+      return null;
+    }
+
+    const finalWidth = inchesToMeasurementUnit(finalOuterSize.width, unit);
+    const finalHeight = inchesToMeasurementUnit(finalOuterSize.height, unit);
+    const physicalScale = Math.min(
+      (ARTWORK_THUMBNAIL_WIDTH - 12) / Math.max(finalWidth, 1),
+      (ARTWORK_THUMBNAIL_HEIGHT - 12) / Math.max(finalHeight, 1)
+    );
+
+    return {
+      artworkSize: convertSizeToUnit(derived.artworkSize, artwork.unit, unit),
+      openingSize: convertSizeToUnit(derived.openingSize, artwork.unit, unit),
+      outerMatSize: convertSizeToUnit(derived.outerMatSize, artwork.unit, unit),
+      offsetX: convertMeasurementToUnit(preview.offsetX, artwork.unit, unit),
+      offsetY: convertMeasurementToUnit(preview.offsetY, artwork.unit, unit),
+      physicalScale,
+    };
+  }, [artwork, preview.offsetX, preview.offsetY, unit]);
+  const sizeLabel = getSavedArtworkSizeLabel(artwork, unit, imperialPrecision);
+  const summaryLabel = getSavedArtworkSummary(artwork);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        minHeight: 84,
+        borderWidth: 1,
+        borderColor: selected ? colors.accent : colors.borderStrong,
+        borderRadius: radii.md,
+        backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.md,
+      }}
+    >
+      <View
+        style={{
+          width: ARTWORK_THUMBNAIL_WIDTH,
+          height: ARTWORK_THUMBNAIL_HEIGHT,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+          borderRadius: radii.sm,
+          backgroundColor: colors.backgroundCard,
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        }}
+      >
+        {thumbnailGeometry ? (
+          <FinishedFramedArtwork
+            artworkSize={thumbnailGeometry.artworkSize}
+            openingSize={thumbnailGeometry.openingSize}
+            outerMatSize={thumbnailGeometry.outerMatSize}
+            frameProfileId={preview.frameProfileId}
+            frameColorHex={frameColorHex}
+            matThicknessPly={preview.matThicknessPly}
+            matColorHex={preview.matColorHex}
+            matCoreColor={preview.matCoreColor}
+            mountingBoardColorHex={preview.mountingBoardColorHex}
+            offsetX={thumbnailGeometry.offsetX}
+            offsetY={thumbnailGeometry.offsetY}
+            artworkSourceMode={preview.artworkSourceMode}
+            artworkImageUri={preview.artworkImageUri}
+            artworkCrop={preview.artworkCrop}
+            physicalScale={thumbnailGeometry.physicalScale}
+            showShadow={false}
+          />
+        ) : (
+          <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
+        )}
+      </View>
+
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{ fontSize: 15, fontWeight: "700", color: colors.textPrimary }}
+          numberOfLines={1}
+        >
+          {artwork.name || "Untitled framed artwork"}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+          {sizeLabel}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+          {summaryLabel}
+        </Text>
+      </View>
+
+      <Ionicons name="add-circle-outline" size={21} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
+function PlacedWallArtwork({
+  placedArtwork,
+  selected,
+  stageSize,
+  stageOffset,
+  placementBounds,
+  snapGridSizePixels,
+  onSelect,
+  onMoveEnd,
+  onDragStart,
+  onDragEnd,
+}: {
+  placedArtwork: WallArtworkRenderItem;
+  selected: boolean;
+  stageSize: { width: number; height: number };
+  stageOffset: { x: number; y: number };
+  placementBounds: RoomViewRect;
+  snapGridSizePixels: number | null;
+  onSelect: (placementId: string) => void;
+  onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}) {
+  const { colors } = useAppTheme();
+  const preview = placedArtwork.artwork.draft.preview;
+  const dragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
+  const pendingCenterRef = useRef<RoomViewPoint | null>(null);
+  const isDraggingRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const pendingCenter = pendingCenterRef.current;
+
+    if (
+      pendingCenter &&
+      !isDraggingRef.current &&
+      roomPointsAreClose(pendingCenter, placedArtwork.placement.center)
+    ) {
+      dragOffset.setValue({ x: 0, y: 0 });
+      pendingCenterRef.current = null;
+    }
+  }, [dragOffset, placedArtwork.placement.center]);
+
+  const getNextCenter = useCallback(
+    (gestureState: PanResponderGestureState) => {
+      if (stageSize.width <= 0 || stageSize.height <= 0) {
+        return placedArtwork.placement.center;
+      }
+
+      return snapArtworkCenterToGrid({
+        point: {
+          x: dragStartCenterRef.current.x + gestureState.dx / stageSize.width,
+          y: dragStartCenterRef.current.y + gestureState.dy / stageSize.height,
+        },
+        stageWidth: stageSize.width,
+        stageHeight: stageSize.height,
+        artworkWidth: placedArtwork.displaySize.width,
+        artworkHeight: placedArtwork.displaySize.height,
+        placementBounds,
+        snapGridSizePixels,
+      });
+    },
+    [
+      placedArtwork.displaySize.height,
+      placedArtwork.displaySize.width,
+      placedArtwork.placement.center,
+      placementBounds,
+      snapGridSizePixels,
+      stageSize.height,
+      stageSize.width,
+    ]
+  );
+
+  const finishDrag = useCallback(
+    (gestureState: PanResponderGestureState) => {
+      const nextCenter = getNextCenter(gestureState);
+
+      pendingCenterRef.current = nextCenter;
+      isDraggingRef.current = false;
+      onMoveEnd(placedArtwork.placement.id, nextCenter);
+      onDragEnd();
+    },
+    [getNextCenter, onDragEnd, onMoveEnd, placedArtwork.placement.id]
+  );
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: () => {
+          pendingCenterRef.current = null;
+          isDraggingRef.current = true;
+          dragOffset.stopAnimation();
+          dragOffset.setValue({ x: 0, y: 0 });
+          dragStartCenterRef.current = placedArtwork.placement.center;
+          onSelect(placedArtwork.placement.id);
+          onDragStart();
+        },
+        onPanResponderMove: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          const nextCenter = getNextCenter(gestureState);
+
+          dragOffset.setValue({
+            x: (nextCenter.x - dragStartCenterRef.current.x) * stageSize.width,
+            y: (nextCenter.y - dragStartCenterRef.current.y) * stageSize.height,
+          });
+        },
+        onPanResponderRelease: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          finishDrag(gestureState);
+        },
+        onPanResponderTerminate: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          finishDrag(gestureState);
+        },
+      }),
+    [
+      dragOffset,
+      finishDrag,
+      getNextCenter,
+      onDragStart,
+      onSelect,
+      placedArtwork.placement.center,
+      placedArtwork.placement.id,
+      stageSize.height,
+      stageSize.width,
+    ]
+  );
+
+  const left =
+    stageOffset.x +
+    placedArtwork.placement.center.x * stageSize.width -
+    placedArtwork.displaySize.width / 2;
+  const top =
+    stageOffset.y +
+    placedArtwork.placement.center.y * stageSize.height -
+    placedArtwork.displaySize.height / 2;
+  const cornerMarkers = [
+    { left: -2, top: -2, borderLeftWidth: 2, borderTopWidth: 2 },
+    { right: -2, top: -2, borderRightWidth: 2, borderTopWidth: 2 },
+    { left: -2, bottom: -2, borderLeftWidth: 2, borderBottomWidth: 2 },
+    { right: -2, bottom: -2, borderRightWidth: 2, borderBottomWidth: 2 },
+  ];
+
+  return (
+    <Animated.View
+      {...panResponder.panHandlers}
+      accessibilityRole="imagebutton"
+      accessibilityLabel={`Placed framed artwork ${placedArtwork.artwork.name}`}
+      style={{
+        position: "absolute",
+        left,
+        top,
+        width: placedArtwork.displaySize.width,
+        height: placedArtwork.displaySize.height,
+        zIndex: 10 + placedArtwork.placement.zIndex,
+        transform: [
+          ...dragOffset.getTranslateTransform(),
+          {
+            rotate: `${placedArtwork.placement.rotationDegrees}deg`,
+          },
+        ],
+      }}
+    >
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 4,
+          top: 5,
+          width: placedArtwork.displaySize.width,
+          height: placedArtwork.displaySize.height,
+          borderRadius: 2,
+          backgroundColor: "rgba(0,0,0,0.045)",
+          shadowColor: "#000",
+          shadowOpacity: 0.1,
+          shadowRadius: 20,
+          shadowOffset: { width: 8, height: 11 },
+          elevation: 1,
+        }}
+      />
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 7,
+          right: -5,
+          bottom: -5,
+          height: 12,
+          borderRadius: 6,
+          backgroundColor: "rgba(0,0,0,0.055)",
+          shadowColor: "#000",
+          shadowOpacity: 0.06,
+          shadowRadius: 10,
+          shadowOffset: { width: 5, height: 5 },
+          elevation: 1,
+        }}
+      />
+
+      <FinishedFramedArtwork
+        artworkSize={placedArtwork.renderGeometry.artworkSize}
+        openingSize={placedArtwork.renderGeometry.openingSize}
+        outerMatSize={placedArtwork.renderGeometry.outerMatSize}
+        frameProfileId={preview.frameProfileId}
+        frameColorHex={placedArtwork.frameColorHex}
+        matThicknessPly={preview.matThicknessPly}
+        matColorHex={preview.matColorHex}
+        matCoreColor={preview.matCoreColor}
+        mountingBoardColorHex={preview.mountingBoardColorHex}
+        offsetX={placedArtwork.renderGeometry.offsetX}
+        offsetY={placedArtwork.renderGeometry.offsetY}
+        artworkSourceMode={preview.artworkSourceMode}
+        artworkImageUri={preview.artworkImageUri}
+        artworkCrop={preview.artworkCrop}
+        physicalScale={placedArtwork.physicalScale}
+        showShadow
+        style={{ opacity: 0.992 }}
+      />
+
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 2,
+        }}
+      >
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            right: 0,
+            height: 1,
+            backgroundColor: "rgba(255,255,255,0.16)",
+          }}
+        />
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            backgroundColor: "rgba(255,255,255,0.1)",
+          }}
+        />
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 1,
+            backgroundColor: "rgba(0,0,0,0.16)",
+          }}
+        />
+        <View
+          style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: 1,
+            backgroundColor: "rgba(0,0,0,0.13)",
+          }}
+        />
+      </View>
+
+      {selected ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+          }}
+        >
+          {cornerMarkers.map((cornerStyle, index) => (
+            <View
+              key={index}
+              style={{
+                position: "absolute",
+                width: 14,
+                height: 14,
+                borderColor: colors.accent,
+                ...cornerStyle,
+              }}
+            />
+          ))}
+        </View>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+function RoomSwitchRow({
+  label,
+  accessibilityLabel,
+  value,
+  disabled = false,
+  onValueChange,
+}: {
+  label: string;
+  accessibilityLabel?: string;
+  value: boolean;
+  disabled?: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value, disabled }}
+      accessibilityLabel={accessibilityLabel ?? label}
+      disabled={disabled}
+      onPress={() => onValueChange(!value)}
+      style={{
+        minHeight: 38,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.borderSubtle,
+        borderRadius: radii.md,
+        backgroundColor: colors.backgroundInput,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>{label}</Text>
+
+      <View
+        style={{
+          width: 42,
+          height: 24,
+          borderRadius: radii.pill,
+          borderWidth: 1,
+          borderColor: value ? colors.accent : colors.borderStrong,
+          backgroundColor: value ? colors.accent : colors.backgroundMuted,
+          padding: 3,
+          justifyContent: "center",
+        }}
+      >
+        <View
+          style={{
+            width: 16,
+            height: 16,
+            borderRadius: radii.pill,
+            backgroundColor: colors.white,
+            alignSelf: value ? "flex-end" : "flex-start",
+          }}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+export default function RoomViewScreen() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
+  const { currentStep, totalSteps, previousStep, goBack } = useStepNavigation("RoomView");
+  const unit = useAppSettingsStore((state) => state.unit);
+  const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
+  const draft = useFramingFlowStore((state) => state.draft);
+  const setRoomView = useFramingFlowStore((state) => state.setRoomView);
+  const resetDraft = useFramingFlowStore((state) => state.resetDraft);
+  const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
+  const { colors, radii, spacing, typography, isDark } = useAppTheme();
+  const exportSvgRef = useRef<SvgElementRef | null>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
+  const [isExporting, setIsExporting] = useState(false);
+  const [wallPhotoSourceSheetVisible, setWallPhotoSourceSheetVisible] = useState(false);
+  const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
+  const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
+  const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
+  const [isArtworkDragging, setIsArtworkDragging] = useState(false);
+  const [isCalibrationDragging, setIsCalibrationDragging] = useState(false);
+
+  const roomView = draft.roomView;
+  const wallPhoto = roomView.wallPhoto;
+  const calibration = roomView.calibration;
+  const activePresetScene = getPresetRoomSceneById(roomView.presetSceneId);
+  const activeSourceId =
+    getRoomSourceId(roomView.sourceMode, activePresetScene?.id ?? null) ??
+    MY_WALL_SCENE_SOURCE_ID;
+  const activeSourcePlacements = useMemo(
+    () =>
+      roomView.placements.filter(
+        (placement) =>
+          placement.sourceMode === roomView.sourceMode &&
+          placement.sourceId === activeSourceId
+      ),
+    [activeSourceId, roomView.placements, roomView.sourceMode]
+  );
+  const activePlacement =
+    activeSourcePlacements.find((placement) => placement.id === roomView.activePlacementId) ?? null;
+  const selectedFramedArtwork =
+    framedArtworks.find((artwork) => artwork.id === activePlacement?.framedArtworkId) ?? null;
+  const selectedDraft = selectedFramedArtwork?.draft ?? null;
+  const selectedDerived = selectedDraft ? buildDerivedGeometry(selectedDraft) : null;
+  const isTabletLandscape =
+    Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
+  const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
+  const sceneImageWidth =
+    roomView.sourceMode === "presetRoom"
+      ? activePresetScene.sourceImageDimensions.width
+      : wallPhoto?.imageWidth;
+  const sceneImageHeight =
+    roomView.sourceMode === "presetRoom"
+      ? activePresetScene.sourceImageDimensions.height
+      : wallPhoto?.imageHeight;
+  const presetSceneAsset =
+    roomView.sourceMode === "presetRoom"
+      ? Image.resolveAssetSource(activePresetScene.imageSource)
+      : null;
+  const presetScenePixelsPerInch = getPresetScenePixelsPerInch(activePresetScene);
+  const wallAspectRatio =
+    sceneImageWidth && sceneImageHeight
+      ? sceneImageWidth / sceneImageHeight
+      : getWallPhotoAspectRatio(wallPhoto);
+  const fittedStageSize = useMemo(
+    () =>
+      getFittedStageSize({
+        containerWidth: previewAreaSize.width,
+        containerHeight: previewAreaSize.height,
+        aspectRatio: wallAspectRatio,
+      }),
+    [previewAreaSize.height, previewAreaSize.width, wallAspectRatio]
+  );
+  const placementBounds = useMemo(
+    () =>
+      roomView.sourceMode === "presetRoom"
+        ? activePresetScene.wallRegion
+        : { x: 0, y: 0, width: 1, height: 1 },
+    [activePresetScene.wallRegion, roomView.sourceMode]
+  );
+  const displayedImageRect = useMemo(
+    () =>
+      getDisplayedImageRect({
+        stageSize,
+        imageWidth: sceneImageWidth,
+        imageHeight: sceneImageHeight,
+      }),
+    [sceneImageHeight, sceneImageWidth, stageSize]
+  );
+  const knownMeasurementOptions = useMemo(
+    () => getRoomKnownMeasurementOptions(unit),
+    [unit]
+  );
+  const sortedFramedArtworks = useMemo(
+    () => sortFramedArtworks(framedArtworks, artworkSortMode),
+    [artworkSortMode, framedArtworks]
+  );
+  const displayPixelsPerInch = getDisplayPixelsPerInch({
+    sourceImageWidth: sceneImageWidth,
+    stageWidth: displayedImageRect.width,
+    pixelsPerInch:
+      roomView.sourceMode === "presetRoom"
+        ? presetScenePixelsPerInch
+        : calibration.pixelsPerInch,
+  });
+  const gridSizeInches = getRoomGridSizeInches({
+    gridSize: roomView.gridSize,
+    gridSizeUnit: roomView.gridSizeUnit,
+  });
+  const snapGridSizePixels =
+    roomView.snapToGridEnabled && displayPixelsPerInch !== null && gridSizeInches !== null
+      ? displayPixelsPerInch * gridSizeInches
+      : null;
+  const framedArtworkScale =
+    displayPixelsPerInch === null
+      ? null
+      : unit === "cm"
+        ? displayPixelsPerInch / 2.54
+        : displayPixelsPerInch;
+  const placedArtworks = useMemo<WallArtworkRenderItem[]>(() => {
+    if (!sceneImageWidth || !displayPixelsPerInch || !framedArtworkScale) {
+      return [];
+    }
+
+    return activeSourcePlacements
+      .map((placement, index) => {
+        if (!placement.framedArtworkId) {
+          return null;
+        }
+
+        const artwork = framedArtworks.find((saved) => saved.id === placement.framedArtworkId);
+
+        if (!artwork) {
+          return null;
+        }
+
+        const preview = artwork.draft.preview;
+        const derived = buildDerivedGeometry(artwork.draft);
+        const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork, derived);
+
+        if (!derived.isValidGeometry || !finalOuterSize) {
+          return null;
+        }
+
+        const placementScale = getPlacementScale(placement);
+        const displaySize = {
+          width: finalOuterSize.width * displayPixelsPerInch * placementScale,
+          height: finalOuterSize.height * displayPixelsPerInch * placementScale,
+        };
+
+        return {
+          placement: {
+            ...placement,
+            zIndex: placement.zIndex ?? index,
+          },
+          artwork,
+          displaySize,
+          frameColorHex: resolveFrameColorHex(
+            preview.frameProfileId,
+            preview.frameFinishId,
+            preview.frameColorHex
+          ),
+          physicalScale: framedArtworkScale * placementScale,
+          renderGeometry: {
+            artworkSize: convertSizeToUnit(derived.artworkSize, artwork.unit, unit),
+            openingSize: convertSizeToUnit(derived.openingSize, artwork.unit, unit),
+            outerMatSize: convertSizeToUnit(derived.outerMatSize, artwork.unit, unit),
+            offsetX: convertMeasurementToUnit(preview.offsetX, artwork.unit, unit),
+            offsetY: convertMeasurementToUnit(preview.offsetY, artwork.unit, unit),
+          },
+        };
+      })
+      .filter((item): item is WallArtworkRenderItem => item !== null)
+      .sort((first, second) => first.placement.zIndex - second.placement.zIndex);
+  }, [
+    activeSourcePlacements,
+    displayPixelsPerInch,
+    framedArtworkScale,
+    framedArtworks,
+    sceneImageWidth,
+    unit,
+  ]);
+  const selectedSizeLabel = selectedFramedArtwork
+    ? getSavedArtworkSizeLabel(selectedFramedArtwork, unit, imperialPrecision)
+    : "Not selected";
+  const placedArtworkCount = placedArtworks.length;
+  const customMeasurementUnitLabel = unit === "cm" ? "cm" : "in";
+  const customMeasurementUnitName = unit === "cm" ? "centimeters" : "inches";
+  const standardCalibrationMeasurementLabel = getStandardCalibrationMeasurementLabel(unit);
+  const standardCalibrationPaperLabel = getStandardCalibrationPaperLabel(unit);
+  const wallPhotoEmptyStageHeight = fittedStageSize?.height ?? previewAreaSize.height;
+  const useCompactWallPhotoEmptyState =
+    isPhoneWorkspace && roomView.sourceMode === "myWall" && !wallPhoto;
+  const showWallPhotoEmptyHelper =
+    !useCompactWallPhotoEmptyState || wallPhotoEmptyStageHeight >= 340;
+  const wallPhotoEmptyIconSize = useCompactWallPhotoEmptyState ? 46 : 64;
+  const wallPhotoEmptyIconRadius = wallPhotoEmptyIconSize / 2;
+  const wallPhotoEmptyIconGlyphSize = useCompactWallPhotoEmptyState ? 22 : 28;
+  const paperPhotoHelperText =
+    unit === "cm"
+      ? "Use a straight-on photo with the long edge of standard A4 paper (29.7 cm) or another known object on the wall for accurate scale."
+      : "Use a straight-on photo with the long edge of standard U.S. letter paper (11 in) or another known object on the wall for accurate scale.";
+  const calibrationHelperText = `Drag the ruler handles across a known measurement on the wall. Use the long edge of ${standardCalibrationPaperLabel} (${standardCalibrationMeasurementLabel}), or enter a custom measurement.`;
+  const hasActiveScene =
+    roomView.sourceMode === "presetRoom"
+      ? Boolean(activePresetScene)
+      : Boolean(wallPhoto);
+  const canPlaceFramedArtwork =
+    framedArtworks.length > 0 &&
+    (roomView.sourceMode === "presetRoom"
+      ? Boolean(activePresetScene)
+      : Boolean(wallPhoto && calibration.pixelsPerInch));
+  const gridSizeHelperText =
+    gridSizeInches === null
+      ? `Enter a grid size greater than 0 ${customMeasurementUnitLabel}.`
+      : calibration.pixelsPerInch === null
+        ? "Snapping starts after the wall scale is calibrated."
+        : `Snaps artwork centers every ${formatMeasurement(
+            inchesToMeasurementUnit(gridSizeInches, unit),
+            unit,
+            imperialPrecision
+          )}.`;
+
+  useEffect(() => {
+    if (roomView.sourceMode !== "myWall") {
+      return;
+    }
+
+    if (!wallPhoto?.imageUri || (wallPhoto.imageWidth && wallPhoto.imageHeight)) {
+      return;
+    }
+
+    Image.getSize(
+      wallPhoto.imageUri,
+      (imageWidth, imageHeight) => {
+        setRoomView({
+          wallPhoto: {
+            ...wallPhoto,
+            imageWidth,
+            imageHeight,
+          },
+        });
+      },
+      () => undefined
+    );
+  }, [roomView.sourceMode, setRoomView, wallPhoto]);
+
+  useEffect(() => {
+    if (roomView.sourceMode !== "myWall") {
+      return;
+    }
+
+    const nextPixelsPerInch = calculateCalibrationPixelsPerInch({
+      wallPhoto,
+      calibration,
+      unit,
+    });
+    const currentPixelsPerInch = calibration.pixelsPerInch;
+    const bothEmpty = nextPixelsPerInch === null && currentPixelsPerInch === null;
+
+    if (
+      bothEmpty ||
+      (nextPixelsPerInch !== null &&
+        currentPixelsPerInch !== null &&
+        Math.abs(nextPixelsPerInch - currentPixelsPerInch) < 0.01)
+    ) {
+      return;
+    }
+
+    setRoomView({
+      calibration: {
+        pixelsPerInch: nextPixelsPerInch,
+      },
+    });
+  }, [
+    calibration,
+    calibration.pixelsPerInch,
+    roomView.sourceMode,
+    setRoomView,
+    unit,
+    wallPhoto,
+  ]);
+
+  useEffect(() => {
+    if (calibration.customMeasurementUnit === unit) {
+      return;
+    }
+
+    const customMeasurement = parseMeasurement(calibration.customMeasurement);
+
+    if (customMeasurement === null) {
+      setRoomView({
+        calibration: {
+          customMeasurementUnit: unit,
+        },
+      });
+      return;
+    }
+
+    const customMeasurementInches = measurementToInches(
+      customMeasurement,
+      calibration.customMeasurementUnit
+    );
+
+    setRoomView({
+      calibration: {
+        customMeasurement: roundMeasurementString(
+          inchesToMeasurementUnit(customMeasurementInches, unit)
+        ),
+        customMeasurementUnit: unit,
+      },
+    });
+  }, [
+    calibration.customMeasurement,
+    calibration.customMeasurementUnit,
+    setRoomView,
+    unit,
+  ]);
+
+  useEffect(() => {
+    if (roomView.gridSizeUnit === unit) {
+      return;
+    }
+
+    const parsedGridSize = parseMeasurement(roomView.gridSize);
+    const currentDefaultGridSize = getDefaultRoomGridSize(roomView.gridSizeUnit);
+    const nextDefaultGridSize = getDefaultRoomGridSize(unit);
+    const shouldUseNextDefault =
+      parsedGridSize === null ||
+      Math.abs(parsedGridSize - currentDefaultGridSize) < 0.0001;
+    let nextGridSize = nextDefaultGridSize;
+
+    if (!shouldUseNextDefault && parsedGridSize !== null) {
+      nextGridSize = inchesToMeasurementUnit(
+        roomView.gridSizeUnit === "cm" ? parsedGridSize / 2.54 : parsedGridSize,
+        unit
+      );
+    }
+
+    setRoomView({
+      gridSize: roundMeasurementString(nextGridSize),
+      gridSizeUnit: unit,
+    });
+  }, [
+    roomView.gridSize,
+    roomView.gridSizeUnit,
+    setRoomView,
+    unit,
+  ]);
+
+  const handleCalibrationRulerChange = useCallback(
+    (start: RoomViewPoint, end: RoomViewPoint) => {
+      setRoomView({
+        calibration: {
+          start,
+          end,
+        },
+      });
+    },
+    [setRoomView]
+  );
+
+  const handlePreviewAreaLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+
+    setPreviewAreaSize((currentSize) =>
+      Math.abs(currentSize.width - width) < 1 && Math.abs(currentSize.height - height) < 1
+        ? currentSize
+        : { width, height }
+    );
+  }, []);
+
+  const handleSourceModeChange = useCallback(
+    (sourceMode: RoomViewSourceMode) => {
+      setRoomView({
+        sourceMode,
+        presetSceneId:
+          sourceMode === "presetRoom"
+            ? roomView.presetSceneId ?? DEFAULT_PRESET_ROOM_SCENE_ID
+            : roomView.presetSceneId,
+        activePlacementId: null,
+      });
+    },
+    [roomView.presetSceneId, setRoomView]
+  );
+
+  const handleSelectPresetScene = useCallback(
+    (sceneId: string) => {
+      setRoomView({
+        sourceMode: "presetRoom",
+        presetSceneId: sceneId,
+        activePlacementId: null,
+      });
+    },
+    [setRoomView]
+  );
+
+  const selectWallPhoto = useCallback(
+    (selection: { imageUri: string; imageWidth: number | null; imageHeight: number | null }) => {
+      const initialRoomView = createInitialRoomViewDraft(unit);
+
+      setRoomView({
+        sourceMode: "myWall",
+        wallPhoto: {
+          imageUri: selection.imageUri,
+          imageWidth: selection.imageWidth,
+          imageHeight: selection.imageHeight,
+        },
+        calibration: initialRoomView.calibration,
+        isCalibrationRulerVisible: true,
+        snapToGridEnabled: initialRoomView.snapToGridEnabled,
+        gridSize: initialRoomView.gridSize,
+        gridSizeUnit: initialRoomView.gridSizeUnit,
+        placements: roomView.placements.filter((placement) => placement.sourceMode !== "myWall"),
+        activePlacementId: null,
+      });
+    },
+    [roomView.placements, setRoomView, unit]
+  );
+
+  const handlePickWallPhotoFromLibrary = useCallback(async () => {
+    await importWallPhotoFromLibrary(selectWallPhoto);
+  }, [selectWallPhoto]);
+
+  const handleTakeWallPhoto = useCallback(async () => {
+    await importWallPhotoFromCamera(selectWallPhoto);
+  }, [selectWallPhoto]);
+
+  const openWallPhotoSourceChooser = useCallback(() => {
+    setActiveSheet(null);
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancel", "Take Photo", "Choose from Photo Library"],
+          cancelButtonIndex: 0,
+          userInterfaceStyle: isDark ? "dark" : "light",
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            void handleTakeWallPhoto();
+          }
+
+          if (buttonIndex === 2) {
+            void handlePickWallPhotoFromLibrary();
+          }
+        }
+      );
+      return;
+    }
+
+    setWallPhotoSourceSheetVisible(true);
+  }, [handlePickWallPhotoFromLibrary, handleTakeWallPhoto, isDark]);
+
+  const openFramedArtworkChooser = useCallback(() => {
+    if (roomView.sourceMode === "presetRoom") {
+      if (!activePresetScene) {
+        Alert.alert("Preset room needed", "Choose a preset room before placing framed artwork.");
+        return;
+      }
+
+      setActiveSheet(null);
+      setFramedArtworkSheetVisible(true);
+      return;
+    }
+
+    if (!wallPhoto) {
+      Alert.alert("Wall photo needed", "Add a wall photo before placing framed artwork.");
+      return;
+    }
+
+    if (!calibration.pixelsPerInch) {
+      Alert.alert("Calibrate scale", "Calibrate the wall scale before placing framed artwork.");
+      return;
+    }
+
+    setActiveSheet(null);
+    setFramedArtworkSheetVisible(true);
+  }, [activePresetScene, calibration.pixelsPerInch, roomView.sourceMode, wallPhoto]);
+
+  const handleSelectFramedArtwork = useCallback(
+    (framedArtwork: SavedFramedArtwork) => {
+      const nextZIndex =
+        activeSourcePlacements.reduce(
+          (maxZIndex, placement) => Math.max(maxZIndex, placement.zIndex ?? 0),
+          -1
+        ) + 1;
+      const defaultCenter =
+        roomView.sourceMode === "presetRoom"
+          ? {
+              x: placementBounds.x + placementBounds.width / 2,
+              y: placementBounds.y + placementBounds.height / 2,
+            }
+          : { x: 0.5, y: 0.48 };
+      const placement = createRoomArtworkPlacement(
+        framedArtwork.id,
+        defaultCenter,
+        nextZIndex,
+        roomView.sourceMode,
+        activeSourceId
+      );
+
+      setRoomView({
+        placements: [...roomView.placements, placement],
+        activePlacementId: placement.id,
+      });
+      setFramedArtworkSheetVisible(false);
+    },
+    [
+      activeSourceId,
+      activeSourcePlacements,
+      placementBounds,
+      roomView.placements,
+      roomView.sourceMode,
+      setRoomView,
+    ]
+  );
+
+  const handleSelectPlacement = useCallback(
+    (placementId: string) => {
+      setRoomView({
+        activePlacementId: placementId,
+      });
+    },
+    [setRoomView]
+  );
+
+  const handleClearPlacementSelection = useCallback(() => {
+    if (!roomView.activePlacementId) {
+      return;
+    }
+
+    setRoomView({
+      activePlacementId: null,
+    });
+  }, [roomView.activePlacementId, setRoomView]);
+
+  const handleMovePlacement = useCallback(
+    (placementId: string, center: RoomViewPoint) => {
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          placement.id === placementId ? { ...placement, center } : placement
+        ),
+      });
+    },
+    [roomView.placements, setRoomView]
+  );
+
+  const handleRemoveSelectedPlacement = useCallback(() => {
+    if (!activePlacement) {
+      return;
+    }
+
+    const selectedName = selectedFramedArtwork?.name ?? "this framed artwork";
+
+    Alert.alert(
+      "Remove Artwork",
+      `Remove "${selectedName}" from this wall layout?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => {
+            setRoomView({
+              placements: roomView.placements.filter(
+                (placement) => placement.id !== activePlacement.id
+              ),
+              activePlacementId: null,
+            });
+          },
+        },
+      ]
+    );
+  }, [activePlacement, roomView.placements, selectedFramedArtwork?.name, setRoomView]);
+
+  const exportGeometry = useMemo(() => {
+    const sourcePixelsPerInch =
+      roomView.sourceMode === "presetRoom"
+        ? presetScenePixelsPerInch
+        : calibration.pixelsPerInch;
+
+    if (!sceneImageWidth || !sceneImageHeight || !sourcePixelsPerInch) {
+      return null;
+    }
+
+    const sourceWidth = sceneImageWidth;
+    const sourceHeight = sceneImageHeight;
+    const exportScale = Math.min(1, MAX_EXPORT_WIDTH / sourceWidth);
+    const placements = activeSourcePlacements
+      .map((placement, index) => {
+        if (!placement.framedArtworkId) {
+          return null;
+        }
+
+        const artwork = framedArtworks.find((saved) => saved.id === placement.framedArtworkId);
+
+        if (!artwork) {
+          return null;
+        }
+
+        const preview = artwork.draft.preview;
+        const derived = buildDerivedGeometry(artwork.draft);
+        const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork, derived);
+
+        if (
+          !derived.outerMatSize ||
+          !derived.openingSize ||
+          !derived.artworkSize ||
+          !derived.isValidGeometry ||
+          !finalOuterSize
+        ) {
+          return null;
+        }
+
+        const placementPixelsPerInch = sourcePixelsPerInch * getPlacementScale(placement);
+        const frameProfile = getFrameProfile(preview.frameProfileId);
+        const frameFaceWidthInches =
+          frameProfile.renderStyle === "none" ? 0 : frameProfile.faceWidthInches;
+        const frameThickness = frameFaceWidthInches * placementPixelsPerInch;
+        const frameWidth = finalOuterSize.width * placementPixelsPerInch;
+        const frameHeight = finalOuterSize.height * placementPixelsPerInch;
+        const matWidth =
+          measurementToInches(derived.outerMatSize.width, artwork.unit) * placementPixelsPerInch;
+        const matHeight =
+          measurementToInches(derived.outerMatSize.height, artwork.unit) * placementPixelsPerInch;
+        const openingWidth =
+          measurementToInches(derived.openingSize.width, artwork.unit) * placementPixelsPerInch;
+        const openingHeight =
+          measurementToInches(derived.openingSize.height, artwork.unit) * placementPixelsPerInch;
+        const artworkWidth =
+          measurementToInches(derived.artworkSize.width, artwork.unit) * placementPixelsPerInch;
+        const artworkHeight =
+          measurementToInches(derived.artworkSize.height, artwork.unit) * placementPixelsPerInch;
+        const openingOffsetX =
+          measurementToInches(preview.offsetX, artwork.unit) * placementPixelsPerInch;
+        const openingOffsetY =
+          measurementToInches(preview.offsetY, artwork.unit) * placementPixelsPerInch;
+        const frameX = placement.center.x * sourceWidth - frameWidth / 2;
+        const frameY = placement.center.y * sourceHeight - frameHeight / 2;
+        const matX = frameX + frameThickness;
+        const matY = frameY + frameThickness;
+        const openingX = matX + (matWidth - openingWidth) / 2 + openingOffsetX;
+        const openingY = matY + (matHeight - openingHeight) / 2 + openingOffsetY;
+
+        return {
+          id: placement.id,
+          zIndex: placement.zIndex ?? index,
+          preview,
+          frameColorHex: resolveFrameColorHex(
+            preview.frameProfileId,
+            preview.frameFinishId,
+            preview.frameColorHex
+          ),
+          frameX,
+          frameY,
+          frameWidth,
+          frameHeight,
+          matX,
+          matY,
+          matWidth,
+          matHeight,
+          openingX,
+          openingY,
+          openingWidth,
+          openingHeight,
+          artworkX: openingX + (openingWidth - artworkWidth) / 2,
+          artworkY: openingY + (openingHeight - artworkHeight) / 2,
+          artworkWidth,
+          artworkHeight,
+        };
+      })
+      .filter(isNonNullable)
+      .sort((first, second) => first.zIndex - second.zIndex);
+
+    if (placements.length === 0) {
+      return null;
+    }
+
+    return {
+      exportWidth: Math.max(1, Math.round(sourceWidth * exportScale)),
+      exportHeight: Math.max(1, Math.round(sourceHeight * exportScale)),
+      sourceWidth,
+      sourceHeight,
+      placements,
+    };
+  }, [
+    activeSourcePlacements,
+    calibration.pixelsPerInch,
+    framedArtworks,
+    presetScenePixelsPerInch,
+    roomView.sourceMode,
+    sceneImageHeight,
+    sceneImageWidth,
+  ]);
+
+  const handleExportMockup = useCallback(() => {
+    if (!exportGeometry || !hasActiveScene || !exportSvgRef.current?.toDataURL) {
+      Alert.alert(
+        "Mockup not ready",
+        roomView.sourceMode === "presetRoom"
+          ? "Choose a preset room and place framed artwork before exporting."
+          : "Add a wall photo, calibrate the scale, and place the artwork before exporting."
+      );
+      return;
+    }
+
+    setIsExporting(true);
+    exportSvgRef.current.toDataURL(
+      (base64) => {
+        void (async () => {
+          try {
+            const cacheDirectory = FileSystem.cacheDirectory;
+
+            if (!cacheDirectory) {
+              await Share.share({
+                message: `data:image/png;base64,${base64}`,
+              });
+              return;
+            }
+
+            const fileUri = `${cacheDirectory}room-view-${Date.now()}.png`;
+            await FileSystem.writeAsStringAsync(fileUri, base64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            await Share.share({
+              url: fileUri,
+              message: "Room View mockup",
+            });
+          } catch {
+            Alert.alert(
+              "Export failed",
+              "Framing Assistant couldn't export the mockup image. Please try again."
+            );
+          } finally {
+            setIsExporting(false);
+          }
+        })();
+      },
+      {
+        width: exportGeometry.exportWidth,
+        height: exportGeometry.exportHeight,
+      }
+    );
+  }, [exportGeometry, hasActiveScene, roomView.sourceMode]);
+
+  const hiddenExportSvg = hasActiveScene && exportGeometry ? (
+    <Svg
+      ref={exportSvgRef}
+      width={exportGeometry.exportWidth}
+      height={exportGeometry.exportHeight}
+      viewBox={`0 0 ${exportGeometry.sourceWidth} ${exportGeometry.sourceHeight}`}
+      style={{
+        position: "absolute",
+        left: -10000,
+        top: -10000,
+      }}
+    >
+      {roomView.sourceMode === "presetRoom" && presetSceneAsset?.uri ? (
+        <SvgImage
+          href={{ uri: presetSceneAsset.uri }}
+          x={0}
+          y={0}
+          width={exportGeometry.sourceWidth}
+          height={exportGeometry.sourceHeight}
+          preserveAspectRatio="xMidYMid slice"
+        />
+      ) : wallPhoto ? (
+        <SvgImage
+          href={{ uri: wallPhoto.imageUri }}
+          x={0}
+          y={0}
+          width={exportGeometry.sourceWidth}
+          height={exportGeometry.sourceHeight}
+          preserveAspectRatio="xMidYMid slice"
+        />
+      ) : null}
+      {exportGeometry.placements.map((placement) => (
+        <React.Fragment key={placement.id}>
+          <SvgRect
+            x={placement.frameX + 12}
+            y={placement.frameY + 18}
+            width={placement.frameWidth}
+            height={placement.frameHeight}
+            fill="rgba(0,0,0,0.24)"
+          />
+          <SvgRect
+            x={placement.frameX}
+            y={placement.frameY}
+            width={placement.frameWidth}
+            height={placement.frameHeight}
+            fill={normalizeHex(placement.frameColorHex, "#050505")}
+          />
+          <SvgRect
+            x={placement.matX}
+            y={placement.matY}
+            width={placement.matWidth}
+            height={placement.matHeight}
+            fill={normalizeHex(placement.preview.matColorHex, "#FFFFFF")}
+          />
+          {placement.preview.artworkSourceMode === "import" && placement.preview.artworkImageUri ? (
+            <SvgImage
+              href={{ uri: placement.preview.artworkImageUri }}
+              x={placement.openingX}
+              y={placement.openingY}
+              width={placement.openingWidth}
+              height={placement.openingHeight}
+              preserveAspectRatio="xMidYMid slice"
+            />
+          ) : (
+            <SvgRect
+              x={placement.openingX}
+              y={placement.openingY}
+              width={placement.openingWidth}
+              height={placement.openingHeight}
+              fill="#DDD6CC"
+            />
+          )}
+        </React.Fragment>
+      ))}
+    </Svg>
+  ) : null;
+
+  const wallGeometryWarningSection = selectedFramedArtwork && !selectedDerived?.isValidGeometry ? (
+    <Text style={{ ...typography.small, color: colors.warning }}>
+      This saved framed artwork needs valid dimensions before Room View can place it.
+    </Text>
+  ) : null;
+
+  const wallPhotoStageSection = (
+    <View
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setStageSize({ width, height });
+      }}
+      style={{
+        ...(fittedStageSize
+          ? {
+              width: fittedStageSize.width,
+              height: fittedStageSize.height,
+              alignSelf: "center" as const,
+            }
+          : {
+              width: "100%" as const,
+              aspectRatio: wallAspectRatio,
+            }),
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        borderRadius: radii.md,
+        backgroundColor: isDark ? "#111111" : "#E7EBF0",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      {hasActiveScene ? (
+        <>
+          {roomView.sourceMode === "presetRoom" ? (
+            <PresetRoomSceneImage
+              scene={activePresetScene}
+              style={{
+                position: "absolute",
+                left: displayedImageRect.left,
+                top: displayedImageRect.top,
+                width: displayedImageRect.width,
+                height: displayedImageRect.height,
+              }}
+            />
+          ) : wallPhoto ? (
+            <Image
+              source={{ uri: wallPhoto.imageUri }}
+              resizeMode="stretch"
+              style={{
+                position: "absolute",
+                left: displayedImageRect.left,
+                top: displayedImageRect.top,
+                width: displayedImageRect.width,
+                height: displayedImageRect.height,
+              }}
+            />
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Deselect framed artwork"
+            disabled={isArtworkDragging || isCalibrationDragging}
+            onPress={handleClearPlacementSelection}
+            style={{
+              position: "absolute",
+              left: displayedImageRect.left,
+              top: displayedImageRect.top,
+              width: displayedImageRect.width,
+              height: displayedImageRect.height,
+              zIndex: 1,
+            }}
+          />
+
+          {placedArtworks.map((placedArtwork) => (
+            <PlacedWallArtwork
+              key={placedArtwork.placement.id}
+              placedArtwork={placedArtwork}
+              selected={placedArtwork.placement.id === roomView.activePlacementId}
+              stageSize={{
+                width: displayedImageRect.width,
+                height: displayedImageRect.height,
+              }}
+              stageOffset={{
+                x: displayedImageRect.left,
+                y: displayedImageRect.top,
+              }}
+              placementBounds={placementBounds}
+              snapGridSizePixels={snapGridSizePixels}
+              onSelect={handleSelectPlacement}
+              onMoveEnd={handleMovePlacement}
+              onDragStart={() => setIsArtworkDragging(true)}
+              onDragEnd={() => setIsArtworkDragging(false)}
+            />
+          ))}
+
+          {roomView.sourceMode === "myWall" && wallPhoto && roomView.isCalibrationRulerVisible ? (
+            <CalibrationRuler
+              start={calibration.start}
+              end={calibration.end}
+              imageRect={displayedImageRect}
+              stageSize={stageSize}
+              wallPhotoUri={wallPhoto.imageUri}
+              onChange={handleCalibrationRulerChange}
+              onDragStart={() => setIsCalibrationDragging(true)}
+              onDragEnd={() => setIsCalibrationDragging(false)}
+            />
+          ) : null}
+        </>
+      ) : (
+        <View
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            paddingHorizontal: useCompactWallPhotoEmptyState ? spacing.md : spacing.xl,
+            paddingVertical: useCompactWallPhotoEmptyState ? spacing.md : spacing.xxl,
+          }}
+        >
+          <View
+            style={{
+              width: wallPhotoEmptyIconSize,
+              height: wallPhotoEmptyIconSize,
+              borderRadius: wallPhotoEmptyIconRadius,
+              borderWidth: 1,
+              borderColor: colors.borderSubtle,
+              backgroundColor: colors.backgroundCard,
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: useCompactWallPhotoEmptyState ? spacing.sm : spacing.lg,
+            }}
+          >
+            <Ionicons
+              name="home-outline"
+              size={wallPhotoEmptyIconGlyphSize}
+              color={colors.textPrimary}
+            />
+          </View>
+          <Text
+            style={{
+              ...(useCompactWallPhotoEmptyState ? typography.sectionTitle : typography.screenTitle),
+              color: colors.textPrimary,
+              textAlign: "center",
+              marginBottom: useCompactWallPhotoEmptyState ? 2 : spacing.xs,
+            }}
+          >
+            Wall Photo
+          </Text>
+          <Text
+            style={{
+              ...(useCompactWallPhotoEmptyState ? typography.small : typography.body),
+              color: colors.textSecondary,
+              textAlign: "center",
+              maxWidth: useCompactWallPhotoEmptyState ? 260 : 320,
+            }}
+            numberOfLines={useCompactWallPhotoEmptyState ? 2 : undefined}
+          >
+            Add a photo of the wall where you want to preview your framed artwork.
+          </Text>
+          {!isTabletLandscape ? (
+            <>
+              <AppButton
+                label="Add Photo"
+                onPress={openWallPhotoSourceChooser}
+                style={{
+                  width: useCompactWallPhotoEmptyState ? "70%" : "64%",
+                  maxWidth: useCompactWallPhotoEmptyState ? 190 : 220,
+                  marginTop: useCompactWallPhotoEmptyState ? spacing.md : spacing.lg,
+                }}
+              />
+              {showWallPhotoEmptyHelper ? (
+                <Text
+                  style={{
+                    ...typography.small,
+                    color: colors.textSecondary,
+                    textAlign: "center",
+                    maxWidth: useCompactWallPhotoEmptyState ? 280 : 360,
+                    marginTop: useCompactWallPhotoEmptyState ? spacing.sm : spacing.md,
+                  }}
+                  numberOfLines={useCompactWallPhotoEmptyState ? 2 : undefined}
+                >
+                  {paperPhotoHelperText}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
+        </View>
+      )}
+    </View>
+  );
+
+  const wallPhotoPreviewTitle =
+    isTabletLandscape
+      ? undefined
+      : roomView.sourceMode === "presetRoom"
+        ? activePresetScene.title
+        : wallPhoto
+          ? "Wall photo"
+          : undefined;
+  const wallPhotoPreviewSubtitle =
+    isTabletLandscape
+      ? undefined
+      : roomView.sourceMode === "presetRoom"
+        ? activePresetScene.description
+        : wallPhoto
+          ? paperPhotoHelperText
+          : undefined;
+  const wallPhotoCardSection = (
+    <View
+      style={{
+        flex: 1,
+        minHeight: 0,
+        backgroundColor: colors.backgroundCard,
+        borderWidth: 2,
+        borderColor: colors.borderStrong,
+        borderRadius: radii.lg,
+        padding: spacing.lg,
+        gap: spacing.md,
+      }}
+    >
+      {wallPhotoPreviewTitle ? (
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing.md,
+          }}
+        >
+          <Text style={{ ...typography.sectionTitle, color: colors.textPrimary, flex: 1 }}>
+            {wallPhotoPreviewTitle}
+          </Text>
+        </View>
+      ) : null}
+      {wallPhotoPreviewSubtitle ? (
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {wallPhotoPreviewSubtitle}
+        </Text>
+      ) : null}
+      <View
+        onLayout={handlePreviewAreaLayout}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          justifyContent: "center",
+        }}
+      >
+        {wallPhotoStageSection}
+      </View>
+      {!isTabletLandscape ? wallGeometryWarningSection : null}
+    </View>
+  );
+
+  const sourceControlsSection = (
+    <AppCard title="Scene source">
+      <AppSegmentedControl<RoomViewSourceMode>
+        label="Source"
+        options={ROOM_SOURCE_OPTIONS}
+        value={roomView.sourceMode}
+        onChange={handleSourceModeChange}
+      />
+    </AppCard>
+  );
+
+  const wallPhotoControlsSection = (
+    <AppCard
+      title="Wall photo"
+      subtitle="Add a photo of the wall where you want to preview your framed artwork."
+    >
+      <AppButton
+        label={wallPhoto ? "Change Photo" : "Add Photo"}
+        onPress={openWallPhotoSourceChooser}
+        style={{ width: "64%", alignSelf: "center" }}
+      />
+      <Text style={{ ...typography.small, color: colors.textSecondary }}>
+        {paperPhotoHelperText}
+      </Text>
+    </AppCard>
+  );
+
+  const presetRoomControlsSection = (
+    <AppCard
+      title="Preset Rooms"
+      subtitle="Choose a built-in mockup scene for saved framed artworks."
+    >
+      <ScrollView
+        style={{ maxHeight: isTabletLandscape ? 280 : 360 }}
+        contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+        showsVerticalScrollIndicator={PRESET_ROOM_SCENES.length > 3}
+      >
+        {(["landscape", "portrait"] as const).map((orientation) => {
+          const scenes = getPresetRoomScenesByOrientation(orientation);
+
+          if (scenes.length === 0) {
+            return null;
+          }
+
+          return (
+            <View key={orientation} style={{ gap: spacing.sm }}>
+              <Text
+                style={{
+                  ...typography.small,
+                  color: colors.textSecondary,
+                  textTransform: "uppercase",
+                  fontWeight: "700",
+                }}
+              >
+                {ROOM_SCENE_ORIENTATION_LABELS[orientation]}
+              </Text>
+              {scenes.map((scene) => (
+                <PresetRoomSceneOption
+                  key={scene.id}
+                  scene={scene}
+                  selected={scene.id === activePresetScene.id}
+                  onPress={() => handleSelectPresetScene(scene.id)}
+                />
+              ))}
+            </View>
+          );
+        })}
+      </ScrollView>
+    </AppCard>
+  );
+
+  const calibrationCardSection = (
+    <AppCard title="Scale calibration">
+      <AppSegmentedControl<RoomKnownMeasurementMode>
+        label="Known measurement"
+        options={knownMeasurementOptions}
+        value={calibration.measurementMode}
+        onChange={(measurementMode) => {
+          setRoomView({
+            calibration: {
+              measurementMode,
+            },
+          });
+        }}
+      />
+
+      {calibration.measurementMode === "custom" ? (
+        <AppTextField
+          label={`Custom measurement (${customMeasurementUnitLabel})`}
+          helperText={`Enter the known length in ${customMeasurementUnitName}.`}
+          placeholder={unit === "cm" ? "29.7" : "11"}
+          keyboardType="decimal-pad"
+          value={calibration.customMeasurement}
+          onChangeText={(customMeasurement) => {
+            setRoomView({
+              calibration: {
+                customMeasurement,
+                customMeasurementUnit: unit,
+              },
+            });
+          }}
+        />
+      ) : null}
+
+      <Text style={{ ...typography.small, color: colors.textSecondary }}>
+        {calibrationHelperText}
+      </Text>
+
+      <RoomSwitchRow
+        label="Ruler"
+        accessibilityLabel="Show calibration ruler"
+        value={roomView.isCalibrationRulerVisible}
+        disabled={!wallPhoto}
+        onValueChange={(isCalibrationRulerVisible) => {
+          setRoomView({
+            isCalibrationRulerVisible,
+          });
+        }}
+      />
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.xs,
+          alignSelf: "flex-start",
+        }}
+      >
+        <Ionicons
+          name={calibration.pixelsPerInch === null ? "ellipse-outline" : "checkmark-circle"}
+          size={16}
+          color={calibration.pixelsPerInch === null ? colors.textSecondary : colors.success}
+        />
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {calibration.pixelsPerInch === null
+            ? "Calibrate the wall to view artwork at accurate scale."
+            : "Viewing at accurate scale"}
+        </Text>
+      </View>
+    </AppCard>
+  );
+
+  const framedArtworkControlsSection = (
+    <AppCard
+      title="Framed artworks"
+      subtitle={
+        roomView.sourceMode === "presetRoom"
+          ? "Add saved framed artworks into the selected preset room."
+          : "Add saved framed artworks after the wall photo is added and the scale is calibrated."
+      }
+    >
+      {placedArtworkCount > 0 ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            borderRadius: radii.md,
+            backgroundColor: colors.backgroundInput,
+            padding: spacing.md,
+            gap: 4,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+                {placedArtworkCount === 1
+                  ? "1 artwork placed"
+                  : `${placedArtworkCount} artworks placed`}
+              </Text>
+              <Text style={{ ...typography.small, color: colors.textSecondary }}>
+                {selectedFramedArtwork
+                  ? `${selectedFramedArtwork.name} · ${selectedSizeLabel}`
+                  : "Tap an artwork on the wall to select it."}
+              </Text>
+            </View>
+
+            {activePlacement ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove selected framed artwork"
+                onPress={handleRemoveSelectedPlacement}
+                hitSlop={8}
+                style={{
+                  minWidth: 120,
+                  height: 38,
+                  borderRadius: radii.pill,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  backgroundColor: colors.backgroundCard,
+                  flexDirection: "row",
+                  gap: spacing.xs,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: spacing.sm,
+                }}
+              >
+                <Ionicons name="trash-outline" size={18} color={colors.warning} />
+                <Text
+                  style={{ ...typography.small, color: colors.warning, fontWeight: "700" }}
+                  numberOfLines={1}
+                >
+                  Delete Selected
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {framedArtworks.length === 0 ? (
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          No framed artworks saved yet. Save one from Final Specs first, then return here to place it on the wall.
+        </Text>
+      ) : roomView.sourceMode === "myWall" && !wallPhoto ? (
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          Add a wall photo before placing framed artwork.
+        </Text>
+      ) : roomView.sourceMode === "myWall" && !calibration.pixelsPerInch ? (
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          Calibrate the wall scale before placing framed artwork.
+        </Text>
+      ) : null}
+
+      <AppButton
+        label="Add Framed Artwork"
+        onPress={openFramedArtworkChooser}
+        disabled={!canPlaceFramedArtwork}
+        style={{ width: "72%", alignSelf: "center" }}
+      />
+    </AppCard>
+  );
+
+  const layoutControlsSection = (
+    <AppCard title="Layouts" subtitle="Use invisible grid snapping to align wall layouts.">
+      <RoomSwitchRow
+        label="Snap to Grid"
+        value={roomView.snapToGridEnabled}
+        onValueChange={(snapToGridEnabled) => {
+          setRoomView({
+            snapToGridEnabled,
+          });
+        }}
+      />
+
+      {roomView.snapToGridEnabled ? (
+        <AppTextField
+          label={`Grid size (${customMeasurementUnitLabel})`}
+          helperText={gridSizeHelperText}
+          placeholder={unit === "cm" ? "2.5" : "1"}
+          keyboardType="decimal-pad"
+          value={roomView.gridSize}
+          onChangeText={(gridSize) => {
+            setRoomView({
+              gridSize,
+              gridSizeUnit: unit,
+            });
+          }}
+        />
+      ) : null}
+    </AppCard>
+  );
+
+  const exportCardSection = (
+    <AppCard title="Export">
+      <Text style={{ ...typography.small, color: colors.textSecondary }}>
+        {roomView.sourceMode === "presetRoom"
+          ? "The exported mockup uses the preset scene scale and the final outer frame dimensions."
+          : "The exported mockup uses the wall photo source pixels, the stored pixels-per-inch calibration, and the final outer frame dimensions."}
+      </Text>
+      <AppButton
+        label={isExporting ? "Exporting..." : "Export Mockup"}
+        onPress={handleExportMockup}
+        disabled={!exportGeometry || isExporting}
+        style={{ width: "60%", alignSelf: "center" }}
+      />
+    </AppCard>
+  );
+
+  const settingsControlsSection =
+    roomView.sourceMode === "myWall" ? (
+      calibrationCardSection
+    ) : (
+      <AppCard title="Settings">
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          Preset rooms use their saved room scale. Switch to My Wall to calibrate a wall photo.
+        </Text>
+      </AppCard>
+    );
+
+  const roomViewDockSection = (
+    <RoomViewBottomDock
+      activeSheet={activeSheet}
+      onOpenSheet={(sheet) => setActiveSheet(sheet)}
+    />
+  );
+
+  const activeSheetTitle =
+    activeSheet === "artwork"
+      ? "Artwork"
+      : activeSheet === "interiors"
+        ? "Interiors"
+        : activeSheet === "layouts"
+          ? "Layouts"
+          : activeSheet === "settings"
+            ? "Settings"
+            : activeSheet === "export"
+              ? "Export"
+              : "";
+
+  const activeSheetContent =
+    activeSheet === "artwork" ? (
+      framedArtworkControlsSection
+    ) : activeSheet === "interiors" ? (
+      <>
+        {sourceControlsSection}
+        {roomView.sourceMode === "presetRoom"
+          ? presetRoomControlsSection
+          : wallPhotoControlsSection}
+      </>
+    ) : activeSheet === "layouts" ? (
+      layoutControlsSection
+    ) : activeSheet === "settings" ? (
+      settingsControlsSection
+    ) : activeSheet === "export" ? (
+      exportCardSection
+    ) : null;
+
+  return (
+    <ScreenContainer>
+      <AppHeader
+        onOpenProjects={() => navigation.navigate("SavedProjects")}
+        onOpenSettings={() => navigation.navigate("Settings")}
+      />
+
+      <View
+        style={{
+          flex: 1,
+          minHeight: 0,
+          paddingHorizontal: spacing.lg,
+          paddingTop: spacing.md,
+          paddingBottom: spacing.md,
+        }}
+      >
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            maxWidth: isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined,
+            alignSelf: "center",
+          }}
+        >
+          <StepProgress
+            currentStep={currentStep.stepNumber}
+            totalSteps={totalSteps}
+            label={currentStep.shortLabel}
+          />
+
+          <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
+            {wallPhotoCardSection}
+            {isTabletLandscape ? wallGeometryWarningSection : null}
+            {roomViewDockSection}
+          </View>
+        </View>
+      </View>
+
+      <View
+        style={{
+          borderTopWidth: 1,
+          borderTopColor: "rgba(255,255,255,0.08)",
+          backgroundColor: colors.headerBackground,
+          paddingHorizontal: spacing.lg,
+          paddingTop: spacing.md,
+          paddingBottom: Math.max(insets.bottom, spacing.md),
+        }}
+      >
+        <View
+          style={{
+            width: "100%",
+            maxWidth: isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined,
+            alignSelf: "center",
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+              alignSelf: "center",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: spacing.sm,
+            }}
+          >
+            {previousStep ? (
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  goBack();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Go back"
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: radii.pill,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.18)",
+                  backgroundColor: "transparent",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="arrow-back" size={18} color="rgba(255,255,255,0.72)" />
+              </Pressable>
+            ) : null}
+
+            <AppButton
+              label="Start New Draft"
+              onPress={() => {
+                resetDraft();
+                navigation.navigate("Setup");
+              }}
+              style={{ flex: 1, maxWidth: 360 }}
+            />
+          </View>
+        </View>
+      </View>
+
+      <RoomViewBottomSheet
+        visible={activeSheet !== null}
+        title={activeSheetTitle}
+        maxHeight={Math.min(windowHeight * 0.78, isTabletLandscape ? 720 : 620)}
+        onClose={() => setActiveSheet(null)}
+      >
+        {activeSheetContent}
+      </RoomViewBottomSheet>
+
+      <AppSheetModal
+        visible={wallPhotoSourceSheetVisible}
+        title="Add Photo"
+        onClose={() => setWallPhotoSourceSheetVisible(false)}
+      >
+        <WallPhotoSourceOption
+          icon="camera-outline"
+          label="Take Photo"
+          onPress={() => {
+            setWallPhotoSourceSheetVisible(false);
+            setTimeout(() => {
+              void handleTakeWallPhoto();
+            }, 220);
+          }}
+        />
+        <WallPhotoSourceOption
+          icon="images-outline"
+          label="Choose from Photo Library"
+          onPress={() => {
+            setWallPhotoSourceSheetVisible(false);
+            setTimeout(() => {
+              void handlePickWallPhotoFromLibrary();
+            }, 220);
+          }}
+        />
+      </AppSheetModal>
+
+      <AppSheetModal
+        visible={framedArtworkSheetVisible}
+        title="Add Framed Artwork"
+        onClose={() => setFramedArtworkSheetVisible(false)}
+        showDoneButton
+      >
+        {framedArtworks.length === 0 ? (
+          <Text style={{ ...typography.small, color: colors.textSecondary }}>
+            No saved framed artworks yet. Save a framed artwork from Final Specs first.
+          </Text>
+        ) : (
+          <>
+            <AppSegmentedControl<ArtworkSortMode>
+              label="Sort"
+              options={ARTWORK_SORT_OPTIONS}
+              value={artworkSortMode}
+              onChange={setArtworkSortMode}
+            />
+            <ScrollView
+              style={{ maxHeight: Math.min(windowHeight * 0.55, 520) }}
+              contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.xs }}
+              showsVerticalScrollIndicator
+            >
+              {sortedFramedArtworks.map((artwork) => (
+                <SavedFramedArtworkPickerRow
+                  key={artwork.id}
+                  artwork={artwork}
+                  selected={artwork.id === selectedFramedArtwork?.id}
+                  unit={unit}
+                  imperialPrecision={imperialPrecision}
+                  onPress={() => handleSelectFramedArtwork(artwork)}
+                />
+              ))}
+            </ScrollView>
+          </>
+        )}
+      </AppSheetModal>
+
+      {hiddenExportSvg}
+    </ScreenContainer>
+  );
+}
