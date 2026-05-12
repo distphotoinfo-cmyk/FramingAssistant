@@ -4,13 +4,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useAppTheme } from "../theme/AppThemeProvider";
+import GuidanceAnchor from "./guidance/GuidanceAnchor";
 
 interface AppHeaderProps {
   onOpenProjects: () => void;
   onOpenSettings: () => void;
+  projectGuidanceAnchorId?: string;
+  settingsGuidanceAnchorId?: string;
 }
 
-export default function AppHeader({ onOpenProjects, onOpenSettings }: AppHeaderProps) {
+export default function AppHeader({
+  onOpenProjects,
+  onOpenSettings,
+  projectGuidanceAnchorId,
+  settingsGuidanceAnchorId,
+}: AppHeaderProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
 
@@ -37,34 +45,65 @@ export default function AppHeader({ onOpenProjects, onOpenSettings }: AppHeaderP
           position: "relative",
         }}
       >
-        <View
-          style={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            flexDirection: "row",
-            alignItems: "center",
-            zIndex: 10,
-          }}
-        >
-          <Pressable onPress={() => trigger(onOpenProjects)} style={{ padding: 6 }} hitSlop={8}>
-            <Ionicons name="folder-open-outline" size={20} color={colors.headerText} />
-          </Pressable>
-        </View>
+        {projectGuidanceAnchorId ? (
+          <GuidanceAnchor
+            id={projectGuidanceAnchorId}
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              zIndex: 10,
+            }}
+          >
+            <Pressable onPress={() => trigger(onOpenProjects)} style={{ padding: 6 }} hitSlop={8}>
+              <Ionicons name="folder-open-outline" size={20} color={colors.headerText} />
+            </Pressable>
+          </GuidanceAnchor>
+        ) : (
+          <View
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              flexDirection: "row",
+              alignItems: "center",
+              zIndex: 10,
+            }}
+          >
+            <Pressable onPress={() => trigger(onOpenProjects)} style={{ padding: 6 }} hitSlop={8}>
+              <Ionicons name="folder-open-outline" size={20} color={colors.headerText} />
+            </Pressable>
+          </View>
+        )}
 
-        <Pressable
-          onPress={() => trigger(onOpenSettings)}
-          style={{
-            position: "absolute",
-            top: 8,
-            right: 8,
-            padding: 6,
-            zIndex: 10,
-          }}
-          hitSlop={8}
-        >
-          <Ionicons name="settings-outline" size={20} color={colors.headerText} />
-        </Pressable>
+        {settingsGuidanceAnchorId ? (
+          <GuidanceAnchor
+            id={settingsGuidanceAnchorId}
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 10,
+            }}
+          >
+            <Pressable onPress={() => trigger(onOpenSettings)} style={{ padding: 6 }} hitSlop={8}>
+              <Ionicons name="settings-outline" size={20} color={colors.headerText} />
+            </Pressable>
+          </GuidanceAnchor>
+        ) : (
+          <View
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 10,
+            }}
+          >
+            <Pressable onPress={() => trigger(onOpenSettings)} style={{ padding: 6 }} hitSlop={8}>
+              <Ionicons name="settings-outline" size={20} color={colors.headerText} />
+            </Pressable>
+          </View>
+        )}
 
         <View
           style={{

@@ -1689,6 +1689,7 @@ export default function RoomViewScreen() {
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
+  const [artworkSortMenuVisible, setArtworkSortMenuVisible] = useState(false);
   const [isArtworkDragging, setIsArtworkDragging] = useState(false);
   const [isCalibrationDragging, setIsCalibrationDragging] = useState(false);
 
@@ -2176,6 +2177,7 @@ export default function RoomViewScreen() {
         placements: [...roomView.placements, placement],
         activePlacementId: placement.id,
       });
+      setArtworkSortMenuVisible(false);
       setFramedArtworkSheetVisible(false);
     },
     [
@@ -2748,7 +2750,6 @@ export default function RoomViewScreen() {
   const sourceControlsSection = (
     <AppCard title="Scene source">
       <AppSegmentedControl<RoomViewSourceMode>
-        label="Source"
         options={ROOM_SOURCE_OPTIONS}
         value={roomView.sourceMode}
         onChange={handleSourceModeChange}
@@ -3072,6 +3073,115 @@ export default function RoomViewScreen() {
       exportCardSection
     ) : null;
 
+  const closeFramedArtworkSheet = () => {
+    setArtworkSortMenuVisible(false);
+    setFramedArtworkSheetVisible(false);
+  };
+
+  const framedArtworkSheetHeaderActions = (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.xs,
+        position: "relative",
+      }}
+    >
+      <Pressable
+        onPress={() => setArtworkSortMenuVisible((visible) => !visible)}
+        accessibilityRole="button"
+        accessibilityLabel="Sort framed artworks"
+        hitSlop={8}
+        style={{
+          width: 34,
+          height: 34,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Ionicons name="swap-vertical-outline" size={21} color={colors.textSecondary} />
+      </Pressable>
+
+      <Pressable
+        onPress={closeFramedArtworkSheet}
+        accessibilityRole="button"
+        accessibilityLabel="Close add framed artwork"
+        hitSlop={8}
+        style={{
+          width: 34,
+          height: 34,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Ionicons name="close" size={24} color={colors.textPrimary} />
+      </Pressable>
+
+      {artworkSortMenuVisible ? (
+        <View
+          style={{
+            position: "absolute",
+            top: 40,
+            right: 38,
+            width: 174,
+            borderRadius: radii.md,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            backgroundColor: colors.backgroundCard,
+            overflow: "hidden",
+            zIndex: 30,
+            shadowColor: "#000000",
+            shadowOpacity: 0.18,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 5 },
+            elevation: 6,
+          }}
+        >
+          {ARTWORK_SORT_OPTIONS.map((option, index) => {
+            const active = option.value === artworkSortMode;
+
+            return (
+              <Pressable
+                key={option.value}
+                onPress={() => {
+                  setArtworkSortMode(option.value);
+                  setArtworkSortMenuVisible(false);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Sort by ${option.label}`}
+                style={{
+                  minHeight: 40,
+                  paddingHorizontal: spacing.sm,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                  borderTopWidth: index === 0 ? 0 : 1,
+                  borderTopColor: colors.borderSubtle,
+                  backgroundColor: active ? colors.accentSoft : colors.backgroundCard,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    flex: 1,
+                    fontSize: 13,
+                    fontWeight: "700",
+                    color: active ? colors.accent : colors.textPrimary,
+                  }}
+                >
+                  {option.label}
+                </Text>
+                {active ? (
+                  <Ionicons name="checkmark" size={16} color={colors.accent} />
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+
   return (
     <ScreenContainer>
       <AppHeader
@@ -3127,10 +3237,9 @@ export default function RoomViewScreen() {
               width: "100%",
               maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
               alignSelf: "center",
-              flexDirection: "row",
-              alignItems: "center",
+              minHeight: 44,
               justifyContent: "center",
-              gap: spacing.sm,
+              position: "relative",
             }}
           >
             {canGoBack ? (
@@ -3141,18 +3250,18 @@ export default function RoomViewScreen() {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Go back"
+                hitSlop={10}
                 style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
                   width: 44,
                   height: 44,
-                  borderRadius: radii.pill,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.18)",
-                  backgroundColor: "transparent",
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
-                <Ionicons name="arrow-back" size={18} color="rgba(255,255,255,0.72)" />
+                <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
               </Pressable>
             ) : null}
 
@@ -3162,7 +3271,7 @@ export default function RoomViewScreen() {
                 resetDraft();
                 navigation.navigate("Setup");
               }}
-              style={{ flex: 1, maxWidth: 360 }}
+              style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
             />
           </View>
         </View>
@@ -3207,8 +3316,8 @@ export default function RoomViewScreen() {
       <AppSheetModal
         visible={framedArtworkSheetVisible}
         title="Add Framed Artwork"
-        onClose={() => setFramedArtworkSheetVisible(false)}
-        showDoneButton
+        onClose={closeFramedArtworkSheet}
+        headerActions={framedArtworkSheetHeaderActions}
       >
         {framedArtworks.length === 0 ? (
           <Text style={{ ...typography.small, color: colors.textSecondary }}>
@@ -3216,12 +3325,6 @@ export default function RoomViewScreen() {
           </Text>
         ) : (
           <>
-            <AppSegmentedControl<ArtworkSortMode>
-              label="Sort"
-              options={ARTWORK_SORT_OPTIONS}
-              value={artworkSortMode}
-              onChange={setArtworkSortMode}
-            />
             <ScrollView
               style={{ maxHeight: Math.min(windowHeight * 0.55, 520) }}
               contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.xs }}

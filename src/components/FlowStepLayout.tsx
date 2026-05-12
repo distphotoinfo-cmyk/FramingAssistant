@@ -63,7 +63,7 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
     shellBubble,
   } = props;
   const insets = useSafeAreaInsets();
-  const { colors, layout, radii, spacing, typography } = useAppTheme();
+  const { colors, layout, spacing, typography } = useAppTheme();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
   const { currentStep, totalSteps, previousStep, goBack, goNext } = useStepNavigation(route);
   const compactBackArrowFooter = footerVariant === "compactBackArrow";
@@ -149,10 +149,9 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
             {compactBackArrowFooter ? (
               <View
                 style={{
-                  flexDirection: "row",
-                  alignItems: "center",
+                  minHeight: 44,
                   justifyContent: "center",
-                  gap: spacing.sm,
+                  position: "relative",
                 }}
               >
                 {previousStep ? (
@@ -164,24 +163,24 @@ export default function FlowStepLayout(props: FlowStepLayoutProps) {
                     accessibilityRole="button"
                     accessibilityLabel="Go back"
                     style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
                       width: 44,
                       height: 44,
-                      borderRadius: radii.pill,
-                      borderWidth: 1,
-                      borderColor: "rgba(255,255,255,0.18)",
-                      backgroundColor: "transparent",
                       alignItems: "center",
                       justifyContent: "center",
                     }}
+                    hitSlop={10}
                   >
-                    <Ionicons name="arrow-back" size={18} color="rgba(255,255,255,0.72)" />
+                    <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
                   </Pressable>
                 ) : null}
 
                 <AppButton
                   label={nextLabel ?? "Continue"}
                   onPress={onNext ?? goNext}
-                  style={{ width: "52%" }}
+                  style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
                 />
               </View>
             ) : (

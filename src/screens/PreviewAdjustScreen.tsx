@@ -1060,31 +1060,59 @@ export default function PreviewAdjustScreen() {
                 width: "100%",
                 maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
                 alignSelf: "center",
-                flexDirection: "row",
-                alignItems: "center",
+                minHeight: 44,
                 justifyContent: "center",
-                gap: spacing.sm,
+                position: "relative",
               }}
             >
               {previousStep ? (
-                <AppButton
-                  variant="secondary"
-                  label="Back"
+                <Pressable
                   onPress={goBack}
-                  style={{ width: 96 }}
-                />
+                  accessibilityRole="button"
+                  accessibilityLabel="Go back"
+                  hitSlop={10}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: 44,
+                    height: 44,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
+                </Pressable>
               ) : null}
 
               <GuidanceAnchor
                 id="preview-adjust-next"
                 style={{
-                  width: previousStep ? undefined : "52%",
-                  flex: previousStep ? 1 : undefined,
+                  width: "52%",
                   maxWidth: 360,
+                  alignSelf: "center",
                 }}
               >
-                <AppButton label="View Final Specs" onPress={goNext} style={{ width: "100%" }} />
+                <AppButton label="Next" onPress={goNext} style={{ width: "100%" }} />
               </GuidanceAnchor>
+
+              <Pressable
+                onPress={() => navigation.navigate("RoomView")}
+                accessibilityRole="button"
+                accessibilityLabel="Open Wall View"
+                hitSlop={10}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 0,
+                  width: 44,
+                  height: 44,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="home-outline" size={22} color={colors.textSecondary} />
+              </Pressable>
             </View>
           </View>
         </View>

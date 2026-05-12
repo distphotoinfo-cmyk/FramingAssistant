@@ -8,7 +8,7 @@ interface SegmentOption<T extends string> {
 }
 
 interface AppSegmentedControlProps<T extends string> {
-  label: string;
+  label?: string;
   options: SegmentOption<T>[];
   value: T;
   onChange: (value: T) => void;
@@ -24,9 +24,11 @@ export default function AppSegmentedControl<T extends string>({
 
   return (
     <View>
-      <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
-        {label}
-      </Text>
+      {label ? (
+        <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
+          {label}
+        </Text>
+      ) : null}
       <View style={{ flexDirection: "row" }}>
         {options.map((option, index) => {
           const active = option.value === value;
@@ -61,4 +63,3 @@ export default function AppSegmentedControl<T extends string>({
     </View>
   );
 }
-

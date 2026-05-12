@@ -10,12 +10,21 @@
     "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.matthewkoller.framingassistant",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "supportsTablet": true,
       "icon": "./assets/icon.png",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow Framing Assistant to access your photos so you can place artwork into the preview.",
         "NSCameraUsageDescription": "Allow Framing Assistant to use the camera so you can capture artwork for the preview.",
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },

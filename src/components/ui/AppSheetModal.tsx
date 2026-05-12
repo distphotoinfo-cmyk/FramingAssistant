@@ -8,6 +8,7 @@ interface AppSheetModalProps {
   onClose: () => void;
   children: React.ReactNode;
   showDoneButton?: boolean;
+  headerActions?: React.ReactNode;
 }
 
 export default function AppSheetModal({
@@ -16,6 +17,7 @@ export default function AppSheetModal({
   onClose,
   children,
   showDoneButton = false,
+  headerActions,
 }: AppSheetModalProps) {
   const { colors, radii, spacing, typography } = useAppTheme();
 
@@ -51,13 +53,18 @@ export default function AppSheetModal({
               alignItems: "center",
               justifyContent: "space-between",
               gap: spacing.md,
-              paddingHorizontal: showDoneButton ? spacing.sm : 0,
+              paddingHorizontal: showDoneButton || headerActions ? spacing.sm : 0,
+              position: "relative",
+              zIndex: 20,
+              elevation: 20,
             }}
           >
             <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
               {title}
             </Text>
-            {showDoneButton ? (
+            {headerActions ? (
+              headerActions
+            ) : showDoneButton ? (
               <Pressable
                 onPress={onClose}
                 accessibilityRole="button"

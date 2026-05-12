@@ -247,7 +247,7 @@ export default function SetupScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
-  const { currentStep, totalSteps, previousStep, goBack, goNext } = useStepNavigation("Setup");
+  const { currentStep, totalSteps, goNext } = useStepNavigation("Setup");
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const shouldShowSetupGuidance = useAppSettingsStore(
@@ -315,6 +315,24 @@ export default function SetupScreen() {
         id: "setup-outer-mat-size-bubble",
         targetId: "setup-outer-mat-size",
         text: "Enter the outer dimensions of your full mat size.",
+        preferredPlacement: "top",
+      },
+      {
+        id: "setup-folder-library-bubble",
+        targetId: "setup-folder-library",
+        text: "Open your saved library from here when you want to return to saved framing work.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "setup-main-settings-bubble",
+        targetId: "setup-main-settings",
+        text: "Use settings to adjust app-wide preferences like measurement units.",
+        preferredPlacement: "bottom",
+      },
+      {
+        id: "setup-room-view-bubble",
+        targetId: "setup-room-view",
+        text: "Open Room View when you want to place saved framed artwork on a wall.",
         preferredPlacement: "top",
       },
       {
@@ -735,6 +753,8 @@ export default function SetupScreen() {
         <AppHeader
           onOpenProjects={() => navigation.navigate("SavedProjects")}
           onOpenSettings={() => navigation.navigate("Settings")}
+          projectGuidanceAnchorId="setup-folder-library"
+          settingsGuidanceAnchorId="setup-main-settings"
         />
 
         <View
@@ -842,30 +862,44 @@ export default function SetupScreen() {
                 width: "100%",
                 maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
                 alignSelf: "center",
-                flexDirection: "row",
-                alignItems: "center",
+                minHeight: 44,
                 justifyContent: "center",
-                gap: spacing.sm,
+                position: "relative",
               }}
             >
-              {previousStep ? (
-                <AppButton
-                  variant="secondary"
-                  label="Back"
-                  onPress={goBack}
-                  style={{ width: 96 }}
-                />
-              ) : null}
-
               <GuidanceAnchor
                 id="setup-next"
                 style={{
-                  width: previousStep ? undefined : "52%",
-                  flex: previousStep ? 1 : undefined,
+                  width: "52%",
                   maxWidth: 360,
+                  alignSelf: "center",
                 }}
               >
                 <AppButton label="Next" onPress={goNext} style={{ width: "100%" }} />
+              </GuidanceAnchor>
+
+              <GuidanceAnchor
+                id="setup-room-view"
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 0,
+                }}
+              >
+                <Pressable
+                  onPress={() => navigation.navigate("RoomView")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Wall View"
+                  hitSlop={10}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="home-outline" size={22} color={colors.textSecondary} />
+                </Pressable>
               </GuidanceAnchor>
             </View>
           </View>
