@@ -2,10 +2,10 @@ export type FramingFlowParamList = {
   Setup: undefined;
   PreviewAdjust: undefined;
   FinalSpecs: undefined;
-  RoomView: undefined;
 };
 
 export type FramingRootStackParamList = FramingFlowParamList & {
+  RoomView: undefined;
   Settings: undefined;
   SavedProjects: undefined;
   ArtworkCrop: {

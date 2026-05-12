@@ -29,7 +29,6 @@ import Svg, {
 } from "react-native-svg";
 import AppHeader from "../components/AppHeader";
 import ScreenContainer from "../components/ScreenContainer";
-import StepProgress from "../components/StepProgress";
 import { FinishedFramedArtwork } from "../components/preview/MatPreviewCanvas";
 import PresetRoomSceneImage from "../components/room/PresetRoomSceneImage";
 import AppButton from "../components/ui/AppButton";
@@ -37,7 +36,6 @@ import AppCard from "../components/ui/AppCard";
 import AppSegmentedControl from "../components/ui/AppSegmentedControl";
 import AppSheetModal from "../components/ui/AppSheetModal";
 import AppTextField from "../components/ui/AppTextField";
-import { useStepNavigation } from "../hooks/useStepNavigation";
 import {
   DEFAULT_PRESET_ROOM_SCENE_ID,
   PRESET_ROOM_SCENES,
@@ -1675,7 +1673,7 @@ export default function RoomViewScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
-  const { currentStep, totalSteps, previousStep, goBack } = useStepNavigation("RoomView");
+  const canGoBack = navigation.canGoBack();
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const draft = useFramingFlowStore((state) => state.draft);
@@ -3099,12 +3097,6 @@ export default function RoomViewScreen() {
             alignSelf: "center",
           }}
         >
-          <StepProgress
-            currentStep={currentStep.stepNumber}
-            totalSteps={totalSteps}
-            label={currentStep.shortLabel}
-          />
-
           <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
             {wallPhotoCardSection}
             {isTabletLandscape ? wallGeometryWarningSection : null}
@@ -3141,11 +3133,11 @@ export default function RoomViewScreen() {
               gap: spacing.sm,
             }}
           >
-            {previousStep ? (
+            {canGoBack ? (
               <Pressable
                 onPress={() => {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  goBack();
+                  navigation.goBack();
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Go back"

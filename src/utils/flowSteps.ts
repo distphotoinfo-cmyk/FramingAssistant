@@ -9,9 +9,8 @@ export interface FlowStepDefinition {
 
 export const FRAMING_FLOW_STEPS: FlowStepDefinition[] = [
   { route: "Setup", stepNumber: 1, title: "Setup", shortLabel: "Setup" },
-  { route: "PreviewAdjust", stepNumber: 2, title: "Preview and Adjust", shortLabel: "Preview" },
-  { route: "FinalSpecs", stepNumber: 3, title: "Final Specs", shortLabel: "Specs" },
-  { route: "RoomView", stepNumber: 4, title: "View on Wall", shortLabel: "Wall" },
+  { route: "PreviewAdjust", stepNumber: 2, title: "Adjust", shortLabel: "Adjust" },
+  { route: "FinalSpecs", stepNumber: 3, title: "Save", shortLabel: "Save" },
 ];
 
 export function getStepDefinition(route: FramingFlowRouteName) {
