@@ -5,6 +5,7 @@ const landscapeLivingRoomMetadata = require("../../assets/mockups/landscape/Calm
 const landscapeMinimalistInteriorMetadata = require("../../assets/mockups/landscape/Serene minimalist interior landscape.json") as RoomPresetScene;
 const portraitLivingRoomMetadata = require("../../assets/mockups/portrait/Serene minimalist living room interior.json") as RoomPresetScene;
 const portraitSideboardMetadata = require("../../assets/mockups/portrait/Serene minimalist living room.json") as RoomPresetScene;
+const portraitModernSlateMetadata = require("../../assets/mockups/portrait/Modern Slate Interior.json") as RoomPresetScene;
 
 export type RegisteredRoomPresetScene = RoomPresetScene & {
   imageSource: ImageSourcePropType;
@@ -28,6 +29,10 @@ export const PRESET_ROOM_SCENES: RegisteredRoomPresetScene[] = [
   {
     ...portraitSideboardMetadata,
     imageSource: require("../../assets/mockups/portrait/Serene minimalist living room.png"),
+  },
+  {
+    ...portraitModernSlateMetadata,
+    imageSource: require("../../assets/mockups/portrait/Modern Slate Interior.png"),
   },
 ];
 
