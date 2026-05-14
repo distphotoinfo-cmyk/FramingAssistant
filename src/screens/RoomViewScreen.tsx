@@ -57,6 +57,7 @@ import type {
   FractionDenominator,
   RoomArtworkPlacementDraft,
   RoomKnownMeasurementMode,
+  RoomWallShadowDraft,
   RoomViewRect,
   RoomViewPoint,
   RoomViewSourceMode,
@@ -135,6 +136,32 @@ const ROOM_VIEW_DOCK_ITEMS: {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function roundToStep(value: number, step: number) {
+  return Number((Math.round(value / step) * step).toFixed(4));
+}
+
+function getWallShadowDistance(shadow: { offsetX: number; offsetY: number }) {
+  return Math.sqrt(shadow.offsetX ** 2 + shadow.offsetY ** 2);
+}
+
+function getWallShadowDirection(
+  currentShadow: { offsetX: number; offsetY: number },
+  fallbackShadow: { offsetX: number; offsetY: number }
+) {
+  const currentDistance = getWallShadowDistance(currentShadow);
+  const directionSource = currentDistance > 0.1 ? currentShadow : fallbackShadow;
+  const sourceDistance = getWallShadowDistance(directionSource);
+
+  if (sourceDistance <= 0.1) {
+    return { x: 0.58, y: 0.82 };
+  }
+
+  return {
+    x: directionSource.offsetX / sourceDistance,
+    y: directionSource.offsetY / sourceDistance,
+  };
 }
 
 type SvgElementRef = React.ElementRef<typeof Svg> & {
@@ -1333,15 +1360,22 @@ function PlacedWallArtwork({
   const isDraggingRef = useRef(false);
   const isPresetMockup = placedArtwork.placement.sourceMode === "presetRoom";
   const wallShadow = resolveWallShadow(sceneDefaultShadow, placedArtwork.placement.wallShadow);
-  const contactShadowOpacity = isPresetMockup
+  const isWallShadowVisible = wallShadow.opacity > 0.001;
+  const contactShadowOpacity = !isWallShadowVisible
+    ? 0
+    : isPresetMockup
     ? clampNumber(wallShadow.opacity * 0.58, 0.12, 0.24)
-    : 0.055;
-  const castShadowOpacity = isPresetMockup
+    : clampNumber(wallShadow.opacity * 0.55, 0, 0.18);
+  const castShadowOpacity = !isWallShadowVisible
+    ? 0
+    : isPresetMockup
     ? clampNumber(wallShadow.opacity, 0.18, 0.42)
-    : 0.1;
-  const castShadowFillOpacity = isPresetMockup
+    : clampNumber(wallShadow.opacity, 0, 0.42);
+  const castShadowFillOpacity = !isWallShadowVisible
+    ? 0
+    : isPresetMockup
     ? clampNumber(wallShadow.opacity * 0.34, 0.07, 0.15)
-    : 0.045;
+    : clampNumber(wallShadow.opacity * 0.45, 0, 0.15);
 
   useLayoutEffect(() => {
     const pendingCenter = pendingCenterRef.current;
@@ -1492,15 +1526,19 @@ function PlacedWallArtwork({
         pointerEvents="none"
         style={{
           position: "absolute",
-          left: isPresetMockup ? Math.max(4, wallShadow.offsetX * 0.22) : 4,
-          top: isPresetMockup ? Math.max(5, wallShadow.offsetY * 0.2) : 5,
+          left: isPresetMockup
+            ? Math.max(4, wallShadow.offsetX * 0.22)
+            : Math.max(4, wallShadow.offsetX * 0.5),
+          top: isPresetMockup
+            ? Math.max(5, wallShadow.offsetY * 0.2)
+            : Math.max(5, wallShadow.offsetY * 0.45),
           width: placedArtwork.displaySize.width,
           height: placedArtwork.displaySize.height,
           borderRadius: 2,
           backgroundColor: `rgba(0,0,0,${castShadowFillOpacity})`,
           shadowColor: "#000",
           shadowOpacity: castShadowOpacity,
-          shadowRadius: isPresetMockup ? wallShadow.blurRadius : 20,
+          shadowRadius: wallShadow.blurRadius,
           shadowOffset: {
             width: wallShadow.offsetX,
             height: wallShadow.offsetY,
@@ -1512,18 +1550,30 @@ function PlacedWallArtwork({
         pointerEvents="none"
         style={{
           position: "absolute",
-          left: isPresetMockup ? Math.max(7, wallShadow.offsetX * 0.38) : 7,
-          right: isPresetMockup ? -Math.max(5, wallShadow.offsetX * 0.24) : -5,
-          bottom: isPresetMockup ? -Math.max(5, wallShadow.offsetY * 0.22) : -5,
-          height: isPresetMockup ? Math.max(12, wallShadow.offsetY * 0.72) : 12,
+          left: isPresetMockup
+            ? Math.max(7, wallShadow.offsetX * 0.38)
+            : Math.max(7, wallShadow.offsetX * 0.875),
+          right: isPresetMockup
+            ? -Math.max(5, wallShadow.offsetX * 0.24)
+            : -Math.max(5, wallShadow.offsetX * 0.625),
+          bottom: isPresetMockup
+            ? -Math.max(5, wallShadow.offsetY * 0.22)
+            : -Math.max(5, wallShadow.offsetY * 0.45),
+          height: isPresetMockup
+            ? Math.max(12, wallShadow.offsetY * 0.72)
+            : Math.max(12, wallShadow.offsetY * 1.09),
           borderRadius: 6,
           backgroundColor: `rgba(0,0,0,${contactShadowOpacity})`,
           shadowColor: "#000",
-          shadowOpacity: isPresetMockup ? 0.16 : 0.06,
-          shadowRadius: isPresetMockup ? Math.max(12, wallShadow.blurRadius * 0.55) : 10,
+          shadowOpacity: isPresetMockup
+            ? clampNumber(wallShadow.opacity * 0.47, 0, 0.22)
+            : clampNumber(wallShadow.opacity * 0.6, 0, 0.2),
+          shadowRadius: isPresetMockup
+            ? Math.max(12, wallShadow.blurRadius * 0.55)
+            : Math.max(10, wallShadow.blurRadius * 0.5),
           shadowOffset: {
-            width: isPresetMockup ? wallShadow.offsetX * 0.42 : 5,
-            height: isPresetMockup ? wallShadow.offsetY * 0.36 : 5,
+            width: isPresetMockup ? wallShadow.offsetX * 0.42 : wallShadow.offsetX * 0.625,
+            height: isPresetMockup ? wallShadow.offsetY * 0.36 : wallShadow.offsetY * 0.45,
           },
           elevation: isPresetMockup ? 2 : 1,
         }}
@@ -1629,6 +1679,136 @@ function PlacedWallArtwork({
         </View>
       ) : null}
     </Animated.View>
+  );
+}
+
+function RoomShadowSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  disabled = false,
+  formatValue,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  disabled?: boolean;
+  formatValue: (value: number) => string;
+  onCommit: (value: number) => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const [trackWidth, setTrackWidth] = useState(0);
+  const [draftValue, setDraftValue] = useState(value);
+  const draftValueRef = useRef(value);
+
+  useEffect(() => {
+    setDraftValue(value);
+    draftValueRef.current = value;
+  }, [value]);
+
+  const updateFromLocation = useCallback(
+    (locationX: number) => {
+      if (disabled || trackWidth <= 0) {
+        return;
+      }
+
+      const percent = clampNumber(locationX / trackWidth, 0, 1);
+      const nextValue = roundToStep(min + percent * (max - min), step);
+      const clampedValue = clampNumber(nextValue, min, max);
+
+      draftValueRef.current = clampedValue;
+      setDraftValue(clampedValue);
+    },
+    [disabled, max, min, step, trackWidth]
+  );
+
+  const commitDraftValue = useCallback(() => {
+    if (disabled) {
+      return;
+    }
+
+    onCommit(draftValueRef.current);
+  }, [disabled, onCommit]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !disabled,
+        onMoveShouldSetPanResponder: () => !disabled,
+        onStartShouldSetPanResponderCapture: () => !disabled,
+        onMoveShouldSetPanResponderCapture: () => !disabled,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: (event) => {
+          updateFromLocation(event.nativeEvent.locationX);
+        },
+        onPanResponderMove: (event) => {
+          updateFromLocation(event.nativeEvent.locationX);
+        },
+        onPanResponderRelease: commitDraftValue,
+        onPanResponderTerminate: commitDraftValue,
+      }),
+    [commitDraftValue, disabled, updateFromLocation]
+  );
+
+  const percent = max > min ? clampNumber((draftValue - min) / (max - min), 0, 1) : 0;
+
+  return (
+    <View style={{ gap: spacing.xs, opacity: disabled ? 0.48 : 1 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md }}>
+        <Text style={{ ...typography.small, color: colors.textPrimary, fontWeight: "700" }}>
+          {label}
+        </Text>
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {formatValue(draftValue)}
+        </Text>
+      </View>
+
+      <View
+        {...panResponder.panHandlers}
+        onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+        style={{
+          height: 34,
+          justifyContent: "center",
+        }}
+      >
+        <View
+          style={{
+            height: 5,
+            borderRadius: radii.pill,
+            backgroundColor: colors.backgroundMuted,
+            overflow: "hidden",
+          }}
+        >
+          <View
+            style={{
+              width: `${percent * 100}%`,
+              height: "100%",
+              backgroundColor: disabled ? colors.textPlaceholder : colors.accent,
+            }}
+          />
+        </View>
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: `${percent * 100}%`,
+            width: 20,
+            height: 20,
+            marginLeft: -10,
+            borderRadius: radii.pill,
+            borderWidth: 2,
+            borderColor: colors.backgroundCard,
+            backgroundColor: disabled ? colors.textPlaceholder : colors.accent,
+          }}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -1745,6 +1925,16 @@ export default function RoomViewScreen() {
     framedArtworks.find((artwork) => artwork.id === activePlacement?.framedArtworkId) ?? null;
   const selectedDraft = selectedFramedArtwork?.draft ?? null;
   const selectedDerived = selectedDraft ? buildDerivedGeometry(selectedDraft) : null;
+  const activePlacementSceneDefaultShadow =
+    activePlacement?.sourceMode === "presetRoom" ? activePresetScene.defaultShadow : null;
+  const activePlacementBaseWallShadow = resolveWallShadow(activePlacementSceneDefaultShadow, null);
+  const activePlacementWallShadow = activePlacement
+    ? resolveWallShadow(activePlacementSceneDefaultShadow, activePlacement.wallShadow)
+    : null;
+  const activePlacementShadowEnabled = (activePlacementWallShadow?.opacity ?? 0) > 0.001;
+  const activePlacementShadowDistance = activePlacementWallShadow
+    ? getWallShadowDistance(activePlacementWallShadow)
+    : 0;
   const isTabletLandscape =
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
@@ -2295,6 +2485,61 @@ export default function RoomViewScreen() {
       });
     },
     [roomView.placements, setRoomView]
+  );
+
+  const updateSelectedPlacementWallShadow = useCallback(
+    (wallShadowPatch: RoomWallShadowDraft) => {
+      if (!activePlacement) {
+        return;
+      }
+
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          placement.id === activePlacement.id
+            ? {
+                ...placement,
+                wallShadow: {
+                  ...placement.wallShadow,
+                  ...wallShadowPatch,
+                },
+              }
+            : placement
+        ),
+      });
+    },
+    [activePlacement, roomView.placements, setRoomView]
+  );
+
+  const handleWallShadowToggle = useCallback(
+    (enabled: boolean) => {
+      updateSelectedPlacementWallShadow({
+        opacity: enabled ? activePlacementBaseWallShadow.opacity : 0,
+      });
+    },
+    [activePlacementBaseWallShadow.opacity, updateSelectedPlacementWallShadow]
+  );
+
+  const handleWallShadowDistanceChange = useCallback(
+    (distance: number) => {
+      if (!activePlacementWallShadow) {
+        return;
+      }
+
+      const direction = getWallShadowDirection(
+        activePlacementWallShadow,
+        activePlacementBaseWallShadow
+      );
+
+      updateSelectedPlacementWallShadow({
+        offsetX: roundToStep(direction.x * distance, 0.1),
+        offsetY: roundToStep(direction.y * distance, 0.1),
+      });
+    },
+    [
+      activePlacementBaseWallShadow,
+      activePlacementWallShadow,
+      updateSelectedPlacementWallShadow,
+    ]
   );
 
   const handleRemoveSelectedPlacement = useCallback(() => {
@@ -3090,6 +3335,80 @@ export default function RoomViewScreen() {
     </AppCard>
   );
 
+  const wallShadowControlsSection = (
+    <AppCard
+      title="Wall Shadow"
+      subtitle="Adjust the selected artwork's contact shadow against the wall."
+    >
+      {activePlacement && activePlacementWallShadow ? (
+        <>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: colors.borderSubtle,
+              borderRadius: radii.md,
+              backgroundColor: colors.backgroundInput,
+              paddingHorizontal: spacing.md,
+              paddingVertical: spacing.sm,
+              gap: 2,
+            }}
+          >
+            <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }} numberOfLines={1}>
+              {selectedFramedArtwork?.name ?? "Selected artwork"}
+            </Text>
+            <Text style={{ ...typography.small, color: colors.textSecondary }}>
+              Changes apply only to this placed artwork.
+            </Text>
+          </View>
+
+          <RoomSwitchRow
+            label="Shadow"
+            accessibilityLabel="Enable wall shadow for selected artwork"
+            value={activePlacementShadowEnabled}
+            onValueChange={handleWallShadowToggle}
+          />
+
+          <RoomShadowSlider
+            label="Strength"
+            value={activePlacementWallShadow.opacity}
+            min={0}
+            max={0.6}
+            step={0.01}
+            disabled={!activePlacementShadowEnabled}
+            formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
+            onCommit={(opacity) => updateSelectedPlacementWallShadow({ opacity })}
+          />
+
+          <RoomShadowSlider
+            label="Softness"
+            value={activePlacementWallShadow.blurRadius}
+            min={0}
+            max={64}
+            step={1}
+            disabled={!activePlacementShadowEnabled}
+            formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
+            onCommit={(blurRadius) => updateSelectedPlacementWallShadow({ blurRadius })}
+          />
+
+          <RoomShadowSlider
+            label="Distance"
+            value={activePlacementShadowDistance}
+            min={0}
+            max={72}
+            step={1}
+            disabled={!activePlacementShadowEnabled}
+            formatValue={(distance) => `${Math.round(distance)} px`}
+            onCommit={handleWallShadowDistanceChange}
+          />
+        </>
+      ) : (
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          Select an artwork on the wall to adjust its shadow.
+        </Text>
+      )}
+    </AppCard>
+  );
+
   const exportCardSection = (
     <AppCard title="Export">
       <Text style={{ ...typography.small, color: colors.textSecondary }}>
@@ -3106,7 +3425,7 @@ export default function RoomViewScreen() {
     </AppCard>
   );
 
-  const settingsControlsSection =
+  const roomScaleSettingsSection =
     roomView.sourceMode === "myWall" ? (
       calibrationCardSection
     ) : (
@@ -3116,6 +3435,13 @@ export default function RoomViewScreen() {
         </Text>
       </AppCard>
     );
+
+  const settingsControlsSection = (
+    <>
+      {roomScaleSettingsSection}
+      {wallShadowControlsSection}
+    </>
+  );
 
   const roomViewDockSection = (
     <RoomViewBottomDock
