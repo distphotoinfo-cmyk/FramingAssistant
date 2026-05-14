@@ -138,6 +138,13 @@ export interface RoomPresetScene {
   pixelsPerInch: number;
 }
 
+export interface RoomWallShadowDraft {
+  opacity?: number;
+  offsetX?: number;
+  offsetY?: number;
+  blurRadius?: number;
+}
+
 export interface RoomWallPhotoDraft {
   imageUri: string;
   imageWidth: number | null;
@@ -162,6 +169,7 @@ export interface RoomArtworkPlacementDraft {
   scale: number;
   rotationDegrees: number;
   zIndex: number;
+  wallShadow?: RoomWallShadowDraft;
 }
 
 export interface RoomViewDraft {

@@ -87,6 +87,7 @@ import {
   getStandardCalibrationPaperLabel,
   getWallPhotoAspectRatio,
 } from "../utils/roomView";
+import { resolveWallShadow } from "../utils/roomShadow";
 
 const CALIBRATION_HANDLE_SIZE = 38;
 const CALIBRATION_RULER_HEIGHT = 24;
@@ -131,6 +132,10 @@ const ROOM_VIEW_DOCK_ITEMS: {
   { label: "Settings", sheet: "settings", icon: "options-outline" },
   { label: "Export", sheet: "export", icon: "share-outline" },
 ];
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
 
 type SvgElementRef = React.ElementRef<typeof Svg> & {
   toDataURL?: (
@@ -601,7 +606,10 @@ function sortFramedArtworks(
       return secondArea - firstArea;
     }
 
-    return new Date(second.savedAt).getTime() - new Date(first.savedAt).getTime();
+    return (
+      new Date(second.updatedAt ?? second.savedAt).getTime() -
+      new Date(first.updatedAt ?? first.savedAt).getTime()
+    );
   });
 }
 
@@ -1299,6 +1307,7 @@ function PlacedWallArtwork({
   stageOffset,
   placementBounds,
   snapGridSizePixels,
+  sceneDefaultShadow,
   onSelect,
   onMoveEnd,
   onDragStart,
@@ -1310,6 +1319,7 @@ function PlacedWallArtwork({
   stageOffset: { x: number; y: number };
   placementBounds: RoomViewRect;
   snapGridSizePixels: number | null;
+  sceneDefaultShadow?: RegisteredRoomPresetScene["defaultShadow"] | null;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
   onDragStart: () => void;
@@ -1321,6 +1331,17 @@ function PlacedWallArtwork({
   const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
+  const isPresetMockup = placedArtwork.placement.sourceMode === "presetRoom";
+  const wallShadow = resolveWallShadow(sceneDefaultShadow, placedArtwork.placement.wallShadow);
+  const contactShadowOpacity = isPresetMockup
+    ? clampNumber(wallShadow.opacity * 0.58, 0.12, 0.24)
+    : 0.055;
+  const castShadowOpacity = isPresetMockup
+    ? clampNumber(wallShadow.opacity, 0.18, 0.42)
+    : 0.1;
+  const castShadowFillOpacity = isPresetMockup
+    ? clampNumber(wallShadow.opacity * 0.34, 0.07, 0.15)
+    : 0.045;
 
   useLayoutEffect(() => {
     const pendingCenter = pendingCenterRef.current;
@@ -1471,34 +1492,40 @@ function PlacedWallArtwork({
         pointerEvents="none"
         style={{
           position: "absolute",
-          left: 4,
-          top: 5,
+          left: isPresetMockup ? Math.max(4, wallShadow.offsetX * 0.22) : 4,
+          top: isPresetMockup ? Math.max(5, wallShadow.offsetY * 0.2) : 5,
           width: placedArtwork.displaySize.width,
           height: placedArtwork.displaySize.height,
           borderRadius: 2,
-          backgroundColor: "rgba(0,0,0,0.045)",
+          backgroundColor: `rgba(0,0,0,${castShadowFillOpacity})`,
           shadowColor: "#000",
-          shadowOpacity: 0.1,
-          shadowRadius: 20,
-          shadowOffset: { width: 8, height: 11 },
-          elevation: 1,
+          shadowOpacity: castShadowOpacity,
+          shadowRadius: isPresetMockup ? wallShadow.blurRadius : 20,
+          shadowOffset: {
+            width: wallShadow.offsetX,
+            height: wallShadow.offsetY,
+          },
+          elevation: isPresetMockup ? 3 : 1,
         }}
       />
       <View
         pointerEvents="none"
         style={{
           position: "absolute",
-          left: 7,
-          right: -5,
-          bottom: -5,
-          height: 12,
+          left: isPresetMockup ? Math.max(7, wallShadow.offsetX * 0.38) : 7,
+          right: isPresetMockup ? -Math.max(5, wallShadow.offsetX * 0.24) : -5,
+          bottom: isPresetMockup ? -Math.max(5, wallShadow.offsetY * 0.22) : -5,
+          height: isPresetMockup ? Math.max(12, wallShadow.offsetY * 0.72) : 12,
           borderRadius: 6,
-          backgroundColor: "rgba(0,0,0,0.055)",
+          backgroundColor: `rgba(0,0,0,${contactShadowOpacity})`,
           shadowColor: "#000",
-          shadowOpacity: 0.06,
-          shadowRadius: 10,
-          shadowOffset: { width: 5, height: 5 },
-          elevation: 1,
+          shadowOpacity: isPresetMockup ? 0.16 : 0.06,
+          shadowRadius: isPresetMockup ? Math.max(12, wallShadow.blurRadius * 0.55) : 10,
+          shadowOffset: {
+            width: isPresetMockup ? wallShadow.offsetX * 0.42 : 5,
+            height: isPresetMockup ? wallShadow.offsetY * 0.36 : 5,
+          },
+          elevation: isPresetMockup ? 2 : 1,
         }}
       />
 
@@ -1519,6 +1546,7 @@ function PlacedWallArtwork({
         artworkCrop={preview.artworkCrop}
         physicalScale={placedArtwork.physicalScale}
         showShadow
+        depthMode={isPresetMockup ? "roomMockup" : "standard"}
         style={{ opacity: 0.992 }}
       />
 
@@ -1679,6 +1707,7 @@ export default function RoomViewScreen() {
   const draft = useFramingFlowStore((state) => state.draft);
   const setRoomView = useFramingFlowStore((state) => state.setRoomView);
   const resetDraft = useFramingFlowStore((state) => state.resetDraft);
+  const projectFolders = useSavedProjectsStore((state) => state.projectFolders);
   const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const exportSvgRef = useRef<SvgElementRef | null>(null);
@@ -1688,6 +1717,7 @@ export default function RoomViewScreen() {
   const [wallPhotoSourceSheetVisible, setWallPhotoSourceSheetVisible] = useState(false);
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
+  const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
   const [artworkSortMenuVisible, setArtworkSortMenuVisible] = useState(false);
   const [isArtworkDragging, setIsArtworkDragging] = useState(false);
@@ -1764,9 +1794,30 @@ export default function RoomViewScreen() {
     () => getRoomKnownMeasurementOptions(unit),
     [unit]
   );
+  const sortedProjectFolders = useMemo(
+    () =>
+      [...projectFolders].sort(
+        (first, second) =>
+          new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()
+      ),
+    [projectFolders]
+  );
+  const selectedArtworkProjectFolder =
+    sortedProjectFolders.find((folder) => folder.id === selectedArtworkProjectFolderId) ??
+    sortedProjectFolders[0] ??
+    null;
+  const selectedFolderFramedArtworks = useMemo(
+    () =>
+      selectedArtworkProjectFolder
+        ? framedArtworks.filter(
+            (artwork) => artwork.projectFolderId === selectedArtworkProjectFolder.id
+          )
+        : [],
+    [framedArtworks, selectedArtworkProjectFolder]
+  );
   const sortedFramedArtworks = useMemo(
-    () => sortFramedArtworks(framedArtworks, artworkSortMode),
-    [artworkSortMode, framedArtworks]
+    () => sortFramedArtworks(selectedFolderFramedArtworks, artworkSortMode),
+    [artworkSortMode, selectedFolderFramedArtworks]
   );
   const displayPixelsPerInch = getDisplayPixelsPerInch({
     sourceImageWidth: sceneImageWidth,
@@ -1893,6 +1944,20 @@ export default function RoomViewScreen() {
             unit,
             imperialPrecision
           )}.`;
+
+  useEffect(() => {
+    if (!selectedArtworkProjectFolderId && sortedProjectFolders[0]) {
+      setSelectedArtworkProjectFolderId(sortedProjectFolders[0].id);
+      return;
+    }
+
+    if (
+      selectedArtworkProjectFolderId &&
+      !sortedProjectFolders.some((folder) => folder.id === selectedArtworkProjectFolderId)
+    ) {
+      setSelectedArtworkProjectFolderId(sortedProjectFolders[0]?.id ?? null);
+    }
+  }, [selectedArtworkProjectFolderId, sortedProjectFolders]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -2132,6 +2197,9 @@ export default function RoomViewScreen() {
         return;
       }
 
+      setSelectedArtworkProjectFolderId(
+        (current) => current ?? sortedProjectFolders[0]?.id ?? null
+      );
       setActiveSheet(null);
       setFramedArtworkSheetVisible(true);
       return;
@@ -2147,9 +2215,18 @@ export default function RoomViewScreen() {
       return;
     }
 
+    setSelectedArtworkProjectFolderId(
+      (current) => current ?? sortedProjectFolders[0]?.id ?? null
+    );
     setActiveSheet(null);
     setFramedArtworkSheetVisible(true);
-  }, [activePresetScene, calibration.pixelsPerInch, roomView.sourceMode, wallPhoto]);
+  }, [
+    activePresetScene,
+    calibration.pixelsPerInch,
+    roomView.sourceMode,
+    sortedProjectFolders,
+    wallPhoto,
+  ]);
 
   const handleSelectFramedArtwork = useCallback(
     (framedArtwork: SavedFramedArtwork) => {
@@ -2583,6 +2660,11 @@ export default function RoomViewScreen() {
               }}
               placementBounds={placementBounds}
               snapGridSizePixels={snapGridSizePixels}
+              sceneDefaultShadow={
+                roomView.sourceMode === "presetRoom"
+                  ? activePresetScene.defaultShadow
+                  : null
+              }
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
               onDragStart={() => setIsArtworkDragging(true)}
@@ -2957,7 +3039,7 @@ export default function RoomViewScreen() {
 
       {framedArtworks.length === 0 ? (
         <Text style={{ ...typography.small, color: colors.textSecondary }}>
-          No framed artworks saved yet. Save one from Final Specs first, then return here to place it on the wall.
+          No artwork saved yet. Use Save Artwork from Final Specs first, then return here to place it on the wall.
         </Text>
       ) : roomView.sourceMode === "myWall" && !wallPhoto ? (
         <Text style={{ ...typography.small, color: colors.textSecondary }}>
@@ -3321,25 +3403,79 @@ export default function RoomViewScreen() {
       >
         {framedArtworks.length === 0 ? (
           <Text style={{ ...typography.small, color: colors.textSecondary }}>
-            No saved framed artworks yet. Save a framed artwork from Final Specs first.
+            No artwork saved yet. Use Save Artwork from Final Specs first.
           </Text>
         ) : (
           <>
+            <View style={{ gap: spacing.xs }}>
+              <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
+                Project folder
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: spacing.xs, paddingRight: spacing.xs }}
+              >
+                {sortedProjectFolders.map((folder) => {
+                  const selected = folder.id === selectedArtworkProjectFolder?.id;
+                  const artworkCount = framedArtworks.filter(
+                    (artwork) => artwork.projectFolderId === folder.id
+                  ).length;
+
+                  return (
+                    <Pressable
+                      key={folder.id}
+                      onPress={() => setSelectedArtworkProjectFolderId(folder.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Show ${folder.name}`}
+                      style={{
+                        minHeight: 36,
+                        borderRadius: radii.pill,
+                        borderWidth: 1,
+                        borderColor: selected ? colors.accent : colors.borderStrong,
+                        backgroundColor: selected ? colors.accentSoft : colors.backgroundCard,
+                        paddingHorizontal: spacing.sm,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          ...typography.small,
+                          color: selected ? colors.accent : colors.textPrimary,
+                          fontWeight: "700",
+                        }}
+                        numberOfLines={1}
+                      >
+                        {folder.name} ({artworkCount})
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
             <ScrollView
               style={{ maxHeight: Math.min(windowHeight * 0.55, 520) }}
               contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.xs }}
               showsVerticalScrollIndicator
             >
-              {sortedFramedArtworks.map((artwork) => (
-                <SavedFramedArtworkPickerRow
-                  key={artwork.id}
-                  artwork={artwork}
-                  selected={artwork.id === selectedFramedArtwork?.id}
-                  unit={unit}
-                  imperialPrecision={imperialPrecision}
-                  onPress={() => handleSelectFramedArtwork(artwork)}
-                />
-              ))}
+              {sortedFramedArtworks.length === 0 ? (
+                <Text style={{ ...typography.small, color: colors.textSecondary }}>
+                  No artwork saved in this project folder yet.
+                </Text>
+              ) : (
+                sortedFramedArtworks.map((artwork) => (
+                  <SavedFramedArtworkPickerRow
+                    key={artwork.id}
+                    artwork={artwork}
+                    selected={artwork.id === selectedFramedArtwork?.id}
+                    unit={unit}
+                    imperialPrecision={imperialPrecision}
+                    onPress={() => handleSelectFramedArtwork(artwork)}
+                  />
+                ))
+              )}
             </ScrollView>
           </>
         )}
