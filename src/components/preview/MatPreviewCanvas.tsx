@@ -10,6 +10,7 @@ import type {
   FrameProfileId,
   MatCoreColor,
   MatThicknessPly,
+  RoomMaterialRealismDraft,
 } from "../../types/framing";
 import { useAppSettingsStore } from "../../state/appSettingsStore";
 import { getArtworkAspectRatio, resolveArtworkCropMetrics } from "../../utils/artworkCrop";
@@ -17,6 +18,7 @@ import { getFrameProfile } from "../../utils/frameProfiles";
 import { getOffsetBounds, type NumericSize } from "../../utils/framingGeometry";
 import { hexToHsl, mixHexColors, normalizeHex } from "../../utils/color";
 import { useAppTheme } from "../../theme/AppThemeProvider";
+import { resolveRoomMaterialRealism } from "../../utils/roomRealism";
 
 interface MatPreviewCanvasProps {
   artworkSize: NumericSize | null;
@@ -60,6 +62,7 @@ export interface FinishedFramedArtworkProps {
   showShadow?: boolean;
   depthMode?: "standard" | "roomMockup";
   shadowDirection?: { x: number; y: number };
+  materialRealism?: RoomMaterialRealismDraft;
   style?: ViewStyle;
 }
 
@@ -158,6 +161,30 @@ function getEdgeLightValues(
   };
 }
 
+function getDirectionalSurfaceValues(
+  lightDirection: { x: number; y: number },
+  orientation: FrameOrientation,
+  recessed = false
+) {
+  const edge = getEdgeLightValues(lightDirection, orientation);
+
+  if (recessed) {
+    const useLight = edge.shadow > edge.light;
+
+    return {
+      useLight,
+      amount: useLight ? edge.shadow : edge.light,
+    };
+  }
+
+  const useLight = edge.light >= edge.shadow;
+
+  return {
+    useLight,
+    amount: useLight ? edge.light : edge.shadow,
+  };
+}
+
 function buildDirectionalFrameBandStyle({
   lightDirection,
   lightColor,
@@ -166,6 +193,7 @@ function buildDirectionalFrameBandStyle({
   baseShadowOpacity,
   depthIntensity,
   maxOpacity,
+  recessed = false,
 }: {
   lightDirection: { x: number; y: number };
   lightColor: string;
@@ -174,14 +202,17 @@ function buildDirectionalFrameBandStyle({
   baseShadowOpacity: number;
   depthIntensity: number;
   maxOpacity: number;
+  recessed?: boolean;
 }) {
   const fillByOrientation = {} as Record<FrameOrientation, string>;
   const opacityByOrientation = {} as Record<FrameOrientation, number>;
 
   FRAME_ORIENTATIONS.forEach((orientation) => {
-    const edge = getEdgeLightValues(lightDirection, orientation);
-    const useLight = edge.light >= edge.shadow;
-    const amount = useLight ? edge.light : edge.shadow;
+    const { useLight, amount } = getDirectionalSurfaceValues(
+      lightDirection,
+      orientation,
+      recessed
+    );
     const baseOpacity = useLight ? baseLightOpacity : baseShadowOpacity;
 
     fillByOrientation[orientation] = useLight ? lightColor : shadowColor;
@@ -203,31 +234,38 @@ function getDirectionalEdgeColor({
   lightDirection,
   shadowAlpha,
   highlightAlpha,
+  recessed = false,
 }: {
   orientation: FrameOrientation;
   lightDirection: { x: number; y: number };
   shadowAlpha: number;
   highlightAlpha: number;
+  recessed?: boolean;
 }) {
-  const edge = getEdgeLightValues(lightDirection, orientation);
+  const { useLight, amount } = getDirectionalSurfaceValues(
+    lightDirection,
+    orientation,
+    recessed
+  );
 
-  if (edge.light >= edge.shadow) {
-    return `rgba(255,255,255,${clamp(highlightAlpha * (0.28 + edge.light * 0.72), 0, highlightAlpha)})`;
+  if (useLight) {
+    return `rgba(255,255,255,${clamp(highlightAlpha * (0.28 + amount * 0.72), 0, highlightAlpha)})`;
   }
 
-  return `rgba(0,0,0,${clamp(shadowAlpha * (0.32 + edge.shadow * 0.68), 0, shadowAlpha)})`;
+  return `rgba(0,0,0,${clamp(shadowAlpha * (0.32 + amount * 0.68), 0, shadowAlpha)})`;
 }
 
 function buildDirectionalEdgeColors(
   lightDirection: { x: number; y: number },
   shadowAlpha: number,
-  highlightAlpha: number
+  highlightAlpha: number,
+  recessed = false
 ) {
   return {
-    top: getDirectionalEdgeColor({ orientation: "top", lightDirection, shadowAlpha, highlightAlpha }),
-    right: getDirectionalEdgeColor({ orientation: "right", lightDirection, shadowAlpha, highlightAlpha }),
-    bottom: getDirectionalEdgeColor({ orientation: "bottom", lightDirection, shadowAlpha, highlightAlpha }),
-    left: getDirectionalEdgeColor({ orientation: "left", lightDirection, shadowAlpha, highlightAlpha }),
+    top: getDirectionalEdgeColor({ orientation: "top", lightDirection, shadowAlpha, highlightAlpha, recessed }),
+    right: getDirectionalEdgeColor({ orientation: "right", lightDirection, shadowAlpha, highlightAlpha, recessed }),
+    bottom: getDirectionalEdgeColor({ orientation: "bottom", lightDirection, shadowAlpha, highlightAlpha, recessed }),
+    left: getDirectionalEdgeColor({ orientation: "left", lightDirection, shadowAlpha, highlightAlpha, recessed }),
   };
 }
 
@@ -315,6 +353,7 @@ function FrameFaceOverlay({
   renderStyle,
   depthIntensity = 1,
   lightDirection,
+  innerLipContrast = 1,
 }: {
   width: number;
   height: number;
@@ -323,6 +362,7 @@ function FrameFaceOverlay({
   renderStyle: "none" | "basic" | "florentine" | "monochrome";
   depthIntensity?: number;
   lightDirection?: { x: number; y: number };
+  innerLipContrast?: number;
 }) {
   if (thickness <= 0) {
     return null;
@@ -360,6 +400,10 @@ function FrameFaceOverlay({
       Math.max(accentOneStart + accentWidth + onePixel * 0.35, innerBandStart - accentWidth)
     )
   );
+  const effectiveInnerLipContrast = clamp(innerLipContrast, 0, 4);
+  const innerLipOverdrive = Math.max(0, effectiveInnerLipContrast - 2);
+  const innerLipMaxOpacity = clamp(0.48 + innerLipOverdrive * 0.18, 0.48, 0.86);
+  const innerLipAccentMaxOpacity = clamp(0.5 + innerLipOverdrive * 0.2, 0.5, 0.9);
   const outerBandStyle = lightDirection
     ? buildDirectionalFrameBandStyle({
         lightDirection,
@@ -398,10 +442,39 @@ function FrameFaceOverlay({
         lightDirection,
         lightColor: palette.innerLight,
         shadowColor: palette.innerShadow,
-        baseLightOpacity: renderStyle === "florentine" ? 0.15 : renderStyle === "monochrome" ? 0.11 : 0.08,
-        baseShadowOpacity: renderStyle === "florentine" ? 0.18 : renderStyle === "monochrome" ? 0.13 : 0.09,
+        baseLightOpacity:
+          (renderStyle === "florentine" ? 0.17 : renderStyle === "monochrome" ? 0.13 : 0.1) *
+          effectiveInnerLipContrast,
+        baseShadowOpacity:
+          (renderStyle === "florentine" ? 0.25 : renderStyle === "monochrome" ? 0.2 : 0.15) *
+          effectiveInnerLipContrast,
         depthIntensity,
-        maxOpacity: 0.36,
+        maxOpacity: innerLipMaxOpacity,
+        recessed: true,
+      })
+    : null;
+  const innerLipAccentWidth = roundToPixel(
+    clamp(
+      thickness * (0.035 + effectiveInnerLipContrast * 0.012),
+      onePixel,
+      Math.max(onePixel, innerBand * 0.42)
+    )
+  );
+  const innerLipAccentStart = roundToPixel(Math.max(innerBandStart, thickness - innerLipAccentWidth));
+  const innerLipAccentStyle = lightDirection
+    ? buildDirectionalFrameBandStyle({
+        lightDirection,
+        lightColor: palette.innerLight,
+        shadowColor: palette.innerShadow,
+        baseLightOpacity:
+          (renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1) *
+          effectiveInnerLipContrast,
+        baseShadowOpacity:
+          (renderStyle === "florentine" ? 0.28 : renderStyle === "monochrome" ? 0.23 : 0.17) *
+          effectiveInnerLipContrast,
+        depthIntensity,
+        maxOpacity: innerLipAccentMaxOpacity,
+        recessed: true,
       })
     : null;
 
@@ -507,6 +580,16 @@ function FrameFaceOverlay({
           }
         }
       />
+      {innerLipAccentStyle ? (
+        <FrameBandLayer
+          width={width}
+          height={height}
+          startOffset={innerLipAccentStart}
+          endOffset={thickness}
+          fillByOrientation={innerLipAccentStyle.fillByOrientation}
+          opacityByOrientation={innerLipAccentStyle.opacityByOrientation}
+        />
+      ) : null}
     </Svg>
   );
 }
@@ -610,6 +693,7 @@ export function FinishedFramedArtwork({
   showShadow = true,
   depthMode = "standard",
   shadowDirection,
+  materialRealism,
   style,
 }: FinishedFramedArtworkProps) {
   const { isDark } = useAppTheme();
@@ -621,19 +705,47 @@ export function FinishedFramedArtwork({
   const matColor = normalizeHex(matColorHex, "#F4F0E8");
   const mountingBoardColor = normalizeHex(mountingBoardColorHex, "#FFFFFF");
   const matLightness = hexToHsl(matColor).l;
+  const isDarkMat = matLightness < 0.24;
   const isWhiteCore = matCoreColor === "white";
-  const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
+  const coreFaceColor = isWhiteCore ? "#F8F7F2" : isDarkMat ? "#1D1D1D" : "#161616";
+  const blackCoreLiftRatio = isWhiteCore ? 0 : clamp((0.42 - matLightness) / 0.42, 0, 1);
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
   const isRoomMockupDepth = depthMode === "roomMockup";
+  const frameLightness = hexToHsl(frameColor).l;
+  const darkFrameLiftRatio = isRoomMockupDepth ? clamp((0.62 - frameLightness) / 0.62, 0, 1) : 0;
   const roomLightDirection = isRoomMockupDepth
     ? getLightDirectionFromShadowDirection(shadowDirection)
     : STANDARD_PREVIEW_LIGHT_DIRECTION;
-  const matShadowBoost = isRoomMockupDepth ? 1.45 : 1;
-  const matHighlightBoost = isRoomMockupDepth ? 1.28 : 1;
-  const frameShadowBoost = isRoomMockupDepth ? 1.5 : 1;
-  const frameHighlightBoost = isRoomMockupDepth ? 1.28 : 1;
-  const frameFaceDepthIntensity = isRoomMockupDepth ? 1.75 : 1;
+  const roomMaterialRealism = resolveRoomMaterialRealism(materialRealism);
+  const roomBevelDepth = isRoomMockupDepth ? roomMaterialRealism.bevelDepth : 1;
+  const roomBevelSoftness = isRoomMockupDepth ? roomMaterialRealism.bevelSoftness : 0;
+  const roomFrameDepth = isRoomMockupDepth ? roomMaterialRealism.frameDepth : 1;
+  const roomInnerLipContrast = isRoomMockupDepth ? roomMaterialRealism.innerLipContrast : 1;
+  const roomFrameOverdrive = Math.max(0, roomFrameDepth - 1.5);
+  const roomFrameOverdriveRatio = clamp(roomFrameOverdrive / 1.5, 0, 1);
+  const roomBevelOverdrive = Math.max(0, roomBevelDepth - 1.5);
+  const roomBevelOverdriveRatio = clamp(roomBevelOverdrive / 1.5, 0, 1);
+  const roomBevelContrast = clamp(
+    clamp(0.62 + roomBevelDepth * 0.4, 0, 1.16) + roomBevelOverdrive * 0.55,
+    0,
+    2.08
+  );
+  const matShadowBoost = isRoomMockupDepth ? 1 + roomBevelDepth * 0.6 : 1;
+  const matHighlightBoost = isRoomMockupDepth ? 1 + roomBevelDepth * 0.42 : 1;
+  const frameShadowBoost = isRoomMockupDepth
+    ? 1 + roomFrameDepth * (0.5 + darkFrameLiftRatio * 0.34)
+    : 1;
+  const frameHighlightBoost = isRoomMockupDepth
+    ? 1 + roomFrameDepth * (0.28 + darkFrameLiftRatio * 0.26)
+    : 1;
+  const frameFaceDepthIntensity = isRoomMockupDepth
+    ? 1 + roomFrameDepth * (0.56 + darkFrameLiftRatio * 0.22)
+    : 1;
+  const frameInnerLipContrast = isRoomMockupDepth
+    ? roomInnerLipContrast *
+      (1 + darkFrameLiftRatio * 0.62 + roomFrameOverdrive * (0.18 + darkFrameLiftRatio * 0.24))
+    : roomInnerLipContrast;
   const bevelUnitScale = unit === "cm" ? 2.54 : 1;
   const bevelVisualScale = 1.5625;
   const bevelThicknessMultiplier = {
@@ -715,30 +827,67 @@ export function FinishedFramedArtwork({
       midOffset: "62%",
     },
   };
-  const roomMatShadowEdgeColor = useDarkMatShadowLift
-    ? darkMatTopOuterColor
+  const roomMatShadowEdgeColor = !isWhiteCore
+    ? mixHexColors(
+        coreFaceColor,
+        "#030303",
+        clamp(
+          (0.2 + blackCoreLiftRatio * 0.18) * roomBevelContrast,
+          0,
+          0.48 + roomBevelOverdriveRatio * 0.16
+        )
+      )
+    : useDarkMatShadowLift
+      ? darkMatTopOuterColor
+      : mixHexColors(
+          coreFaceColor,
+          "#000000",
+          clamp(0.14 * roomBevelContrast, 0, 0.42 + roomBevelOverdriveRatio * 0.1)
+        );
+  const roomMatHighlightEdgeColor = !isWhiteCore
+    ? mixHexColors(
+        coreFaceColor,
+        mixHexColors("#5A5A5A", "#747474", roomBevelOverdriveRatio * 0.35),
+        clamp(
+          (0.16 + blackCoreLiftRatio * 0.14) * roomBevelContrast,
+          0,
+          0.36 + roomBevelOverdriveRatio * 0.16
+        )
+      )
     : mixHexColors(
         coreFaceColor,
-        "#000000",
-        clamp((isWhiteCore ? 0.18 : 0.44) * matShadowBoost, 0, 0.72)
+        "#FFFFFF",
+        clamp(0.16 * roomBevelContrast, 0, 0.34 + roomBevelOverdriveRatio * 0.12)
       );
-  const roomMatHighlightEdgeColor = mixHexColors(
-    coreFaceColor,
-    "#FFFFFF",
-    clamp((isWhiteCore ? 0.22 : 0.34) * matHighlightBoost, 0, 0.54)
-  );
   const buildRoomBevelSide = (orientation: FrameOrientation): MatBevelSidePalette => {
-    const edge = getEdgeLightValues(roomLightDirection, orientation);
-    const useLight = edge.light >= edge.shadow;
-    const amount = useLight ? edge.light : edge.shadow;
+    const { useLight, amount } = getDirectionalSurfaceValues(
+      roomLightDirection,
+      orientation,
+      true
+    );
+    const edgeMixAmount = clamp(
+      (isWhiteCore ? 0.32 + amount * 0.22 : 0.42 + amount * 0.24) * roomBevelContrast,
+      0,
+      isWhiteCore ? 0.6 + roomBevelOverdriveRatio * 0.2 : 0.66 + roomBevelOverdriveRatio * 0.18
+    );
     const edgeColor = useLight
-      ? mixHexColors(coreFaceColor, roomMatHighlightEdgeColor, 0.52 + amount * 0.34)
-      : mixHexColors(coreFaceColor, roomMatShadowEdgeColor, 0.52 + amount * 0.34);
+      ? mixHexColors(coreFaceColor, roomMatHighlightEdgeColor, edgeMixAmount)
+      : mixHexColors(coreFaceColor, roomMatShadowEdgeColor, edgeMixAmount);
+    const innerMixAmount = clamp(
+      (useLight
+        ? isWhiteCore ? 0.24 + amount * 0.1 : 0.36 + amount * 0.12
+        : isWhiteCore ? 0.3 + amount * 0.13 : 0.44 + amount * 0.16) * roomBevelContrast,
+      0,
+      isWhiteCore ? 0.62 + roomBevelOverdriveRatio * 0.16 : 0.74 + roomBevelOverdriveRatio * 0.14
+    );
+    const midOffset = useLight
+      ? `${Math.round(52 + (1 - roomBevelSoftness) * 8)}%`
+      : `${Math.round(48 - (1 - roomBevelSoftness) * 8)}%`;
 
     return {
       outer: edgeColor,
-      inner: mixHexColors(coreFaceColor, edgeColor, useLight ? 0.42 + amount * 0.18 : 0.5 + amount * 0.2),
-      midOffset: useLight ? "62%" : "40%",
+      inner: mixHexColors(coreFaceColor, edgeColor, innerMixAmount),
+      midOffset,
     };
   };
   const bevelPalette: MatBevelPalette = isRoomMockupDepth
@@ -752,76 +901,94 @@ export function FinishedFramedArtwork({
     : baseBevelPalette;
   const frameMatOcclusionColors = buildDirectionalEdgeColors(
     roomLightDirection,
-    0.18,
-    0.1
+    0.1 + roomFrameDepth * 0.08 + frameInnerLipContrast * 0.02,
+    0.06 + roomFrameDepth * 0.04 + frameInnerLipContrast * 0.015,
+    true
   );
   const apertureOcclusionColors = buildDirectionalEdgeColors(
     roomLightDirection,
-    0.2,
-    0.11
+    (isWhiteCore ? 0.055 : 0.075) +
+      roomBevelDepth * (isWhiteCore ? 0.085 : 0.11) +
+      roomBevelOverdrive * (isWhiteCore ? 0.04 : 0.055),
+    (isWhiteCore ? 0.035 : 0.052) +
+      roomBevelDepth * (isWhiteCore ? 0.05 : 0.062) +
+      roomBevelOverdrive * (isWhiteCore ? 0.025 : 0.035),
+    true
   );
   const apertureEdgeAlpha = clamp(
-    bevelProfile.apertureEdgeAlpha * (isRoomMockupDepth ? 1.9 : 1),
+    bevelProfile.apertureEdgeAlpha *
+      (isRoomMockupDepth ? 0.6 + roomBevelDepth * 0.45 + roomBevelOverdrive * 0.24 : 1),
     0,
-    0.18
+    isRoomMockupDepth ? 0.16 : 0.18
   );
   const apertureEdgeColor = `rgba(0,0,0,${apertureEdgeAlpha})`;
-  const frameLightness = hexToHsl(frameColor).l;
   const frameFinishPalette: FrameFacePalette = {
     base: frameColor,
     outerLight: mixHexColors(
       frameColor,
       "#FFFFFF",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.08 : 0.06
+        ? frameLightness > 0.55 ? 0.08 : 0.06 + darkFrameLiftRatio * 0.025
         : isMonochromeFrame
-          ? 0.05
-          : 0.04) * frameHighlightBoost, 0, 0.2)
+          ? 0.05 + darkFrameLiftRatio * 0.025
+          : 0.04 + darkFrameLiftRatio * 0.02) * frameHighlightBoost,
+        0,
+        0.24 + roomFrameOverdriveRatio * 0.1)
     ),
     outerShadow: mixHexColors(
       frameColor,
       "#000000",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.14 : 0.18
+        ? frameLightness > 0.55 ? 0.14 : 0.18 + darkFrameLiftRatio * 0.04
         : isMonochromeFrame
-          ? 0.16
-          : 0.12) * frameShadowBoost, 0, 0.36)
+          ? 0.16 + darkFrameLiftRatio * 0.04
+          : 0.12 + darkFrameLiftRatio * 0.035) * frameShadowBoost,
+        0,
+        0.42 + roomFrameOverdriveRatio * 0.12)
     ),
     innerLight: mixHexColors(
       frameColor,
       "#FFFFFF",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.18 : 0.16
+        ? frameLightness > 0.55 ? 0.18 : 0.16 + darkFrameLiftRatio * 0.08
         : isMonochromeFrame
-          ? 0.1
-          : 0.1) * frameHighlightBoost, 0, 0.32)
+          ? 0.1 + darkFrameLiftRatio * 0.08
+          : 0.1 + darkFrameLiftRatio * 0.07) * frameHighlightBoost,
+        0,
+        0.44 + roomFrameOverdriveRatio * 0.24)
     ),
     innerShadow: mixHexColors(
       frameColor,
       "#000000",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.08 : 0.1
+        ? frameLightness > 0.55 ? 0.08 : 0.1 + darkFrameLiftRatio * 0.07
         : isMonochromeFrame
-          ? 0.08
-          : 0.06) * frameShadowBoost, 0, 0.22)
+          ? 0.08 + darkFrameLiftRatio * 0.07
+          : 0.06 + darkFrameLiftRatio * 0.06) * frameShadowBoost,
+        0,
+        0.34 + roomFrameOverdriveRatio * 0.2)
     ),
     brushedHighlight: mixHexColors(
       frameColor,
       "#FFFFFF",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.08 : 0.12
+        ? frameLightness > 0.55 ? 0.08 : 0.12 + darkFrameLiftRatio * 0.04
         : isMonochromeFrame
-          ? 0.03
-          : 0.04) * frameHighlightBoost, 0, 0.24)
+          ? 0.03 + darkFrameLiftRatio * 0.04
+          : 0.04 + darkFrameLiftRatio * 0.035) * frameHighlightBoost,
+        0,
+        0.3 + roomFrameOverdriveRatio * 0.16)
     ),
     brushedShadow: mixHexColors(
       frameColor,
       "#000000",
       clamp((isFlorentineFrame
-        ? frameLightness > 0.55 ? 0.08 : 0.1
+        ? frameLightness > 0.55 ? 0.08 : 0.1 + darkFrameLiftRatio * 0.04
         : isMonochromeFrame
-          ? 0.04
-          : 0.05) * frameShadowBoost, 0, 0.22)
+          ? 0.04 + darkFrameLiftRatio * 0.04
+          : 0.05 + darkFrameLiftRatio * 0.035) * frameShadowBoost,
+        0,
+        0.28 + roomFrameOverdriveRatio * 0.14)
     ),
   };
 
@@ -1001,8 +1168,8 @@ export function FinishedFramedArtwork({
           height: geometry.apertureHeight,
           backgroundColor: mountingBoardColor,
           overflow: "hidden",
-              borderWidth: 1,
-              borderColor: apertureEdgeColor,
+          borderWidth: isRoomMockupDepth ? 0 : 1,
+          borderColor: apertureEdgeColor,
           alignItems: "center",
           justifyContent: "center",
         }}
@@ -1017,8 +1184,8 @@ export function FinishedFramedArtwork({
               top: 0,
               right: 0,
               bottom: 0,
-              borderTopWidth: 2,
-              borderLeftWidth: 2,
+              borderTopWidth: 1,
+              borderLeftWidth: 1,
               borderBottomWidth: 1,
               borderRightWidth: 1,
               borderTopColor: apertureOcclusionColors.top,
@@ -1066,6 +1233,7 @@ export function FinishedFramedArtwork({
             renderStyle={frameProfile.renderStyle}
             depthIntensity={frameFaceDepthIntensity}
             lightDirection={isRoomMockupDepth ? roomLightDirection : undefined}
+            innerLipContrast={frameInnerLipContrast}
           />
           <View
             style={{

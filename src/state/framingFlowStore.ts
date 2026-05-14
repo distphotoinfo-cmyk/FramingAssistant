@@ -92,6 +92,7 @@ export function createInitialRoomViewDraft(unit: MeasurementUnit = "in"): RoomVi
     gridSizeUnit: unit,
     sourceWallShadows: {},
     sourceArtworkBrightness: {},
+    sourceMaterialRealism: {},
     placements: [],
     activePlacementId: null,
   };
@@ -324,6 +325,8 @@ function mergeDraftWithDefaults(
       sourceWallShadows: draft?.roomView?.sourceWallShadows ?? base.roomView.sourceWallShadows,
       sourceArtworkBrightness:
         draft?.roomView?.sourceArtworkBrightness ?? base.roomView.sourceArtworkBrightness,
+      sourceMaterialRealism:
+        draft?.roomView?.sourceMaterialRealism ?? base.roomView.sourceMaterialRealism,
     },
   };
 }

@@ -59,6 +59,7 @@ import type {
   FractionDenominator,
   RoomArtworkPlacementDraft,
   RoomKnownMeasurementMode,
+  RoomMaterialRealismDraft,
   RoomWallShadowDraft,
   RoomViewRect,
   RoomViewPoint,
@@ -91,6 +92,10 @@ import {
   getWallPhotoAspectRatio,
 } from "../utils/roomView";
 import { resolveWallShadow, type ResolvedWallShadow } from "../utils/roomShadow";
+import {
+  resolveRoomMaterialRealism,
+  type ResolvedRoomMaterialRealism,
+} from "../utils/roomRealism";
 
 const CALIBRATION_HANDLE_SIZE = 38;
 const CALIBRATION_RULER_HEIGHT = 24;
@@ -103,9 +108,13 @@ const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
 const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 const ARTWORK_THUMBNAIL_WIDTH = 58;
 const ARTWORK_THUMBNAIL_HEIGHT = 68;
+const WALL_SHADOW_MAX_SOFTNESS = 160;
+const WALL_SHADOW_FEATHER_STEPS = 18;
+const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
+type RoomRealismControlTab = "wall" | "mat" | "frame";
 
 const ROOM_SOURCE_OPTIONS: {
   label: string;
@@ -134,6 +143,15 @@ const ROOM_VIEW_DOCK_ITEMS: {
   { label: "Layouts", sheet: "layouts", icon: "grid-outline" },
   { label: "Settings", sheet: "settings", icon: "options-outline" },
   { label: "Export", sheet: "export", icon: "share-outline" },
+];
+
+const ROOM_REALISM_TABS: {
+  label: string;
+  value: RoomRealismControlTab;
+}[] = [
+  { label: "Wall", value: "wall" },
+  { label: "Mat", value: "mat" },
+  { label: "Frame", value: "frame" },
 ];
 
 function clampNumber(value: number, min: number, max: number) {
@@ -168,6 +186,71 @@ function getWallShadowDirection(
 
 function getWallShadowAngle(shadow: { offsetX: number; offsetY: number }) {
   return Math.atan2(shadow.offsetY, shadow.offsetX);
+}
+
+function getWallShadowFeatherRadius(blurRadius: number) {
+  return clampNumber(blurRadius * 1.45 + 4, 4, WALL_SHADOW_MAX_SOFTNESS * 1.55);
+}
+
+function WallCastShadow({
+  width,
+  height,
+  shadow,
+}: {
+  width: number;
+  height: number;
+  shadow: ResolvedWallShadow;
+}) {
+  if (width <= 0 || height <= 0 || shadow.opacity <= 0.001) {
+    return null;
+  }
+
+  const featherRadius = getWallShadowFeatherRadius(shadow.blurRadius);
+  let layerWeightTotal = 0;
+
+  for (let index = 0; index < WALL_SHADOW_FEATHER_STEPS; index += 1) {
+    const progress = index / WALL_SHADOW_FEATHER_STEPS;
+
+    layerWeightTotal += (1 - progress) ** 2;
+  }
+  const nearEdgeOpacity = clampNumber(shadow.opacity * 0.3, 0, 0.34);
+  const shadowLayers = Array.from({ length: WALL_SHADOW_FEATHER_STEPS }).map((_layer, index) => {
+    const progress = (index + 1) / WALL_SHADOW_FEATHER_STEPS;
+    const falloff = (1 - index / WALL_SHADOW_FEATHER_STEPS) ** 2;
+    const grow = featherRadius * progress;
+
+    return {
+      grow,
+      opacity: (nearEdgeOpacity * falloff) / layerWeightTotal,
+    };
+  });
+
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width + featherRadius * 2}
+      height={height + featherRadius * 2}
+      style={{
+        position: "absolute",
+        left: shadow.offsetX - featherRadius,
+        top: shadow.offsetY - featherRadius,
+      }}
+    >
+      {shadowLayers.map((layer, index) => (
+        <SvgRect
+          key={`${index}-${layer.grow}`}
+          x={featherRadius - layer.grow}
+          y={featherRadius - layer.grow}
+          width={width + layer.grow * 2}
+          height={height + layer.grow * 2}
+          rx={1}
+          ry={1}
+          fill="#000000"
+          opacity={layer.opacity}
+        />
+      ))}
+    </Svg>
+  );
 }
 
 type SvgElementRef = React.ElementRef<typeof Svg> & {
@@ -1342,6 +1425,7 @@ function PlacedWallArtwork({
   snapGridSizePixels,
   sceneDefaultShadow,
   roomShadowOverride,
+  materialRealism,
   artworkBrightness,
   onSelect,
   onMoveEnd,
@@ -1356,6 +1440,7 @@ function PlacedWallArtwork({
   snapGridSizePixels: number | null;
   sceneDefaultShadow?: RegisteredRoomPresetScene["defaultShadow"] | null;
   roomShadowOverride?: RoomWallShadowDraft | null;
+  materialRealism: ResolvedRoomMaterialRealism;
   artworkBrightness: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
@@ -1369,18 +1454,11 @@ function PlacedWallArtwork({
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
   const wallShadow = resolveWallShadow(sceneDefaultShadow, roomShadowOverride);
-  const isWallShadowVisible = wallShadow.opacity > 0.001;
-  const castShadowOpacity = !isWallShadowVisible
-    ? 0
-    : clampNumber(wallShadow.opacity, 0, 1);
   const brightnessOverlayOpacity =
     artworkBrightness < 1
       ? clampNumber(1 - artworkBrightness, 0, 0.5)
       : clampNumber((artworkBrightness - 1) * 0.5, 0, 0.125);
   const brightnessOverlayColor = artworkBrightness < 1 ? "#000000" : "#FFFFFF";
-  const shadowFillOpacity = isWallShadowVisible
-    ? clampNumber(wallShadow.opacity * 0.18, 0, 0.18)
-    : 0;
 
   useLayoutEffect(() => {
     const pendingCenter = pendingCenterRef.current;
@@ -1518,6 +1596,7 @@ function PlacedWallArtwork({
         top,
         width: placedArtwork.displaySize.width,
         height: placedArtwork.displaySize.height,
+        overflow: "visible",
         zIndex: 10 + placedArtwork.placement.zIndex,
         transform: [
           ...dragOffset.getTranslateTransform(),
@@ -1527,25 +1606,10 @@ function PlacedWallArtwork({
         ],
       }}
     >
-      <View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          left: wallShadow.offsetX,
-          top: wallShadow.offsetY,
-          width: placedArtwork.displaySize.width,
-          height: placedArtwork.displaySize.height,
-          borderRadius: 0,
-          backgroundColor: `rgba(0,0,0,${shadowFillOpacity})`,
-          shadowColor: "#000",
-          shadowOpacity: castShadowOpacity,
-          shadowRadius: wallShadow.blurRadius,
-          shadowOffset: {
-            width: 0,
-            height: 0,
-          },
-          elevation: isWallShadowVisible ? Math.max(1, Math.round(1 + wallShadow.opacity * 10)) : 0,
-        }}
+      <WallCastShadow
+        width={placedArtwork.displaySize.width}
+        height={placedArtwork.displaySize.height}
+        shadow={wallShadow}
       />
 
       <FinishedFramedArtwork
@@ -1567,6 +1631,7 @@ function PlacedWallArtwork({
         showShadow={false}
         depthMode="roomMockup"
         shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
+        materialRealism={materialRealism}
         style={{ opacity: 0.992 }}
       />
 
@@ -1929,6 +1994,7 @@ function RoomShadowDirectionDial({
 function RoomShadowAdjustmentPanel({
   shadow,
   baseShadow,
+  materialRealism,
   artworkBrightness,
   enabled,
   artworkCount,
@@ -1940,10 +2006,12 @@ function RoomShadowAdjustmentPanel({
   onBlurRadiusChange,
   onDistanceChange,
   onDirectionChange,
+  onMaterialRealismChange,
   onArtworkBrightnessChange,
 }: {
   shadow: ResolvedWallShadow;
   baseShadow: ResolvedWallShadow;
+  materialRealism: ResolvedRoomMaterialRealism;
   artworkBrightness: number;
   enabled: boolean;
   artworkCount: number;
@@ -1955,9 +2023,11 @@ function RoomShadowAdjustmentPanel({
   onBlurRadiusChange: (blurRadius: number) => void;
   onDistanceChange: (distance: number) => void;
   onDirectionChange: (angleRadians: number) => void;
+  onMaterialRealismChange: (updates: RoomMaterialRealismDraft) => void;
   onArtworkBrightnessChange: (brightness: number) => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
+  const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
   const slideProgress = useRef(new Animated.Value(1)).current;
   const panelDisabled = artworkCount === 0;
   const shadowDistance = getWallShadowDistance(shadow);
@@ -2020,7 +2090,7 @@ function RoomShadowAdjustmentPanel({
         >
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
-              Wall Shadow
+              Realism
             </Text>
             <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
               {artworkCount === 0
@@ -2031,35 +2101,37 @@ function RoomShadowAdjustmentPanel({
             </Text>
           </View>
 
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: enabled, disabled: panelDisabled }}
-            accessibilityLabel="Enable wall shadow"
-            disabled={panelDisabled}
-            onPress={() => onToggle(!enabled)}
-            style={{
-              minWidth: 62,
-              height: 30,
-              borderRadius: radii.pill,
-              borderWidth: 1,
-              borderColor: enabled ? colors.accent : colors.borderStrong,
-              backgroundColor: enabled ? colors.accentSoft : colors.backgroundInput,
-              alignItems: "center",
-              justifyContent: "center",
-              opacity: panelDisabled ? 0.45 : 1,
-              paddingHorizontal: spacing.xs,
-            }}
-          >
-            <Text
+          {activeRealismTab === "wall" ? (
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: enabled, disabled: panelDisabled }}
+              accessibilityLabel="Enable wall shadow"
+              disabled={panelDisabled}
+              onPress={() => onToggle(!enabled)}
               style={{
-                ...typography.small,
-                color: enabled ? colors.accent : colors.textSecondary,
-                fontWeight: "800",
+                minWidth: 62,
+                height: 30,
+                borderRadius: radii.pill,
+                borderWidth: 1,
+                borderColor: enabled ? colors.accent : colors.borderStrong,
+                backgroundColor: enabled ? colors.accentSoft : colors.backgroundInput,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: panelDisabled ? 0.45 : 1,
+                paddingHorizontal: spacing.xs,
               }}
             >
-              {enabled ? "On" : "Off"}
-            </Text>
-          </Pressable>
+              <Text
+                style={{
+                  ...typography.small,
+                  color: enabled ? colors.accent : colors.textSecondary,
+                  fontWeight: "800",
+                }}
+              >
+                {enabled ? "On" : "Off"}
+              </Text>
+            </Pressable>
+          ) : null}
 
           <Pressable
             accessibilityRole="button"
@@ -2080,65 +2152,167 @@ function RoomShadowAdjustmentPanel({
         <View
           style={{
             flexDirection: "row",
-            alignItems: "center",
-            gap: spacing.sm,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.lg,
+            overflow: "hidden",
           }}
         >
-          <RoomShadowDirectionDial
-            angleRadians={shadowAngle}
-            disabled={controlsDisabled}
-            onChange={onDirectionChange}
-          />
+          {ROOM_REALISM_TABS.map((tab) => {
+            const isActive = activeRealismTab === tab.value;
 
-          <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
-            <RoomShadowSlider
-              label="Strength"
-              value={shadow.opacity}
-              min={0}
-              max={1}
-              step={0.01}
-              disabled={controlsDisabled}
-              formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
-              onChange={onOpacityChange}
-              onCommit={onOpacityChange}
-            />
+            return (
+              <Pressable
+                key={tab.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
+                onPress={() => setActiveRealismTab(tab.value)}
+                style={{
+                  flex: 1,
+                  minHeight: 32,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: isActive ? colors.accent : colors.backgroundInput,
+                }}
+              >
+                <Text
+                  style={{
+                    ...typography.small,
+                    color: isActive ? "#FFFFFF" : colors.textSecondary,
+                    fontWeight: "800",
+                  }}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
-            <RoomShadowSlider
-              label="Softness"
-              value={shadow.blurRadius}
-              min={0}
-              max={72}
-              step={1}
-              disabled={controlsDisabled}
-              formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
-              onChange={onBlurRadiusChange}
-              onCommit={onBlurRadiusChange}
-            />
+        <View
+          style={{
+            height: ROOM_REALISM_CONTROL_CONTENT_HEIGHT,
+            justifyContent: "center",
+          }}
+        >
+          {activeRealismTab === "wall" ? (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.sm,
+              }}
+            >
+              <RoomShadowDirectionDial
+                angleRadians={shadowAngle}
+                disabled={controlsDisabled}
+                onChange={onDirectionChange}
+              />
 
-            <RoomShadowSlider
-              label="Distance"
-              value={shadowDistance}
-              min={0}
-              max={72}
-              step={1}
-              disabled={controlsDisabled}
-              formatValue={(distance) => `${Math.round(distance)} px`}
-              onChange={onDistanceChange}
-              onCommit={onDistanceChange}
-            />
+              <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
+                <RoomShadowSlider
+                  label="Strength"
+                  value={shadow.opacity}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  disabled={controlsDisabled}
+                  formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
+                  onChange={onOpacityChange}
+                  onCommit={onOpacityChange}
+                />
 
-            <RoomShadowSlider
-              label="Artwork Brightness"
-              value={artworkBrightness}
-              min={0.5}
-              max={1.25}
-              step={0.01}
-              disabled={panelDisabled}
-              formatValue={(brightness) => `${Math.round(brightness * 100)}%`}
-              onChange={onArtworkBrightnessChange}
-              onCommit={onArtworkBrightnessChange}
-            />
-          </View>
+                <RoomShadowSlider
+                  label="Softness"
+                  value={shadow.blurRadius}
+                  min={0}
+                  max={WALL_SHADOW_MAX_SOFTNESS}
+                  step={1}
+                  disabled={controlsDisabled}
+                  formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
+                  onChange={onBlurRadiusChange}
+                  onCommit={onBlurRadiusChange}
+                />
+
+                <RoomShadowSlider
+                  label="Distance"
+                  value={shadowDistance}
+                  min={0}
+                  max={72}
+                  step={1}
+                  disabled={controlsDisabled}
+                  formatValue={(distance) => `${Math.round(distance)} px`}
+                  onChange={onDistanceChange}
+                  onCommit={onDistanceChange}
+                />
+              </View>
+            </View>
+          ) : activeRealismTab === "mat" ? (
+            <View style={{ gap: spacing.xs }}>
+              <RoomShadowSlider
+                label="Bevel Depth"
+                value={materialRealism.bevelDepth}
+                min={0}
+                max={3}
+                step={0.01}
+                disabled={panelDisabled}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                onChange={(bevelDepth) => onMaterialRealismChange({ bevelDepth })}
+                onCommit={(bevelDepth) => onMaterialRealismChange({ bevelDepth })}
+              />
+
+              <RoomShadowSlider
+                label="Bevel Softness"
+                value={materialRealism.bevelSoftness}
+                min={0}
+                max={1}
+                step={0.01}
+                disabled={panelDisabled}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                onChange={(bevelSoftness) => onMaterialRealismChange({ bevelSoftness })}
+                onCommit={(bevelSoftness) => onMaterialRealismChange({ bevelSoftness })}
+              />
+            </View>
+          ) : (
+            <View style={{ gap: spacing.xs }}>
+              <RoomShadowSlider
+                label="Frame Depth"
+                value={materialRealism.frameDepth}
+                min={0}
+                max={3}
+                step={0.01}
+                disabled={panelDisabled}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                onChange={(frameDepth) => onMaterialRealismChange({ frameDepth })}
+                onCommit={(frameDepth) => onMaterialRealismChange({ frameDepth })}
+              />
+
+              <RoomShadowSlider
+                label="Inner Lip Contrast"
+                value={materialRealism.innerLipContrast}
+                min={0}
+                max={4}
+                step={0.01}
+                disabled={panelDisabled}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                onChange={(innerLipContrast) => onMaterialRealismChange({ innerLipContrast })}
+                onCommit={(innerLipContrast) => onMaterialRealismChange({ innerLipContrast })}
+              />
+
+              <RoomShadowSlider
+                label="Artwork Brightness"
+                value={artworkBrightness}
+                min={0.5}
+                max={1.25}
+                step={0.01}
+                disabled={panelDisabled}
+                formatValue={(brightness) => `${Math.round(brightness * 100)}%`}
+                onChange={onArtworkBrightnessChange}
+                onCommit={onArtworkBrightnessChange}
+              />
+            </View>
+          )}
         </View>
       </View>
     </Animated.View>
@@ -2272,6 +2446,9 @@ export default function RoomViewScreen() {
     roomView.sourceArtworkBrightness?.[activeSourceId] ?? 1,
     0.5,
     1.25
+  );
+  const activeSourceMaterialRealism = resolveRoomMaterialRealism(
+    roomView.sourceMaterialRealism?.[activeSourceId] ?? null
   );
   const isTabletLandscape =
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
@@ -2903,6 +3080,24 @@ export default function RoomViewScreen() {
     [activeSourceId, roomView.sourceArtworkBrightness, setRoomView]
   );
 
+  const updateActiveSourceMaterialRealism = useCallback(
+    (materialRealismPatch: RoomMaterialRealismDraft) => {
+      const currentSourceMaterialRealism = roomView.sourceMaterialRealism ?? {};
+      const currentSourceRealism = currentSourceMaterialRealism[activeSourceId] ?? {};
+
+      setRoomView({
+        sourceMaterialRealism: {
+          ...currentSourceMaterialRealism,
+          [activeSourceId]: {
+            ...currentSourceRealism,
+            ...materialRealismPatch,
+          },
+        },
+      });
+    },
+    [activeSourceId, roomView.sourceMaterialRealism, setRoomView]
+  );
+
   const handleRemoveSelectedPlacement = useCallback(() => {
     if (!activePlacement) {
       return;
@@ -3272,6 +3467,7 @@ export default function RoomViewScreen() {
                   : null
               }
               roomShadowOverride={activeSourceWallShadowOverride}
+              materialRealism={activeSourceMaterialRealism}
               artworkBrightness={activeSourceArtworkBrightness}
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
@@ -3928,6 +4124,7 @@ export default function RoomViewScreen() {
         <RoomShadowAdjustmentPanel
           shadow={activeSourceWallShadow}
           baseShadow={activeSourceBaseWallShadow}
+          materialRealism={activeSourceMaterialRealism}
           artworkBrightness={activeSourceArtworkBrightness}
           enabled={activeSourceShadowEnabled}
           artworkCount={activeSourcePlacements.length}
@@ -3939,6 +4136,7 @@ export default function RoomViewScreen() {
           onBlurRadiusChange={(blurRadius) => updateActiveSourceWallShadow({ blurRadius })}
           onDistanceChange={handleSourceWallShadowDistanceChange}
           onDirectionChange={handleSourceWallShadowDirectionChange}
+          onMaterialRealismChange={updateActiveSourceMaterialRealism}
           onArtworkBrightnessChange={handleSourceArtworkBrightnessChange}
         />
       ) : (

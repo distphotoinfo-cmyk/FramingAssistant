@@ -146,6 +146,13 @@ export interface RoomWallShadowDraft {
   blurRadius?: number;
 }
 
+export interface RoomMaterialRealismDraft {
+  bevelDepth?: number;
+  bevelSoftness?: number;
+  frameDepth?: number;
+  innerLipContrast?: number;
+}
+
 export interface RoomWallPhotoDraft {
   imageUri: string;
   imageWidth: number | null;
@@ -184,6 +191,7 @@ export interface RoomViewDraft {
   gridSizeUnit: MeasurementUnit;
   sourceWallShadows?: Record<string, RoomWallShadowDraft>;
   sourceArtworkBrightness?: Record<string, number>;
+  sourceMaterialRealism?: Record<string, RoomMaterialRealismDraft>;
   placements: RoomArtworkPlacementDraft[];
   activePlacementId: string | null;
 }
