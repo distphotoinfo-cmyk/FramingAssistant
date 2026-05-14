@@ -33,10 +33,10 @@
   },
   "lightingDirection": "upperLeft",
   "defaultShadow": {
-    "opacity": 0.22,
-    "offsetX": 12,
-    "offsetY": 18,
-    "blurRadius": 24
+    "opacity": 0.34,
+    "offsetX": 16,
+    "offsetY": 24,
+    "blurRadius": 32
   },
   "pixelsPerInch": 17
 }

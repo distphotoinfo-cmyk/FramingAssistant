@@ -90,6 +90,8 @@ export function createInitialRoomViewDraft(unit: MeasurementUnit = "in"): RoomVi
     snapToGridEnabled: true,
     gridSize: unit === "cm" ? "2.5" : "1",
     gridSizeUnit: unit,
+    sourceWallShadows: {},
+    sourceArtworkBrightness: {},
     placements: [],
     activePlacementId: null,
   };
@@ -306,6 +308,7 @@ function mergeDraftWithDefaults(
         scale: placement.scale ?? 1,
         rotationDegrees: placement.rotationDegrees ?? 0,
         zIndex: placement.zIndex ?? index,
+        wallShadow: placement.wallShadow,
       })),
       activePlacementId:
         draft?.roomView?.activePlacementId ??
@@ -318,6 +321,9 @@ function mergeDraftWithDefaults(
       snapToGridEnabled: draft?.roomView?.snapToGridEnabled ?? base.roomView.snapToGridEnabled,
       gridSize: valueOrDefault(draft?.roomView?.gridSize, base.roomView.gridSize),
       gridSizeUnit: draft?.roomView?.gridSizeUnit ?? base.roomView.gridSizeUnit,
+      sourceWallShadows: draft?.roomView?.sourceWallShadows ?? base.roomView.sourceWallShadows,
+      sourceArtworkBrightness:
+        draft?.roomView?.sourceArtworkBrightness ?? base.roomView.sourceArtworkBrightness,
     },
   };
 }

@@ -1,0 +1,43 @@
+{
+  "id": "modern-slate-interior-portrait",
+  "title": "Modern Slate Interior",
+  "description": "Portrait close-up room scene with a cool slate wall above a dark console for material realism testing.",
+  "orientation": "portrait",
+  "imagePath": "assets/mockups/portrait/Modern Slate Interior.png",
+  "sourceImageDimensions": {
+    "width": 1023,
+    "height": 1537
+  },
+  "wallRegion": {
+    "x": 0.32,
+    "y": 0.08,
+    "width": 0.56,
+    "height": 0.58
+  },
+  "safePlacementRegion": {
+    "x": 0.39,
+    "y": 0.13,
+    "width": 0.4,
+    "height": 0.46
+  },
+  "wallPhysicalWidthInches": 60,
+  "artworkScaleMultiplier": 2.02,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.76
+    },
+    "end": {
+      "x": 1,
+      "y": 0.76
+    }
+  },
+  "lightingDirection": "upperLeft",
+  "defaultShadow": {
+    "opacity": 0.36,
+    "offsetX": 16,
+    "offsetY": 26,
+    "blurRadius": 34
+  },
+  "pixelsPerInch": 17
+}

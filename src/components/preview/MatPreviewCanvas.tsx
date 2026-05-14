@@ -58,6 +58,8 @@ export interface FinishedFramedArtworkProps {
   artworkCrop: ArtworkCropState | null;
   physicalScale: number;
   showShadow?: boolean;
+  depthMode?: "standard" | "roomMockup";
+  shadowDirection?: { x: number; y: number };
   style?: ViewStyle;
 }
 
@@ -92,9 +94,141 @@ function roundToPixel(value: number) {
 type FrameOrientation = "top" | "right" | "bottom" | "left";
 
 const FRAME_ORIENTATIONS: FrameOrientation[] = ["top", "right", "bottom", "left"];
+const FRAME_EDGE_NORMALS: Record<FrameOrientation, { x: number; y: number }> = {
+  top: { x: 0, y: -1 },
+  right: { x: 1, y: 0 },
+  bottom: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+};
+const STANDARD_PREVIEW_LIGHT_DIRECTION = {
+  x: 1 / Math.SQRT2,
+  y: 1 / Math.SQRT2,
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function scaleOpacity(value: number, intensity: number, max = 0.5) {
+  return clamp(value * intensity, 0, max);
+}
+
+function normalizeLightingVector(
+  vector: { x: number; y: number } | null | undefined,
+  fallback = STANDARD_PREVIEW_LIGHT_DIRECTION
+) {
+  if (!vector || !Number.isFinite(vector.x) || !Number.isFinite(vector.y)) {
+    return fallback;
+  }
+
+  const length = Math.hypot(vector.x, vector.y);
+
+  if (length <= 0.001) {
+    return fallback;
+  }
+
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+  };
+}
+
+function getLightDirectionFromShadowDirection(shadowDirection?: { x: number; y: number }) {
+  const normalizedShadowDirection = normalizeLightingVector(shadowDirection, {
+    x: 0.5,
+    y: 0.866,
+  });
+
+  return {
+    x: -normalizedShadowDirection.x,
+    y: -normalizedShadowDirection.y,
+  };
+}
+
+function getEdgeLightValues(
+  lightDirection: { x: number; y: number },
+  orientation: FrameOrientation
+) {
+  const normal = FRAME_EDGE_NORMALS[orientation];
+  const dot = clamp(normal.x * lightDirection.x + normal.y * lightDirection.y, -1, 1);
+
+  return {
+    light: Math.max(0, dot),
+    shadow: Math.max(0, -dot),
+  };
+}
+
+function buildDirectionalFrameBandStyle({
+  lightDirection,
+  lightColor,
+  shadowColor,
+  baseLightOpacity,
+  baseShadowOpacity,
+  depthIntensity,
+  maxOpacity,
+}: {
+  lightDirection: { x: number; y: number };
+  lightColor: string;
+  shadowColor: string;
+  baseLightOpacity: number;
+  baseShadowOpacity: number;
+  depthIntensity: number;
+  maxOpacity: number;
+}) {
+  const fillByOrientation = {} as Record<FrameOrientation, string>;
+  const opacityByOrientation = {} as Record<FrameOrientation, number>;
+
+  FRAME_ORIENTATIONS.forEach((orientation) => {
+    const edge = getEdgeLightValues(lightDirection, orientation);
+    const useLight = edge.light >= edge.shadow;
+    const amount = useLight ? edge.light : edge.shadow;
+    const baseOpacity = useLight ? baseLightOpacity : baseShadowOpacity;
+
+    fillByOrientation[orientation] = useLight ? lightColor : shadowColor;
+    opacityByOrientation[orientation] = scaleOpacity(
+      baseOpacity * (0.3 + amount * 0.7),
+      depthIntensity,
+      maxOpacity
+    );
+  });
+
+  return {
+    fillByOrientation,
+    opacityByOrientation,
+  };
+}
+
+function getDirectionalEdgeColor({
+  orientation,
+  lightDirection,
+  shadowAlpha,
+  highlightAlpha,
+}: {
+  orientation: FrameOrientation;
+  lightDirection: { x: number; y: number };
+  shadowAlpha: number;
+  highlightAlpha: number;
+}) {
+  const edge = getEdgeLightValues(lightDirection, orientation);
+
+  if (edge.light >= edge.shadow) {
+    return `rgba(255,255,255,${clamp(highlightAlpha * (0.28 + edge.light * 0.72), 0, highlightAlpha)})`;
+  }
+
+  return `rgba(0,0,0,${clamp(shadowAlpha * (0.32 + edge.shadow * 0.68), 0, shadowAlpha)})`;
+}
+
+function buildDirectionalEdgeColors(
+  lightDirection: { x: number; y: number },
+  shadowAlpha: number,
+  highlightAlpha: number
+) {
+  return {
+    top: getDirectionalEdgeColor({ orientation: "top", lightDirection, shadowAlpha, highlightAlpha }),
+    right: getDirectionalEdgeColor({ orientation: "right", lightDirection, shadowAlpha, highlightAlpha }),
+    bottom: getDirectionalEdgeColor({ orientation: "bottom", lightDirection, shadowAlpha, highlightAlpha }),
+    left: getDirectionalEdgeColor({ orientation: "left", lightDirection, shadowAlpha, highlightAlpha }),
+  };
 }
 
 function buildPolygonPoints(points: [number, number][]) {
@@ -179,12 +313,16 @@ function FrameFaceOverlay({
   thickness,
   palette,
   renderStyle,
+  depthIntensity = 1,
+  lightDirection,
 }: {
   width: number;
   height: number;
   thickness: number;
   palette: FrameFacePalette;
   renderStyle: "none" | "basic" | "florentine" | "monochrome";
+  depthIntensity?: number;
+  lightDirection?: { x: number; y: number };
 }) {
   if (thickness <= 0) {
     return null;
@@ -222,6 +360,50 @@ function FrameFaceOverlay({
       Math.max(accentOneStart + accentWidth + onePixel * 0.35, innerBandStart - accentWidth)
     )
   );
+  const outerBandStyle = lightDirection
+    ? buildDirectionalFrameBandStyle({
+        lightDirection,
+        lightColor: palette.outerLight,
+        shadowColor: palette.outerShadow,
+        baseLightOpacity: renderStyle === "florentine" ? 0.18 : renderStyle === "monochrome" ? 0.13 : 0.11,
+        baseShadowOpacity: renderStyle === "florentine" ? 0.22 : renderStyle === "monochrome" ? 0.17 : 0.13,
+        depthIntensity,
+        maxOpacity: 0.4,
+      })
+    : null;
+  const accentOneBandStyle = lightDirection
+    ? buildDirectionalFrameBandStyle({
+        lightDirection,
+        lightColor: palette.brushedHighlight,
+        shadowColor: palette.brushedShadow,
+        baseLightOpacity: 0.1,
+        baseShadowOpacity: 0.1,
+        depthIntensity,
+        maxOpacity: 0.24,
+      })
+    : null;
+  const accentTwoBandStyle = lightDirection
+    ? buildDirectionalFrameBandStyle({
+        lightDirection,
+        lightColor: palette.brushedHighlight,
+        shadowColor: palette.brushedShadow,
+        baseLightOpacity: 0.11,
+        baseShadowOpacity: 0.09,
+        depthIntensity,
+        maxOpacity: 0.25,
+      })
+    : null;
+  const innerBandStyle = lightDirection
+    ? buildDirectionalFrameBandStyle({
+        lightDirection,
+        lightColor: palette.innerLight,
+        shadowColor: palette.innerShadow,
+        baseLightOpacity: renderStyle === "florentine" ? 0.15 : renderStyle === "monochrome" ? 0.11 : 0.08,
+        baseShadowOpacity: renderStyle === "florentine" ? 0.18 : renderStyle === "monochrome" ? 0.13 : 0.09,
+        depthIntensity,
+        maxOpacity: 0.36,
+      })
+    : null;
 
   return (
     <Svg
@@ -238,18 +420,22 @@ function FrameFaceOverlay({
         height={height}
         startOffset={0}
         endOffset={outerBand}
-        fillByOrientation={{
-          top: palette.outerShadow,
-          right: palette.outerLight,
-          bottom: palette.outerLight,
-          left: palette.outerShadow,
-        }}
-        opacityByOrientation={{
-          top: renderStyle === "florentine" ? 0.2 : renderStyle === "monochrome" ? 0.16 : 0.12,
-          right: renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1,
-          bottom: renderStyle === "florentine" ? 0.18 : renderStyle === "monochrome" ? 0.14 : 0.1,
-          left: renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1,
-        }}
+        fillByOrientation={
+          outerBandStyle?.fillByOrientation ?? {
+            top: palette.outerShadow,
+            right: palette.outerLight,
+            bottom: palette.outerLight,
+            left: palette.outerShadow,
+          }
+        }
+        opacityByOrientation={
+          outerBandStyle?.opacityByOrientation ?? {
+            top: scaleOpacity(renderStyle === "florentine" ? 0.2 : renderStyle === "monochrome" ? 0.16 : 0.12, depthIntensity, 0.38),
+            right: scaleOpacity(renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1, depthIntensity, 0.34),
+            bottom: scaleOpacity(renderStyle === "florentine" ? 0.18 : renderStyle === "monochrome" ? 0.14 : 0.1, depthIntensity, 0.36),
+            left: scaleOpacity(renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1, depthIntensity, 0.34),
+          }
+        }
       />
       {showMetalLines ? (
         <>
@@ -258,36 +444,44 @@ function FrameFaceOverlay({
             height={height}
             startOffset={accentOneStart}
             endOffset={accentOneStart + accentWidth}
-            fillByOrientation={{
-              top: palette.brushedShadow,
-              right: palette.brushedHighlight,
-              bottom: palette.brushedHighlight,
-              left: palette.brushedShadow,
-            }}
-            opacityByOrientation={{
-              top: 0.1,
-              right: 0.09,
-              bottom: 0.08,
-              left: 0.08,
-            }}
+            fillByOrientation={
+              accentOneBandStyle?.fillByOrientation ?? {
+                top: palette.brushedShadow,
+                right: palette.brushedHighlight,
+                bottom: palette.brushedHighlight,
+                left: palette.brushedShadow,
+              }
+            }
+            opacityByOrientation={
+              accentOneBandStyle?.opacityByOrientation ?? {
+                top: scaleOpacity(0.1, depthIntensity, 0.24),
+                right: scaleOpacity(0.09, depthIntensity, 0.22),
+                bottom: scaleOpacity(0.08, depthIntensity, 0.2),
+                left: scaleOpacity(0.08, depthIntensity, 0.2),
+              }
+            }
           />
           <FrameBandLayer
             width={width}
             height={height}
             startOffset={accentTwoStart}
             endOffset={accentTwoStart + accentWidth}
-            fillByOrientation={{
-              top: palette.brushedShadow,
-              right: palette.brushedHighlight,
-              bottom: palette.brushedHighlight,
-              left: palette.brushedShadow,
-            }}
-            opacityByOrientation={{
-              top: 0.08,
-              right: 0.11,
-              bottom: 0.12,
-              left: 0.07,
-            }}
+            fillByOrientation={
+              accentTwoBandStyle?.fillByOrientation ?? {
+                top: palette.brushedShadow,
+                right: palette.brushedHighlight,
+                bottom: palette.brushedHighlight,
+                left: palette.brushedShadow,
+              }
+            }
+            opacityByOrientation={
+              accentTwoBandStyle?.opacityByOrientation ?? {
+                top: scaleOpacity(0.08, depthIntensity, 0.2),
+                right: scaleOpacity(0.11, depthIntensity, 0.24),
+                bottom: scaleOpacity(0.12, depthIntensity, 0.26),
+                left: scaleOpacity(0.07, depthIntensity, 0.18),
+              }
+            }
           />
         </>
       ) : null}
@@ -296,18 +490,22 @@ function FrameFaceOverlay({
         height={height}
         startOffset={innerBandStart}
         endOffset={thickness}
-        fillByOrientation={{
-          top: palette.innerShadow,
-          right: palette.innerLight,
-          bottom: palette.innerLight,
-          left: palette.innerShadow,
-        }}
-        opacityByOrientation={{
-          top: renderStyle === "florentine" ? 0.1 : renderStyle === "monochrome" ? 0.08 : 0.06,
-          right: renderStyle === "florentine" ? 0.14 : renderStyle === "monochrome" ? 0.1 : 0.08,
-          bottom: renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.08,
-          left: renderStyle === "florentine" ? 0.08 : renderStyle === "monochrome" ? 0.06 : 0.05,
-        }}
+        fillByOrientation={
+          innerBandStyle?.fillByOrientation ?? {
+            top: palette.innerShadow,
+            right: palette.innerLight,
+            bottom: palette.innerLight,
+            left: palette.innerShadow,
+          }
+        }
+        opacityByOrientation={
+          innerBandStyle?.opacityByOrientation ?? {
+            top: scaleOpacity(renderStyle === "florentine" ? 0.1 : renderStyle === "monochrome" ? 0.08 : 0.06, depthIntensity, 0.28),
+            right: scaleOpacity(renderStyle === "florentine" ? 0.14 : renderStyle === "monochrome" ? 0.1 : 0.08, depthIntensity, 0.32),
+            bottom: scaleOpacity(renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.08, depthIntensity, 0.34),
+            left: scaleOpacity(renderStyle === "florentine" ? 0.08 : renderStyle === "monochrome" ? 0.06 : 0.05, depthIntensity, 0.24),
+          }
+        }
       />
     </Svg>
   );
@@ -410,6 +608,8 @@ export function FinishedFramedArtwork({
   artworkCrop,
   physicalScale,
   showShadow = true,
+  depthMode = "standard",
+  shadowDirection,
   style,
 }: FinishedFramedArtworkProps) {
   const { isDark } = useAppTheme();
@@ -425,6 +625,15 @@ export function FinishedFramedArtwork({
   const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
+  const isRoomMockupDepth = depthMode === "roomMockup";
+  const roomLightDirection = isRoomMockupDepth
+    ? getLightDirectionFromShadowDirection(shadowDirection)
+    : STANDARD_PREVIEW_LIGHT_DIRECTION;
+  const matShadowBoost = isRoomMockupDepth ? 1.45 : 1;
+  const matHighlightBoost = isRoomMockupDepth ? 1.28 : 1;
+  const frameShadowBoost = isRoomMockupDepth ? 1.5 : 1;
+  const frameHighlightBoost = isRoomMockupDepth ? 1.28 : 1;
+  const frameFaceDepthIntensity = isRoomMockupDepth ? 1.75 : 1;
   const bevelUnitScale = unit === "cm" ? 2.54 : 1;
   const bevelVisualScale = 1.5625;
   const bevelThicknessMultiplier = {
@@ -443,17 +652,25 @@ export function FinishedFramedArtwork({
   const darkMatShadowLiftRatio =
     !isWhiteCore && matLightness < 0.18 ? (0.18 - matLightness) / 0.18 : 0;
   const useDarkMatShadowLift = darkMatShadowLiftRatio > 0;
-  const topShadowMixAmount = isWhiteCore ? 0.2 : 0.5 - darkMatShadowLiftRatio * 0.22;
-  const leftShadowMixAmount = isWhiteCore ? 0.14 : 0.38 - darkMatShadowLiftRatio * 0.16;
+  const topShadowMixAmount = clamp(
+    (isWhiteCore ? 0.2 : 0.5 - darkMatShadowLiftRatio * 0.22) * matShadowBoost,
+    0,
+    0.72
+  );
+  const leftShadowMixAmount = clamp(
+    (isWhiteCore ? 0.14 : 0.38 - darkMatShadowLiftRatio * 0.16) * matShadowBoost,
+    0,
+    0.64
+  );
   const darkMatTopOuterColor = mixHexColors(
     matColor,
     "#FFFFFF",
-    0.08 + darkMatShadowLiftRatio * 0.1
+    clamp((0.08 + darkMatShadowLiftRatio * 0.1) * matHighlightBoost, 0, 0.28)
   );
   const darkMatLeftOuterColor = mixHexColors(
     matColor,
     "#FFFFFF",
-    0.06 + darkMatShadowLiftRatio * 0.08
+    clamp((0.06 + darkMatShadowLiftRatio * 0.08) * matHighlightBoost, 0, 0.24)
   );
   const topShadowEdgeColor = useDarkMatShadowLift
     ? darkMatTopOuterColor
@@ -461,9 +678,17 @@ export function FinishedFramedArtwork({
   const leftShadowEdgeColor = useDarkMatShadowLift
     ? darkMatLeftOuterColor
     : mixHexColors(coreFaceColor, "#000000", leftShadowMixAmount);
-  const rightHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.16 : 0.26);
-  const bottomHighlightEdgeColor = mixHexColors(coreFaceColor, "#FFFFFF", isWhiteCore ? 0.24 : 0.34);
-  const bevelPalette = {
+  const rightHighlightEdgeColor = mixHexColors(
+    coreFaceColor,
+    "#FFFFFF",
+    clamp((isWhiteCore ? 0.16 : 0.26) * matHighlightBoost, 0, 0.42)
+  );
+  const bottomHighlightEdgeColor = mixHexColors(
+    coreFaceColor,
+    "#FFFFFF",
+    clamp((isWhiteCore ? 0.24 : 0.34) * matHighlightBoost, 0, 0.5)
+  );
+  const baseBevelPalette = {
     face: coreFaceColor,
     top: {
       outer: topShadowEdgeColor,
@@ -490,63 +715,113 @@ export function FinishedFramedArtwork({
       midOffset: "62%",
     },
   };
-  const apertureEdgeColor = `rgba(0,0,0,${bevelProfile.apertureEdgeAlpha})`;
+  const roomMatShadowEdgeColor = useDarkMatShadowLift
+    ? darkMatTopOuterColor
+    : mixHexColors(
+        coreFaceColor,
+        "#000000",
+        clamp((isWhiteCore ? 0.18 : 0.44) * matShadowBoost, 0, 0.72)
+      );
+  const roomMatHighlightEdgeColor = mixHexColors(
+    coreFaceColor,
+    "#FFFFFF",
+    clamp((isWhiteCore ? 0.22 : 0.34) * matHighlightBoost, 0, 0.54)
+  );
+  const buildRoomBevelSide = (orientation: FrameOrientation): MatBevelSidePalette => {
+    const edge = getEdgeLightValues(roomLightDirection, orientation);
+    const useLight = edge.light >= edge.shadow;
+    const amount = useLight ? edge.light : edge.shadow;
+    const edgeColor = useLight
+      ? mixHexColors(coreFaceColor, roomMatHighlightEdgeColor, 0.52 + amount * 0.34)
+      : mixHexColors(coreFaceColor, roomMatShadowEdgeColor, 0.52 + amount * 0.34);
+
+    return {
+      outer: edgeColor,
+      inner: mixHexColors(coreFaceColor, edgeColor, useLight ? 0.42 + amount * 0.18 : 0.5 + amount * 0.2),
+      midOffset: useLight ? "62%" : "40%",
+    };
+  };
+  const bevelPalette: MatBevelPalette = isRoomMockupDepth
+    ? {
+        face: coreFaceColor,
+        top: buildRoomBevelSide("top"),
+        right: buildRoomBevelSide("right"),
+        bottom: buildRoomBevelSide("bottom"),
+        left: buildRoomBevelSide("left"),
+      }
+    : baseBevelPalette;
+  const frameMatOcclusionColors = buildDirectionalEdgeColors(
+    roomLightDirection,
+    0.18,
+    0.1
+  );
+  const apertureOcclusionColors = buildDirectionalEdgeColors(
+    roomLightDirection,
+    0.2,
+    0.11
+  );
+  const apertureEdgeAlpha = clamp(
+    bevelProfile.apertureEdgeAlpha * (isRoomMockupDepth ? 1.9 : 1),
+    0,
+    0.18
+  );
+  const apertureEdgeColor = `rgba(0,0,0,${apertureEdgeAlpha})`;
   const frameLightness = hexToHsl(frameColor).l;
   const frameFinishPalette: FrameFacePalette = {
     base: frameColor,
     outerLight: mixHexColors(
       frameColor,
       "#FFFFFF",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.08 : 0.06
         : isMonochromeFrame
           ? 0.05
-          : 0.04
+          : 0.04) * frameHighlightBoost, 0, 0.2)
     ),
     outerShadow: mixHexColors(
       frameColor,
       "#000000",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.14 : 0.18
         : isMonochromeFrame
           ? 0.16
-          : 0.12
+          : 0.12) * frameShadowBoost, 0, 0.36)
     ),
     innerLight: mixHexColors(
       frameColor,
       "#FFFFFF",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.18 : 0.16
         : isMonochromeFrame
           ? 0.1
-          : 0.1
+          : 0.1) * frameHighlightBoost, 0, 0.32)
     ),
     innerShadow: mixHexColors(
       frameColor,
       "#000000",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.08 : 0.1
         : isMonochromeFrame
           ? 0.08
-          : 0.06
+          : 0.06) * frameShadowBoost, 0, 0.22)
     ),
     brushedHighlight: mixHexColors(
       frameColor,
       "#FFFFFF",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.08 : 0.12
         : isMonochromeFrame
           ? 0.03
-          : 0.04
+          : 0.04) * frameHighlightBoost, 0, 0.24)
     ),
     brushedShadow: mixHexColors(
       frameColor,
       "#000000",
-      isFlorentineFrame
+      clamp((isFlorentineFrame
         ? frameLightness > 0.55 ? 0.08 : 0.1
         : isMonochromeFrame
           ? 0.04
-          : 0.05
+          : 0.05) * frameShadowBoost, 0, 0.22)
     ),
   };
 
@@ -726,13 +1001,33 @@ export function FinishedFramedArtwork({
           height: geometry.apertureHeight,
           backgroundColor: mountingBoardColor,
           overflow: "hidden",
-          borderWidth: 1,
-          borderColor: apertureEdgeColor,
+              borderWidth: 1,
+              borderColor: apertureEdgeColor,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
         {renderArtworkContent()}
+        {isRoomMockupDepth ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              borderTopWidth: 2,
+              borderLeftWidth: 2,
+              borderBottomWidth: 1,
+              borderRightWidth: 1,
+              borderTopColor: apertureOcclusionColors.top,
+              borderLeftColor: apertureOcclusionColors.left,
+              borderBottomColor: apertureOcclusionColors.bottom,
+              borderRightColor: apertureOcclusionColors.right,
+            }}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -747,9 +1042,16 @@ export function FinishedFramedArtwork({
           backgroundColor: geometry.frameThickness > 0 ? frameFinishPalette.base : "transparent",
           overflow: "hidden",
           shadowColor: "#000",
-          shadowOpacity: showShadow ? (isDark ? 0.28 : 0.18) : 0,
-          shadowRadius: showShadow ? 12 : 0,
-          shadowOffset: { width: 0, height: showShadow ? 6 : 0 },
+          shadowOpacity: showShadow
+            ? isRoomMockupDepth
+              ? isDark ? 0.38 : 0.3
+              : isDark ? 0.28 : 0.18
+            : 0,
+          shadowRadius: showShadow ? (isRoomMockupDepth ? 18 : 12) : 0,
+          shadowOffset: {
+            width: isRoomMockupDepth ? 3 : 0,
+            height: showShadow ? (isRoomMockupDepth ? 9 : 6) : 0,
+          },
         },
         style,
       ]}
@@ -762,6 +1064,8 @@ export function FinishedFramedArtwork({
             thickness={geometry.frameThickness}
             palette={frameFinishPalette}
             renderStyle={frameProfile.renderStyle}
+            depthIntensity={frameFaceDepthIntensity}
+            lightDirection={isRoomMockupDepth ? roomLightDirection : undefined}
           />
           <View
             style={{
@@ -775,6 +1079,26 @@ export function FinishedFramedArtwork({
             }}
           >
             {bevelOpeningContent}
+            {isRoomMockupDepth ? (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  borderTopWidth: 2,
+                  borderLeftWidth: 2,
+                  borderBottomWidth: 1,
+                  borderRightWidth: 1,
+                  borderTopColor: frameMatOcclusionColors.top,
+                  borderLeftColor: frameMatOcclusionColors.left,
+                  borderBottomColor: frameMatOcclusionColors.bottom,
+                  borderRightColor: frameMatOcclusionColors.right,
+                }}
+              />
+            ) : null}
           </View>
         </>
       ) : (

@@ -1,0 +1,42 @@
+{
+  "id": "serene-minimalist-interior-landscape",
+  "title": "Serene Minimalist Interior",
+  "description": "Landscape console scene with a warm open wall for framed artwork.",
+  "orientation": "landscape",
+  "imagePath": "assets/mockups/landscape/Serene minimalist interior landscape.png",
+  "sourceImageDimensions": {
+    "width": 1536,
+    "height": 1024
+  },
+  "wallRegion": {
+    "x": 0.34,
+    "y": 0.08,
+    "width": 0.43,
+    "height": 0.58
+  },
+  "safePlacementRegion": {
+    "x": 0.39,
+    "y": 0.13,
+    "width": 0.32,
+    "height": 0.45
+  },
+  "wallPhysicalWidthInches": 90,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.78
+    },
+    "end": {
+      "x": 1,
+      "y": 0.78
+    }
+  },
+  "lightingDirection": "upperRight",
+  "defaultShadow": {
+    "opacity": 0.34,
+    "offsetX": 14,
+    "offsetY": 24,
+    "blurRadius": 32
+  },
+  "pixelsPerInch": 17
+}

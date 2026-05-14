@@ -24,7 +24,9 @@ import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
+  Circle as SvgCircle,
   Image as SvgImage,
+  Line as SvgLine,
   Rect as SvgRect,
 } from "react-native-svg";
 import AppHeader from "../components/AppHeader";
@@ -88,7 +90,7 @@ import {
   getStandardCalibrationPaperLabel,
   getWallPhotoAspectRatio,
 } from "../utils/roomView";
-import { resolveWallShadow } from "../utils/roomShadow";
+import { resolveWallShadow, type ResolvedWallShadow } from "../utils/roomShadow";
 
 const CALIBRATION_HANDLE_SIZE = 38;
 const CALIBRATION_RULER_HEIGHT = 24;
@@ -162,6 +164,10 @@ function getWallShadowDirection(
     x: directionSource.offsetX / sourceDistance,
     y: directionSource.offsetY / sourceDistance,
   };
+}
+
+function getWallShadowAngle(shadow: { offsetX: number; offsetY: number }) {
+  return Math.atan2(shadow.offsetY, shadow.offsetX);
 }
 
 type SvgElementRef = React.ElementRef<typeof Svg> & {
@@ -1335,6 +1341,8 @@ function PlacedWallArtwork({
   placementBounds,
   snapGridSizePixels,
   sceneDefaultShadow,
+  roomShadowOverride,
+  artworkBrightness,
   onSelect,
   onMoveEnd,
   onDragStart,
@@ -1347,6 +1355,8 @@ function PlacedWallArtwork({
   placementBounds: RoomViewRect;
   snapGridSizePixels: number | null;
   sceneDefaultShadow?: RegisteredRoomPresetScene["defaultShadow"] | null;
+  roomShadowOverride?: RoomWallShadowDraft | null;
+  artworkBrightness: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
   onDragStart: () => void;
@@ -1358,24 +1368,19 @@ function PlacedWallArtwork({
   const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
-  const isPresetMockup = placedArtwork.placement.sourceMode === "presetRoom";
-  const wallShadow = resolveWallShadow(sceneDefaultShadow, placedArtwork.placement.wallShadow);
+  const wallShadow = resolveWallShadow(sceneDefaultShadow, roomShadowOverride);
   const isWallShadowVisible = wallShadow.opacity > 0.001;
-  const contactShadowOpacity = !isWallShadowVisible
-    ? 0
-    : isPresetMockup
-    ? clampNumber(wallShadow.opacity * 0.58, 0.12, 0.24)
-    : clampNumber(wallShadow.opacity * 0.55, 0, 0.18);
   const castShadowOpacity = !isWallShadowVisible
     ? 0
-    : isPresetMockup
-    ? clampNumber(wallShadow.opacity, 0.18, 0.42)
-    : clampNumber(wallShadow.opacity, 0, 0.42);
-  const castShadowFillOpacity = !isWallShadowVisible
-    ? 0
-    : isPresetMockup
-    ? clampNumber(wallShadow.opacity * 0.34, 0.07, 0.15)
-    : clampNumber(wallShadow.opacity * 0.45, 0, 0.15);
+    : clampNumber(wallShadow.opacity, 0, 1);
+  const brightnessOverlayOpacity =
+    artworkBrightness < 1
+      ? clampNumber(1 - artworkBrightness, 0, 0.5)
+      : clampNumber((artworkBrightness - 1) * 0.5, 0, 0.125);
+  const brightnessOverlayColor = artworkBrightness < 1 ? "#000000" : "#FFFFFF";
+  const shadowFillOpacity = isWallShadowVisible
+    ? clampNumber(wallShadow.opacity * 0.18, 0, 0.18)
+    : 0;
 
   useLayoutEffect(() => {
     const pendingCenter = pendingCenterRef.current;
@@ -1526,56 +1531,20 @@ function PlacedWallArtwork({
         pointerEvents="none"
         style={{
           position: "absolute",
-          left: isPresetMockup
-            ? Math.max(4, wallShadow.offsetX * 0.22)
-            : Math.max(4, wallShadow.offsetX * 0.5),
-          top: isPresetMockup
-            ? Math.max(5, wallShadow.offsetY * 0.2)
-            : Math.max(5, wallShadow.offsetY * 0.45),
+          left: wallShadow.offsetX,
+          top: wallShadow.offsetY,
           width: placedArtwork.displaySize.width,
           height: placedArtwork.displaySize.height,
-          borderRadius: 2,
-          backgroundColor: `rgba(0,0,0,${castShadowFillOpacity})`,
+          borderRadius: 0,
+          backgroundColor: `rgba(0,0,0,${shadowFillOpacity})`,
           shadowColor: "#000",
           shadowOpacity: castShadowOpacity,
           shadowRadius: wallShadow.blurRadius,
           shadowOffset: {
-            width: wallShadow.offsetX,
-            height: wallShadow.offsetY,
+            width: 0,
+            height: 0,
           },
-          elevation: isPresetMockup ? 3 : 1,
-        }}
-      />
-      <View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          left: isPresetMockup
-            ? Math.max(7, wallShadow.offsetX * 0.38)
-            : Math.max(7, wallShadow.offsetX * 0.875),
-          right: isPresetMockup
-            ? -Math.max(5, wallShadow.offsetX * 0.24)
-            : -Math.max(5, wallShadow.offsetX * 0.625),
-          bottom: isPresetMockup
-            ? -Math.max(5, wallShadow.offsetY * 0.22)
-            : -Math.max(5, wallShadow.offsetY * 0.45),
-          height: isPresetMockup
-            ? Math.max(12, wallShadow.offsetY * 0.72)
-            : Math.max(12, wallShadow.offsetY * 1.09),
-          borderRadius: 6,
-          backgroundColor: `rgba(0,0,0,${contactShadowOpacity})`,
-          shadowColor: "#000",
-          shadowOpacity: isPresetMockup
-            ? clampNumber(wallShadow.opacity * 0.47, 0, 0.22)
-            : clampNumber(wallShadow.opacity * 0.6, 0, 0.2),
-          shadowRadius: isPresetMockup
-            ? Math.max(12, wallShadow.blurRadius * 0.55)
-            : Math.max(10, wallShadow.blurRadius * 0.5),
-          shadowOffset: {
-            width: isPresetMockup ? wallShadow.offsetX * 0.42 : wallShadow.offsetX * 0.625,
-            height: isPresetMockup ? wallShadow.offsetY * 0.36 : wallShadow.offsetY * 0.45,
-          },
-          elevation: isPresetMockup ? 2 : 1,
+          elevation: isWallShadowVisible ? Math.max(1, Math.round(1 + wallShadow.opacity * 10)) : 0,
         }}
       />
 
@@ -1595,10 +1564,27 @@ function PlacedWallArtwork({
         artworkImageUri={preview.artworkImageUri}
         artworkCrop={preview.artworkCrop}
         physicalScale={placedArtwork.physicalScale}
-        showShadow
-        depthMode={isPresetMockup ? "roomMockup" : "standard"}
+        showShadow={false}
+        depthMode="roomMockup"
+        shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
         style={{ opacity: 0.992 }}
       />
+
+      {Math.abs(artworkBrightness - 1) > 0.005 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: placedArtwork.displaySize.width,
+            height: placedArtwork.displaySize.height,
+            backgroundColor: brightnessOverlayColor,
+            opacity: brightnessOverlayOpacity,
+            zIndex: 1,
+          }}
+        />
+      ) : null}
 
       <View
         pointerEvents="none"
@@ -1662,6 +1648,7 @@ function PlacedWallArtwork({
             top: 0,
             right: 0,
             bottom: 0,
+            zIndex: 3,
           }}
         >
           {cornerMarkers.map((cornerStyle, index) => (
@@ -1690,6 +1677,7 @@ function RoomShadowSlider({
   step,
   disabled = false,
   formatValue,
+  onChange,
   onCommit,
 }: {
   label: string;
@@ -1699,6 +1687,7 @@ function RoomShadowSlider({
   step: number;
   disabled?: boolean;
   formatValue: (value: number) => string;
+  onChange?: (value: number) => void;
   onCommit: (value: number) => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
@@ -1721,10 +1710,15 @@ function RoomShadowSlider({
       const nextValue = roundToStep(min + percent * (max - min), step);
       const clampedValue = clampNumber(nextValue, min, max);
 
+      if (Math.abs(draftValueRef.current - clampedValue) < step / 2) {
+        return;
+      }
+
       draftValueRef.current = clampedValue;
       setDraftValue(clampedValue);
+      onChange?.(clampedValue);
     },
-    [disabled, max, min, step, trackWidth]
+    [disabled, max, min, onChange, step, trackWidth]
   );
 
   const commitDraftValue = useCallback(() => {
@@ -1773,7 +1767,7 @@ function RoomShadowSlider({
         {...panResponder.panHandlers}
         onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
         style={{
-          height: 34,
+          height: 28,
           justifyContent: "center",
         }}
       >
@@ -1798,9 +1792,9 @@ function RoomShadowSlider({
           style={{
             position: "absolute",
             left: `${percent * 100}%`,
-            width: 20,
-            height: 20,
-            marginLeft: -10,
+            width: 18,
+            height: 18,
+            marginLeft: -9,
             borderRadius: radii.pill,
             borderWidth: 2,
             borderColor: colors.backgroundCard,
@@ -1809,6 +1803,345 @@ function RoomShadowSlider({
         />
       </View>
     </View>
+  );
+}
+
+function RoomShadowDirectionDial({
+  angleRadians,
+  disabled = false,
+  onChange,
+}: {
+  angleRadians: number;
+  disabled?: boolean;
+  onChange: (angleRadians: number) => void;
+}) {
+  const { colors, spacing, typography } = useAppTheme();
+  const dialSize = 82;
+  const center = dialSize / 2;
+  const knobRadius = 8;
+  const pointerRadius = 27;
+  const knobX = center + Math.cos(angleRadians) * pointerRadius;
+  const knobY = center + Math.sin(angleRadians) * pointerRadius;
+
+  const updateFromLocation = useCallback(
+    (locationX: number, locationY: number) => {
+      if (disabled) {
+        return;
+      }
+
+      const dx = locationX - center;
+      const dy = locationY - center;
+
+      if (Math.hypot(dx, dy) < 4) {
+        return;
+      }
+
+      onChange(Math.atan2(dy, dx));
+    },
+    [center, disabled, onChange]
+  );
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !disabled,
+        onMoveShouldSetPanResponder: () => !disabled,
+        onStartShouldSetPanResponderCapture: () => !disabled,
+        onMoveShouldSetPanResponderCapture: () => !disabled,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: (event) => {
+          updateFromLocation(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        },
+        onPanResponderMove: (event) => {
+          updateFromLocation(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        },
+      }),
+    [disabled, updateFromLocation]
+  );
+
+  return (
+    <View style={{ alignItems: "center", gap: spacing.xs, opacity: disabled ? 0.48 : 1 }}>
+      <Text style={{ ...typography.small, color: colors.textPrimary, fontWeight: "700" }}>
+        Direction
+      </Text>
+      <View
+        {...panResponder.panHandlers}
+        accessibilityRole="adjustable"
+        accessibilityLabel="Shadow direction"
+        style={{
+          width: dialSize,
+          height: dialSize,
+          borderRadius: dialSize / 2,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          backgroundColor: colors.backgroundInput,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Svg
+          pointerEvents="none"
+          width={dialSize}
+          height={dialSize}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+          }}
+        >
+          <SvgLine
+            x1={center}
+            y1={center}
+            x2={knobX}
+            y2={knobY}
+            stroke={disabled ? colors.textPlaceholder : colors.accent}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+          <SvgCircle
+            cx={center}
+            cy={center}
+            r={4.5}
+            fill={colors.borderStrong}
+            opacity={0.65}
+          />
+        </Svg>
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: knobX - knobRadius,
+            top: knobY - knobRadius,
+            width: knobRadius * 2,
+            height: knobRadius * 2,
+            borderRadius: knobRadius,
+            borderWidth: 2,
+            borderColor: colors.backgroundCard,
+            backgroundColor: disabled ? colors.textPlaceholder : colors.accent,
+          }}
+        />
+      </View>
+    </View>
+  );
+}
+
+function RoomShadowAdjustmentPanel({
+  shadow,
+  baseShadow,
+  artworkBrightness,
+  enabled,
+  artworkCount,
+  bottomSafePadding,
+  maxWidth,
+  onClose,
+  onToggle,
+  onOpacityChange,
+  onBlurRadiusChange,
+  onDistanceChange,
+  onDirectionChange,
+  onArtworkBrightnessChange,
+}: {
+  shadow: ResolvedWallShadow;
+  baseShadow: ResolvedWallShadow;
+  artworkBrightness: number;
+  enabled: boolean;
+  artworkCount: number;
+  bottomSafePadding: number;
+  maxWidth?: number;
+  onClose: () => void;
+  onToggle: (enabled: boolean) => void;
+  onOpacityChange: (opacity: number) => void;
+  onBlurRadiusChange: (blurRadius: number) => void;
+  onDistanceChange: (distance: number) => void;
+  onDirectionChange: (angleRadians: number) => void;
+  onArtworkBrightnessChange: (brightness: number) => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const slideProgress = useRef(new Animated.Value(1)).current;
+  const panelDisabled = artworkCount === 0;
+  const shadowDistance = getWallShadowDistance(shadow);
+  const shadowAngle =
+    shadowDistance > 0.1 ? getWallShadowAngle(shadow) : getWallShadowAngle(baseShadow);
+  const controlsDisabled = panelDisabled || !enabled;
+
+  useEffect(() => {
+    Animated.timing(slideProgress, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [slideProgress]);
+
+  return (
+    <Animated.View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: "rgba(255,255,255,0.08)",
+        backgroundColor: colors.headerBackground,
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.xs,
+        paddingBottom: Math.max(bottomSafePadding, spacing.sm),
+        transform: [
+          {
+            translateY: slideProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 280],
+            }),
+          },
+        ],
+      }}
+    >
+      <View
+        style={{
+          width: "100%",
+          maxWidth,
+          alignSelf: "center",
+          borderWidth: 2,
+          borderColor: colors.borderStrong,
+          borderRadius: radii.xl,
+          backgroundColor: colors.backgroundCard,
+          paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
+          gap: spacing.xs,
+          shadowColor: "#000000",
+          shadowOpacity: 0.28,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 12,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: spacing.sm,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+              Wall Shadow
+            </Text>
+            <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+              {artworkCount === 0
+                ? "Add artwork to adjust shadows."
+                : artworkCount === 1
+                  ? "Adjusts the placed artwork."
+                  : `Adjusts all ${artworkCount} placed artworks.`}
+            </Text>
+          </View>
+
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: enabled, disabled: panelDisabled }}
+            accessibilityLabel="Enable wall shadow"
+            disabled={panelDisabled}
+            onPress={() => onToggle(!enabled)}
+            style={{
+              minWidth: 62,
+              height: 30,
+              borderRadius: radii.pill,
+              borderWidth: 1,
+              borderColor: enabled ? colors.accent : colors.borderStrong,
+              backgroundColor: enabled ? colors.accentSoft : colors.backgroundInput,
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: panelDisabled ? 0.45 : 1,
+              paddingHorizontal: spacing.xs,
+            }}
+          >
+            <Text
+              style={{
+                ...typography.small,
+                color: enabled ? colors.accent : colors.textSecondary,
+                fontWeight: "800",
+              }}
+            >
+              {enabled ? "On" : "Off"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close wall shadow controls"
+            onPress={onClose}
+            hitSlop={8}
+            style={{
+              width: 34,
+              height: 30,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="close" size={24} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: spacing.sm,
+          }}
+        >
+          <RoomShadowDirectionDial
+            angleRadians={shadowAngle}
+            disabled={controlsDisabled}
+            onChange={onDirectionChange}
+          />
+
+          <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
+            <RoomShadowSlider
+              label="Strength"
+              value={shadow.opacity}
+              min={0}
+              max={1}
+              step={0.01}
+              disabled={controlsDisabled}
+              formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
+              onChange={onOpacityChange}
+              onCommit={onOpacityChange}
+            />
+
+            <RoomShadowSlider
+              label="Softness"
+              value={shadow.blurRadius}
+              min={0}
+              max={72}
+              step={1}
+              disabled={controlsDisabled}
+              formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
+              onChange={onBlurRadiusChange}
+              onCommit={onBlurRadiusChange}
+            />
+
+            <RoomShadowSlider
+              label="Distance"
+              value={shadowDistance}
+              min={0}
+              max={72}
+              step={1}
+              disabled={controlsDisabled}
+              formatValue={(distance) => `${Math.round(distance)} px`}
+              onChange={onDistanceChange}
+              onCommit={onDistanceChange}
+            />
+
+            <RoomShadowSlider
+              label="Artwork Brightness"
+              value={artworkBrightness}
+              min={0.5}
+              max={1.25}
+              step={0.01}
+              disabled={panelDisabled}
+              formatValue={(brightness) => `${Math.round(brightness * 100)}%`}
+              onChange={onArtworkBrightnessChange}
+              onCommit={onArtworkBrightnessChange}
+            />
+          </View>
+        </View>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -1925,16 +2258,21 @@ export default function RoomViewScreen() {
     framedArtworks.find((artwork) => artwork.id === activePlacement?.framedArtworkId) ?? null;
   const selectedDraft = selectedFramedArtwork?.draft ?? null;
   const selectedDerived = selectedDraft ? buildDerivedGeometry(selectedDraft) : null;
-  const activePlacementSceneDefaultShadow =
-    activePlacement?.sourceMode === "presetRoom" ? activePresetScene.defaultShadow : null;
-  const activePlacementBaseWallShadow = resolveWallShadow(activePlacementSceneDefaultShadow, null);
-  const activePlacementWallShadow = activePlacement
-    ? resolveWallShadow(activePlacementSceneDefaultShadow, activePlacement.wallShadow)
-    : null;
-  const activePlacementShadowEnabled = (activePlacementWallShadow?.opacity ?? 0) > 0.001;
-  const activePlacementShadowDistance = activePlacementWallShadow
-    ? getWallShadowDistance(activePlacementWallShadow)
-    : 0;
+  const activeSourceSceneDefaultShadow =
+    roomView.sourceMode === "presetRoom" ? activePresetScene.defaultShadow : null;
+  const activeSourceWallShadowOverride = roomView.sourceWallShadows?.[activeSourceId] ?? null;
+  const activeSourceBaseWallShadow = resolveWallShadow(activeSourceSceneDefaultShadow, null);
+  const activeSourceWallShadow = resolveWallShadow(
+    activeSourceSceneDefaultShadow,
+    activeSourceWallShadowOverride
+  );
+  const activeSourceShadowEnabled = activeSourceWallShadow.opacity > 0.001;
+  const activeSourceShadowDistance = getWallShadowDistance(activeSourceWallShadow);
+  const activeSourceArtworkBrightness = clampNumber(
+    roomView.sourceArtworkBrightness?.[activeSourceId] ?? 1,
+    0.5,
+    1.25
+  );
   const isTabletLandscape =
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
@@ -2487,59 +2825,82 @@ export default function RoomViewScreen() {
     [roomView.placements, setRoomView]
   );
 
-  const updateSelectedPlacementWallShadow = useCallback(
+  const updateActiveSourceWallShadow = useCallback(
     (wallShadowPatch: RoomWallShadowDraft) => {
-      if (!activePlacement) {
-        return;
-      }
+      const currentSourceWallShadows = roomView.sourceWallShadows ?? {};
+      const currentSourceShadow = currentSourceWallShadows[activeSourceId] ?? {};
 
       setRoomView({
-        placements: roomView.placements.map((placement) =>
-          placement.id === activePlacement.id
-            ? {
-                ...placement,
-                wallShadow: {
-                  ...placement.wallShadow,
-                  ...wallShadowPatch,
-                },
-              }
-            : placement
-        ),
+        sourceWallShadows: {
+          ...currentSourceWallShadows,
+          [activeSourceId]: {
+            ...currentSourceShadow,
+            ...wallShadowPatch,
+          },
+        },
       });
     },
-    [activePlacement, roomView.placements, setRoomView]
+    [activeSourceId, roomView.sourceWallShadows, setRoomView]
   );
 
-  const handleWallShadowToggle = useCallback(
+  const handleSourceWallShadowToggle = useCallback(
     (enabled: boolean) => {
-      updateSelectedPlacementWallShadow({
-        opacity: enabled ? activePlacementBaseWallShadow.opacity : 0,
+      updateActiveSourceWallShadow({
+        opacity: enabled ? activeSourceBaseWallShadow.opacity : 0,
       });
     },
-    [activePlacementBaseWallShadow.opacity, updateSelectedPlacementWallShadow]
+    [activeSourceBaseWallShadow.opacity, updateActiveSourceWallShadow]
   );
 
-  const handleWallShadowDistanceChange = useCallback(
+  const handleSourceWallShadowDistanceChange = useCallback(
     (distance: number) => {
-      if (!activePlacementWallShadow) {
-        return;
-      }
-
       const direction = getWallShadowDirection(
-        activePlacementWallShadow,
-        activePlacementBaseWallShadow
+        activeSourceWallShadow,
+        activeSourceBaseWallShadow
       );
 
-      updateSelectedPlacementWallShadow({
+      updateActiveSourceWallShadow({
         offsetX: roundToStep(direction.x * distance, 0.1),
         offsetY: roundToStep(direction.y * distance, 0.1),
       });
     },
     [
-      activePlacementBaseWallShadow,
-      activePlacementWallShadow,
-      updateSelectedPlacementWallShadow,
+      activeSourceBaseWallShadow,
+      activeSourceWallShadow,
+      updateActiveSourceWallShadow,
     ]
+  );
+
+  const handleSourceWallShadowDirectionChange = useCallback(
+    (angleRadians: number) => {
+      const distance = activeSourceShadowDistance > 0.1
+        ? activeSourceShadowDistance
+        : getWallShadowDistance(activeSourceBaseWallShadow);
+
+      updateActiveSourceWallShadow({
+        offsetX: roundToStep(Math.cos(angleRadians) * distance, 0.1),
+        offsetY: roundToStep(Math.sin(angleRadians) * distance, 0.1),
+      });
+    },
+    [
+      activeSourceBaseWallShadow,
+      activeSourceShadowDistance,
+      updateActiveSourceWallShadow,
+    ]
+  );
+
+  const handleSourceArtworkBrightnessChange = useCallback(
+    (brightness: number) => {
+      const currentSourceArtworkBrightness = roomView.sourceArtworkBrightness ?? {};
+
+      setRoomView({
+        sourceArtworkBrightness: {
+          ...currentSourceArtworkBrightness,
+          [activeSourceId]: roundToStep(clampNumber(brightness, 0.5, 1.25), 0.01),
+        },
+      });
+    },
+    [activeSourceId, roomView.sourceArtworkBrightness, setRoomView]
   );
 
   const handleRemoveSelectedPlacement = useCallback(() => {
@@ -2910,6 +3271,8 @@ export default function RoomViewScreen() {
                   ? activePresetScene.defaultShadow
                   : null
               }
+              roomShadowOverride={activeSourceWallShadowOverride}
+              artworkBrightness={activeSourceArtworkBrightness}
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
               onDragStart={() => setIsArtworkDragging(true)}
@@ -3181,18 +3544,6 @@ export default function RoomViewScreen() {
         {calibrationHelperText}
       </Text>
 
-      <RoomSwitchRow
-        label="Ruler"
-        accessibilityLabel="Show calibration ruler"
-        value={roomView.isCalibrationRulerVisible}
-        disabled={!wallPhoto}
-        onValueChange={(isCalibrationRulerVisible) => {
-          setRoomView({
-            isCalibrationRulerVisible,
-          });
-        }}
-      />
-
       <View
         style={{
           flexDirection: "row",
@@ -3306,7 +3657,34 @@ export default function RoomViewScreen() {
   );
 
   const layoutControlsSection = (
-    <AppCard title="Layouts" subtitle="Use invisible grid snapping to align wall layouts.">
+    <AppCard title="Layouts" subtitle="Use alignment tools while arranging artwork on the wall.">
+      {roomView.sourceMode === "myWall" ? (
+        <>
+          <RoomSwitchRow
+            label="Calibration Ruler"
+            accessibilityLabel="Show calibration ruler"
+            value={roomView.isCalibrationRulerVisible}
+            disabled={!wallPhoto}
+            onValueChange={(isCalibrationRulerVisible) => {
+              setRoomView({
+                isCalibrationRulerVisible,
+              });
+            }}
+          />
+
+          <Text style={{ ...typography.small, color: colors.textSecondary }}>
+            Hide the ruler after calibration to keep the wall preview clear.
+          </Text>
+
+          <View
+            style={{
+              height: 1,
+              backgroundColor: colors.borderSubtle,
+            }}
+          />
+        </>
+      ) : null}
+
       <RoomSwitchRow
         label="Snap to Grid"
         value={roomView.snapToGridEnabled}
@@ -3332,80 +3710,6 @@ export default function RoomViewScreen() {
           }}
         />
       ) : null}
-    </AppCard>
-  );
-
-  const wallShadowControlsSection = (
-    <AppCard
-      title="Wall Shadow"
-      subtitle="Adjust the selected artwork's contact shadow against the wall."
-    >
-      {activePlacement && activePlacementWallShadow ? (
-        <>
-          <View
-            style={{
-              borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              borderRadius: radii.md,
-              backgroundColor: colors.backgroundInput,
-              paddingHorizontal: spacing.md,
-              paddingVertical: spacing.sm,
-              gap: 2,
-            }}
-          >
-            <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }} numberOfLines={1}>
-              {selectedFramedArtwork?.name ?? "Selected artwork"}
-            </Text>
-            <Text style={{ ...typography.small, color: colors.textSecondary }}>
-              Changes apply only to this placed artwork.
-            </Text>
-          </View>
-
-          <RoomSwitchRow
-            label="Shadow"
-            accessibilityLabel="Enable wall shadow for selected artwork"
-            value={activePlacementShadowEnabled}
-            onValueChange={handleWallShadowToggle}
-          />
-
-          <RoomShadowSlider
-            label="Strength"
-            value={activePlacementWallShadow.opacity}
-            min={0}
-            max={0.6}
-            step={0.01}
-            disabled={!activePlacementShadowEnabled}
-            formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
-            onCommit={(opacity) => updateSelectedPlacementWallShadow({ opacity })}
-          />
-
-          <RoomShadowSlider
-            label="Softness"
-            value={activePlacementWallShadow.blurRadius}
-            min={0}
-            max={64}
-            step={1}
-            disabled={!activePlacementShadowEnabled}
-            formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
-            onCommit={(blurRadius) => updateSelectedPlacementWallShadow({ blurRadius })}
-          />
-
-          <RoomShadowSlider
-            label="Distance"
-            value={activePlacementShadowDistance}
-            min={0}
-            max={72}
-            step={1}
-            disabled={!activePlacementShadowEnabled}
-            formatValue={(distance) => `${Math.round(distance)} px`}
-            onCommit={handleWallShadowDistanceChange}
-          />
-        </>
-      ) : (
-        <Text style={{ ...typography.small, color: colors.textSecondary }}>
-          Select an artwork on the wall to adjust its shadow.
-        </Text>
-      )}
     </AppCard>
   );
 
@@ -3435,13 +3739,6 @@ export default function RoomViewScreen() {
         </Text>
       </AppCard>
     );
-
-  const settingsControlsSection = (
-    <>
-      {roomScaleSettingsSection}
-      {wallShadowControlsSection}
-    </>
-  );
 
   const roomViewDockSection = (
     <RoomViewBottomDock
@@ -3476,7 +3773,7 @@ export default function RoomViewScreen() {
     ) : activeSheet === "layouts" ? (
       layoutControlsSection
     ) : activeSheet === "settings" ? (
-      settingsControlsSection
+      roomScaleSettingsSection
     ) : activeSheet === "export" ? (
       exportCardSection
     ) : null;
@@ -3485,6 +3782,10 @@ export default function RoomViewScreen() {
     setArtworkSortMenuVisible(false);
     setFramedArtworkSheetVisible(false);
   };
+
+  const isShadowSheetOpen = activeSheet === "settings";
+  const roomShadowPanelBottomSafePadding = Math.max(insets.bottom, spacing.md);
+  const roomShadowPanelMaxWidth = isTabletLandscape ? 560 : 720;
 
   const framedArtworkSheetHeaderActions = (
     <View
@@ -3618,75 +3919,94 @@ export default function RoomViewScreen() {
           <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
             {wallPhotoCardSection}
             {isTabletLandscape ? wallGeometryWarningSection : null}
-            {roomViewDockSection}
+            {isShadowSheetOpen ? null : roomViewDockSection}
           </View>
         </View>
       </View>
 
-      <View
-        style={{
-          borderTopWidth: 1,
-          borderTopColor: "rgba(255,255,255,0.08)",
-          backgroundColor: colors.headerBackground,
-          paddingHorizontal: spacing.lg,
-          paddingTop: spacing.md,
-          paddingBottom: Math.max(insets.bottom, spacing.md),
-        }}
-      >
+      {isShadowSheetOpen ? (
+        <RoomShadowAdjustmentPanel
+          shadow={activeSourceWallShadow}
+          baseShadow={activeSourceBaseWallShadow}
+          artworkBrightness={activeSourceArtworkBrightness}
+          enabled={activeSourceShadowEnabled}
+          artworkCount={activeSourcePlacements.length}
+          bottomSafePadding={roomShadowPanelBottomSafePadding}
+          maxWidth={roomShadowPanelMaxWidth}
+          onClose={() => setActiveSheet(null)}
+          onToggle={handleSourceWallShadowToggle}
+          onOpacityChange={(opacity) => updateActiveSourceWallShadow({ opacity })}
+          onBlurRadiusChange={(blurRadius) => updateActiveSourceWallShadow({ blurRadius })}
+          onDistanceChange={handleSourceWallShadowDistanceChange}
+          onDirectionChange={handleSourceWallShadowDirectionChange}
+          onArtworkBrightnessChange={handleSourceArtworkBrightnessChange}
+        />
+      ) : (
         <View
           style={{
-            width: "100%",
-            maxWidth: isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined,
-            alignSelf: "center",
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.08)",
+            backgroundColor: colors.headerBackground,
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: Math.max(insets.bottom, spacing.md),
           }}
         >
           <View
             style={{
               width: "100%",
-              maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+              maxWidth: isTabletLandscape ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH : undefined,
               alignSelf: "center",
-              minHeight: 44,
-              justifyContent: "center",
-              position: "relative",
             }}
           >
-            {canGoBack ? (
-              <Pressable
-                onPress={() => {
-                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  navigation.goBack();
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Go back"
-                hitSlop={10}
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
-                  width: 44,
-                  height: 44,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
-              </Pressable>
-            ) : null}
-
-            <AppButton
-              label="Start New Draft"
-              onPress={() => {
-                resetDraft();
-                navigation.navigate("Setup");
+            <View
+              style={{
+                width: "100%",
+                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                alignSelf: "center",
+                minHeight: 44,
+                justifyContent: "center",
+                position: "relative",
               }}
-              style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
-            />
+            >
+              {canGoBack ? (
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.goBack();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Go back"
+                  hitSlop={10}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: 44,
+                    height: 44,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
+                </Pressable>
+              ) : null}
+
+              <AppButton
+                label="Start New Draft"
+                onPress={() => {
+                  resetDraft();
+                  navigation.navigate("Setup");
+                }}
+                style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
+              />
+            </View>
           </View>
         </View>
-      </View>
+      )}
 
       <RoomViewBottomSheet
-        visible={activeSheet !== null}
+        visible={activeSheet !== null && activeSheet !== "settings"}
         title={activeSheetTitle}
         maxHeight={Math.min(windowHeight * 0.78, isTabletLandscape ? 720 : 620)}
         onClose={() => setActiveSheet(null)}

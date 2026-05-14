@@ -127,6 +127,7 @@ export interface RoomPresetScene {
   safePlacementRegion?: RoomViewRect;
   wallPhysicalWidthInches?: number;
   wallPhysicalHeightInches?: number;
+  artworkScaleMultiplier?: number;
   floorLine?: RoomViewLine;
   lightingDirection?: RoomSceneLightingDirection;
   defaultShadow?: {
@@ -181,6 +182,8 @@ export interface RoomViewDraft {
   snapToGridEnabled: boolean;
   gridSize: string;
   gridSizeUnit: MeasurementUnit;
+  sourceWallShadows?: Record<string, RoomWallShadowDraft>;
+  sourceArtworkBrightness?: Record<string, number>;
   placements: RoomArtworkPlacementDraft[];
   activePlacementId: string | null;
 }

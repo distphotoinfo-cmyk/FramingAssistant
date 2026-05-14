@@ -1,0 +1,43 @@
+{
+  "id": "serene-minimalist-sideboard-portrait",
+  "title": "Serene Minimalist Sideboard",
+  "description": "Portrait room scene with a warm sideboard and centered wall space for framed artwork.",
+  "orientation": "portrait",
+  "imagePath": "assets/mockups/portrait/Serene minimalist living room.png",
+  "sourceImageDimensions": {
+    "width": 1023,
+    "height": 1537
+  },
+  "wallRegion": {
+    "x": 0.34,
+    "y": 0.08,
+    "width": 0.36,
+    "height": 0.46
+  },
+  "safePlacementRegion": {
+    "x": 0.39,
+    "y": 0.12,
+    "width": 0.26,
+    "height": 0.36
+  },
+  "wallPhysicalWidthInches": 56,
+  "artworkScaleMultiplier": 2.02,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.9
+    },
+    "end": {
+      "x": 1,
+      "y": 0.9
+    }
+  },
+  "lightingDirection": "upperRight",
+  "defaultShadow": {
+    "opacity": 0.34,
+    "offsetX": 14,
+    "offsetY": 24,
+    "blurRadius": 32
+  },
+  "pixelsPerInch": 18
+}

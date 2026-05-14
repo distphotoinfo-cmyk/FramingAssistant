@@ -15,7 +15,7 @@ export const DEFAULT_WALL_SHADOW: ResolvedWallShadow = {
 };
 
 const WALL_SHADOW_LIMITS = {
-  opacity: { min: 0, max: 0.8 },
+  opacity: { min: 0, max: 1 },
   offsetX: { min: -80, max: 80 },
   offsetY: { min: -80, max: 80 },
   blurRadius: { min: 0, max: 120 },

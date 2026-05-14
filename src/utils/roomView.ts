@@ -147,6 +147,12 @@ export function getDisplayPixelsPerInch({
 export function getPresetScenePixelsPerInch(scene: RoomPresetScene) {
   const wallPhysicalWidthInches = scene.wallPhysicalWidthInches;
   const wallRegionPixelWidth = scene.sourceImageDimensions.width * scene.wallRegion.width;
+  const artworkScaleMultiplier =
+    typeof scene.artworkScaleMultiplier === "number" &&
+    Number.isFinite(scene.artworkScaleMultiplier) &&
+    scene.artworkScaleMultiplier > 0
+      ? scene.artworkScaleMultiplier
+      : 1;
 
   if (
     wallPhysicalWidthInches &&
@@ -155,10 +161,10 @@ export function getPresetScenePixelsPerInch(scene: RoomPresetScene) {
     Number.isFinite(wallRegionPixelWidth) &&
     wallRegionPixelWidth > 0
   ) {
-    return wallRegionPixelWidth / wallPhysicalWidthInches;
+    return (wallRegionPixelWidth / wallPhysicalWidthInches) * artworkScaleMultiplier;
   }
 
-  return scene.pixelsPerInch;
+  return scene.pixelsPerInch * artworkScaleMultiplier;
 }
 
 export function getRoomSourceId(

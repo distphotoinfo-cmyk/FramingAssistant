@@ -2,7 +2,9 @@ import type { ImageSourcePropType } from "react-native";
 import type { RoomPresetScene, RoomPresetSceneOrientation } from "../types/framing";
 
 const landscapeLivingRoomMetadata = require("../../assets/mockups/landscape/Calm and cozy modern living room.json") as RoomPresetScene;
+const landscapeMinimalistInteriorMetadata = require("../../assets/mockups/landscape/Serene minimalist interior landscape.json") as RoomPresetScene;
 const portraitLivingRoomMetadata = require("../../assets/mockups/portrait/Serene minimalist living room interior.json") as RoomPresetScene;
+const portraitSideboardMetadata = require("../../assets/mockups/portrait/Serene minimalist living room.json") as RoomPresetScene;
 
 export type RegisteredRoomPresetScene = RoomPresetScene & {
   imageSource: ImageSourcePropType;
@@ -16,8 +18,16 @@ export const PRESET_ROOM_SCENES: RegisteredRoomPresetScene[] = [
     imageSource: require("../../assets/mockups/landscape/Calm and cozy modern living room.png"),
   },
   {
+    ...landscapeMinimalistInteriorMetadata,
+    imageSource: require("../../assets/mockups/landscape/Serene minimalist interior landscape.png"),
+  },
+  {
     ...portraitLivingRoomMetadata,
     imageSource: require("../../assets/mockups/portrait/Serene minimalist living room interior.png"),
+  },
+  {
+    ...portraitSideboardMetadata,
+    imageSource: require("../../assets/mockups/portrait/Serene minimalist living room.png"),
   },
 ];
 
