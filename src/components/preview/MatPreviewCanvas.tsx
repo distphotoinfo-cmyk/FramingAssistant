@@ -3,7 +3,7 @@ import { Image, PixelRatio, Text, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import Svg, { Defs, LinearGradient, Polygon, Stop } from "react-native-svg";
+import Svg, { Defs, LinearGradient, Polygon, Rect as SvgRect, Stop } from "react-native-svg";
 import type {
   ArtworkCropState,
   ArtworkPreviewSourceMode,
@@ -597,6 +597,79 @@ function FrameFaceOverlay({
   );
 }
 
+function GlassReflectionOverlay({
+  width,
+  height,
+  lightDirection,
+  strength,
+  warmth,
+  highlightScale,
+}: {
+  width: number;
+  height: number;
+  lightDirection: { x: number; y: number };
+  strength: number;
+  warmth: number;
+  highlightScale: number;
+}) {
+  const gradientIdPrefixRef = useRef(`glass-reflection-${Math.random().toString(36).slice(2)}`);
+  const gradientIdPrefix = gradientIdPrefixRef.current;
+  const reflectionStrength = clamp(strength, 0, 1);
+
+  if (width <= 0 || height <= 0 || reflectionStrength <= 0.001) {
+    return null;
+  }
+
+  const normalizedLightDirection = normalizeLightingVector(lightDirection);
+  const x1 = clamp((0.5 - normalizedLightDirection.x * 0.72) * 100, -24, 124);
+  const y1 = clamp((0.5 - normalizedLightDirection.y * 0.72) * 100, -24, 124);
+  const x2 = clamp((0.5 + normalizedLightDirection.x * 0.72) * 100, -24, 124);
+  const y2 = clamp((0.5 + normalizedLightDirection.y * 0.72) * 100, -24, 124);
+  const warmthMagnitude = Math.abs(warmth);
+  const reflectionColor = warmth >= 0
+    ? mixHexColors("#FFFFFF", "#F9E4C0", warmthMagnitude * 0.42)
+    : mixHexColors("#FFFFFF", "#DCEAFF", warmthMagnitude * 0.46);
+  const bandOpacity = clamp(reflectionStrength * 0.105 * highlightScale, 0, 0.14);
+  const secondaryBandOpacity = clamp(reflectionStrength * 0.052 * highlightScale, 0, 0.072);
+  const hairlineOpacity = clamp(reflectionStrength * 0.034 * highlightScale, 0, 0.052);
+  const secondaryBandStart = normalizedLightDirection.x * normalizedLightDirection.y > 0 ? 70 : 30;
+
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width}
+      height={height}
+      style={{
+        position: "absolute",
+        left: 0,
+        top: 0,
+      }}
+    >
+      <Defs>
+        <LinearGradient
+          id={`${gradientIdPrefix}-band`}
+          x1={`${x1}%`}
+          y1={`${y1}%`}
+          x2={`${x2}%`}
+          y2={`${y2}%`}
+        >
+          <Stop offset="0%" stopColor={reflectionColor} stopOpacity={0} />
+          <Stop offset="42%" stopColor={reflectionColor} stopOpacity={0} />
+          <Stop offset="49%" stopColor={reflectionColor} stopOpacity={bandOpacity * 0.18} />
+          <Stop offset="53%" stopColor={reflectionColor} stopOpacity={bandOpacity} />
+          <Stop offset="57%" stopColor={reflectionColor} stopOpacity={hairlineOpacity} />
+          <Stop offset="64%" stopColor={reflectionColor} stopOpacity={0} />
+          <Stop offset={`${secondaryBandStart - 5}%`} stopColor={reflectionColor} stopOpacity={0} />
+          <Stop offset={`${secondaryBandStart}%`} stopColor={reflectionColor} stopOpacity={secondaryBandOpacity} />
+          <Stop offset={`${secondaryBandStart + 4}%`} stopColor={reflectionColor} stopOpacity={0} />
+          <Stop offset="100%" stopColor={reflectionColor} stopOpacity={0} />
+        </LinearGradient>
+      </Defs>
+      <SvgRect x={0} y={0} width={width} height={height} fill={`url(#${gradientIdPrefix}-band)`} />
+    </Svg>
+  );
+}
+
 function MatBevelOverlay({
   width,
   height,
@@ -1165,6 +1238,22 @@ export function FinishedFramedArtwork({
     return null;
   }
 
+  const glassReflectionStrength =
+    isRoomMockupDepth && roomMaterialRealism.glassEnabled
+      ? roomMaterialRealism.reflectionStrength
+      : 0;
+  const glassReflectionOverlay =
+    glassReflectionStrength > 0.001 ? (
+      <GlassReflectionOverlay
+        width={geometry.matWidth}
+        height={geometry.matHeight}
+        lightDirection={roomLightDirection}
+        strength={glassReflectionStrength}
+        warmth={roomEnvironment.warmth}
+        highlightScale={environmentHighlightScale}
+      />
+    ) : null;
+
   const bevelOpeningContent = (
     <View
       style={{
@@ -1292,6 +1381,7 @@ export function FinishedFramedArtwork({
                 }}
               />
             ) : null}
+            {glassReflectionOverlay}
           </View>
         </>
       ) : (
@@ -1304,6 +1394,7 @@ export function FinishedFramedArtwork({
           }}
         >
           {bevelOpeningContent}
+          {glassReflectionOverlay}
         </View>
       )}
       {isRoomMockupDepth && roomEnvironment.ambientTintOpacity > 0.001 ? (

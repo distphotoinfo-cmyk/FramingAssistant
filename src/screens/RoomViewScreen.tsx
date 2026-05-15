@@ -11,6 +11,7 @@ import {
   ScrollView,
   Share,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -55,8 +56,10 @@ import {
 import { useSavedProjectsStore, type SavedFramedArtwork } from "../state/savedProjectsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import type {
+  ArtworkCropState,
   MeasurementUnit,
   FractionDenominator,
+  PreviewDraft,
   RoomArtworkPlacementDraft,
   RoomEnvironmentLighting,
   RoomKnownMeasurementMode,
@@ -67,7 +70,14 @@ import type {
   RoomViewSourceMode,
 } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
-import { importWallPhotoFromCamera, importWallPhotoFromLibrary } from "../utils/artworkImport";
+import { getArtworkAspectRatio } from "../utils/artworkCrop";
+import {
+  importArtworkFromCamera,
+  importArtworkFromLibrary,
+  importWallPhotoFromCamera,
+  importWallPhotoFromLibrary,
+  type ArtworkImportSelection,
+} from "../utils/artworkImport";
 import { normalizeHex } from "../utils/color";
 import { formatMeasurement, parseMeasurement, roundMeasurementString } from "../utils/formatters";
 import { FRAME_FINISHES, getFrameProfile, resolveFrameColorHex } from "../utils/frameProfiles";
@@ -112,10 +122,12 @@ const ARTWORK_THUMBNAIL_HEIGHT = 68;
 const WALL_SHADOW_MAX_SOFTNESS = 160;
 const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
+const SELECTED_ARTWORK_TOOLBAR_WIDTH = 204;
+const SELECTED_ARTWORK_TOOLBAR_HEIGHT = 48;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
-type RoomRealismControlTab = "wall" | "mat" | "frame";
+type RoomRealismControlTab = "wall" | "mat" | "frame" | "glass";
 
 const ROOM_SOURCE_OPTIONS: {
   label: string;
@@ -153,6 +165,7 @@ const ROOM_REALISM_TABS: {
   { label: "Wall", value: "wall" },
   { label: "Mat", value: "mat" },
   { label: "Frame", value: "frame" },
+  { label: "Glass", value: "glass" },
 ];
 
 function clampNumber(value: number, min: number, max: number) {
@@ -161,6 +174,102 @@ function clampNumber(value: number, min: number, max: number) {
 
 function roundToStep(value: number, step: number) {
   return Number((Math.round(value / step) * step).toFixed(4));
+}
+
+function createDefaultArtworkCrop(
+  selection: ArtworkImportSelection,
+  artworkSize: NumericSize | null
+): ArtworkCropState | null {
+  const aspectRatio = getArtworkAspectRatio(artworkSize);
+
+  if (!selection.imageWidth || !selection.imageHeight || !aspectRatio) {
+    return null;
+  }
+
+  return {
+    sourceWidth: selection.imageWidth,
+    sourceHeight: selection.imageHeight,
+    aspectRatio,
+    zoomScale: 1,
+    offsetXRatio: 0,
+    offsetYRatio: 0,
+  };
+}
+
+function getPlacementPreview(
+  artwork: SavedFramedArtwork,
+  placement: RoomArtworkPlacementDraft
+): PreviewDraft {
+  const basePreview = artwork.draft.preview;
+
+  if (!placement.artworkImageUriOverride) {
+    return basePreview;
+  }
+
+  return {
+    ...basePreview,
+    artworkSourceMode: placement.artworkSourceModeOverride ?? "import",
+    artworkImageUri: placement.artworkImageUriOverride,
+    artworkCrop: placement.artworkCropOverride ?? null,
+  };
+}
+
+function clampRoomPointToRect(point: RoomViewPoint, rect: RoomViewRect): RoomViewPoint {
+  return {
+    x: clampNumber(point.x, rect.x, rect.x + rect.width),
+    y: clampNumber(point.y, rect.y, rect.y + rect.height),
+  };
+}
+
+function getSelectedArtworkToolbarPosition({
+  selectedArtwork,
+  imageRect,
+}: {
+  selectedArtwork: WallArtworkRenderItem | null;
+  imageRect: DisplayedImageRect;
+}) {
+  if (!selectedArtwork || imageRect.width <= 0 || imageRect.height <= 0) {
+    return null;
+  }
+
+  const margin = 12;
+  const defaultLeft = imageRect.left + imageRect.width - SELECTED_ARTWORK_TOOLBAR_WIDTH - margin;
+  const defaultTop = imageRect.top + imageRect.height - SELECTED_ARTWORK_TOOLBAR_HEIGHT - margin;
+  const selectedLeft =
+    imageRect.left +
+    selectedArtwork.placement.center.x * imageRect.width -
+    selectedArtwork.displaySize.width / 2;
+  const selectedTop =
+    imageRect.top +
+    selectedArtwork.placement.center.y * imageRect.height -
+    selectedArtwork.displaySize.height / 2;
+  const selectedRight = selectedLeft + selectedArtwork.displaySize.width;
+  const selectedBottom = selectedTop + selectedArtwork.displaySize.height;
+  const toolbarRight = defaultLeft + SELECTED_ARTWORK_TOOLBAR_WIDTH;
+  const toolbarBottom = defaultTop + SELECTED_ARTWORK_TOOLBAR_HEIGHT;
+  const overlapsSelected =
+    defaultLeft < selectedRight &&
+    toolbarRight > selectedLeft &&
+    defaultTop < selectedBottom &&
+    toolbarBottom > selectedTop;
+
+  if (!overlapsSelected) {
+    return { left: defaultLeft, top: defaultTop };
+  }
+
+  const aboveSelectedTop = selectedTop - SELECTED_ARTWORK_TOOLBAR_HEIGHT - margin;
+
+  if (aboveSelectedTop >= imageRect.top + margin) {
+    return {
+      left: defaultLeft,
+      top: aboveSelectedTop,
+    };
+  }
+
+  return {
+    left: imageRect.left + margin,
+    top: defaultTop,
+  };
 }
 
 function getWallShadowDistance(shadow: { offsetX: number; offsetY: number }) {
@@ -254,6 +363,102 @@ function WallCastShadow({
   );
 }
 
+function SelectedArtworkToolbar({
+  position,
+  onDuplicate,
+  onReplace,
+  onEdit,
+  onDelete,
+}: {
+  position: { left: number; top: number };
+  onDuplicate: () => void;
+  onReplace: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const actions: {
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    tone?: "default" | "danger";
+    onPress: () => void;
+  }[] = [
+    { label: "Duplicate", icon: "copy-outline", onPress: onDuplicate },
+    { label: "Replace Artwork", icon: "image-outline", onPress: onReplace },
+    { label: "Edit Framing", icon: "options-outline", onPress: onEdit },
+    { label: "Delete", icon: "trash-outline", tone: "danger", onPress: onDelete },
+  ];
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        left: position.left,
+        top: position.top,
+        width: SELECTED_ARTWORK_TOOLBAR_WIDTH,
+        height: SELECTED_ARTWORK_TOOLBAR_HEIGHT,
+        zIndex: 60,
+      }}
+    >
+      <View
+        style={{
+          height: SELECTED_ARTWORK_TOOLBAR_HEIGHT,
+          borderRadius: radii.pill,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          backgroundColor: colors.backgroundCard,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          paddingHorizontal: spacing.xs,
+          shadowColor: "#000000",
+          shadowOpacity: 0.2,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 8,
+        }}
+      >
+        {actions.map((action) => {
+          const actionColor = action.tone === "danger" ? colors.warning : colors.textPrimary;
+
+          return (
+            <Pressable
+              key={action.label}
+              accessibilityRole="button"
+              accessibilityLabel={action.label}
+              onPress={action.onPress}
+              hitSlop={8}
+              style={{
+                width: 46,
+                height: 38,
+                borderRadius: radii.pill,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name={action.icon} size={20} color={actionColor} />
+              <Text
+                style={{
+                  ...typography.small,
+                  fontSize: 8,
+                  lineHeight: 10,
+                  color: colors.textSecondary,
+                  fontWeight: "700",
+                  marginTop: 1,
+                }}
+                numberOfLines={1}
+              >
+                {action.label === "Replace Artwork" ? "Replace" : action.label.split(" ")[0]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 type SvgElementRef = React.ElementRef<typeof Svg> & {
   toDataURL?: (
     callback: (base64: string) => void,
@@ -264,6 +469,7 @@ type SvgElementRef = React.ElementRef<typeof Svg> & {
 interface WallArtworkRenderItem {
   placement: RoomArtworkPlacementDraft;
   artwork: SavedFramedArtwork;
+  preview: PreviewDraft;
   displaySize: {
     width: number;
     height: number;
@@ -1451,7 +1657,7 @@ function PlacedWallArtwork({
   onDragEnd: () => void;
 }) {
   const { colors } = useAppTheme();
-  const preview = placedArtwork.artwork.draft.preview;
+  const preview = placedArtwork.preview;
   const dragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
@@ -1999,6 +2205,7 @@ function RoomShadowAdjustmentPanel({
   shadow,
   baseShadow,
   materialRealism,
+  activeRealismTab,
   artworkBrightness,
   enabled,
   artworkCount,
@@ -2011,11 +2218,13 @@ function RoomShadowAdjustmentPanel({
   onDistanceChange,
   onDirectionChange,
   onMaterialRealismChange,
+  onActiveRealismTabChange,
   onArtworkBrightnessChange,
 }: {
   shadow: ResolvedWallShadow;
   baseShadow: ResolvedWallShadow;
   materialRealism: ResolvedRoomMaterialRealism;
+  activeRealismTab: RoomRealismControlTab;
   artworkBrightness: number;
   enabled: boolean;
   artworkCount: number;
@@ -2028,10 +2237,10 @@ function RoomShadowAdjustmentPanel({
   onDistanceChange: (distance: number) => void;
   onDirectionChange: (angleRadians: number) => void;
   onMaterialRealismChange: (updates: RoomMaterialRealismDraft) => void;
+  onActiveRealismTabChange: (tab: RoomRealismControlTab) => void;
   onArtworkBrightnessChange: (brightness: number) => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
-  const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
   const slideProgress = useRef(new Animated.Value(1)).current;
   const panelDisabled = artworkCount === 0;
   const shadowDistance = getWallShadowDistance(shadow);
@@ -2170,7 +2379,7 @@ function RoomShadowAdjustmentPanel({
                 key={tab.value}
                 accessibilityRole="button"
                 accessibilityState={{ selected: isActive }}
-                onPress={() => setActiveRealismTab(tab.value)}
+                onPress={() => onActiveRealismTabChange(tab.value)}
                 style={{
                   flex: 1,
                   minHeight: 32,
@@ -2278,7 +2487,7 @@ function RoomShadowAdjustmentPanel({
                 onCommit={(bevelSoftness) => onMaterialRealismChange({ bevelSoftness })}
               />
             </View>
-          ) : (
+          ) : activeRealismTab === "frame" ? (
             <View style={{ gap: spacing.xs }}>
               <RoomShadowSlider
                 label="Frame Depth"
@@ -2314,6 +2523,87 @@ function RoomShadowAdjustmentPanel({
                 formatValue={(brightness) => `${Math.round(brightness * 100)}%`}
                 onChange={onArtworkBrightnessChange}
                 onCommit={onArtworkBrightnessChange}
+              />
+            </View>
+          ) : (
+            <View style={{ gap: spacing.sm }}>
+              <View
+                style={{
+                  minHeight: 34,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing.sm,
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text
+                    style={{ ...typography.small, color: colors.textPrimary, fontWeight: "800" }}
+                    numberOfLines={1}
+                  >
+                    Glass / Acrylic
+                  </Text>
+                  <Text
+                    style={{
+                      ...typography.small,
+                      fontSize: 11,
+                      lineHeight: 14,
+                      color: colors.textSecondary,
+                    }}
+                    numberOfLines={1}
+                  >
+                    Subtle surface reflection
+                  </Text>
+                </View>
+
+                <Pressable
+                  accessibilityRole="switch"
+                  accessibilityState={{
+                    checked: materialRealism.glassEnabled,
+                    disabled: panelDisabled,
+                  }}
+                  accessibilityLabel="Enable glass or acrylic reflection"
+                  disabled={panelDisabled}
+                  onPress={() =>
+                    onMaterialRealismChange({ glassEnabled: !materialRealism.glassEnabled })
+                  }
+                  style={{
+                    minWidth: 62,
+                    height: 30,
+                    borderRadius: radii.pill,
+                    borderWidth: 1,
+                    borderColor: materialRealism.glassEnabled ? colors.accent : colors.borderStrong,
+                    backgroundColor: materialRealism.glassEnabled
+                      ? colors.accentSoft
+                      : colors.backgroundInput,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: panelDisabled ? 0.45 : 1,
+                    paddingHorizontal: spacing.xs,
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...typography.small,
+                      color: materialRealism.glassEnabled ? colors.accent : colors.textSecondary,
+                      fontWeight: "800",
+                    }}
+                  >
+                    {materialRealism.glassEnabled ? "On" : "Off"}
+                  </Text>
+                </Pressable>
+              </View>
+
+              <RoomShadowSlider
+                label="Reflection Strength"
+                value={materialRealism.reflectionStrength}
+                min={0}
+                max={1}
+                step={0.01}
+                disabled={panelDisabled || !materialRealism.glassEnabled}
+                formatValue={(value) => `${Math.round(value * 100)}%`}
+                onChange={(reflectionStrength) => onMaterialRealismChange({ reflectionStrength })}
+                onCommit={(reflectionStrength) => onMaterialRealismChange({ reflectionStrength })}
               />
             </View>
           )}
@@ -2402,12 +2692,14 @@ export default function RoomViewScreen() {
   const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const exportSvgRef = useRef<SvgElementRef | null>(null);
+  const shortcutInputRef = useRef<TextInput | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
   const [isExporting, setIsExporting] = useState(false);
   const [wallPhotoSourceSheetVisible, setWallPhotoSourceSheetVisible] = useState(false);
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
+  const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
   const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
   const [artworkSortMenuVisible, setArtworkSortMenuVisible] = useState(false);
@@ -2459,6 +2751,7 @@ export default function RoomViewScreen() {
   const isTabletLandscape =
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
+  const isTabletWorkspace = !isPhoneWorkspace;
   const sceneImageWidth =
     roomView.sourceMode === "presetRoom"
       ? activePresetScene.sourceImageDimensions.width
@@ -2569,7 +2862,7 @@ export default function RoomViewScreen() {
           return null;
         }
 
-        const preview = artwork.draft.preview;
+        const preview = getPlacementPreview(artwork, placement);
         const derived = buildDerivedGeometry(artwork.draft);
         const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork, derived);
 
@@ -2589,6 +2882,7 @@ export default function RoomViewScreen() {
             zIndex: placement.zIndex ?? index,
           },
           artwork,
+          preview,
           displaySize,
           frameColorHex: resolveFrameColorHex(
             preview.frameProfileId,
@@ -2615,6 +2909,12 @@ export default function RoomViewScreen() {
     sceneImageWidth,
     unit,
   ]);
+  const selectedPlacedArtwork =
+    placedArtworks.find((item) => item.placement.id === roomView.activePlacementId) ?? null;
+  const selectedArtworkToolbarPosition = getSelectedArtworkToolbarPosition({
+    selectedArtwork: selectedPlacedArtwork,
+    imageRect: displayedImageRect,
+  });
   const selectedSizeLabel = selectedFramedArtwork
     ? getSavedArtworkSizeLabel(selectedFramedArtwork, unit, imperialPrecision)
     : "Not selected";
@@ -3104,6 +3404,19 @@ export default function RoomViewScreen() {
     [activeSourceId, roomView.sourceMaterialRealism, setRoomView]
   );
 
+  const deleteSelectedPlacement = useCallback(() => {
+    if (!activePlacement) {
+      return;
+    }
+
+    setRoomView({
+      placements: roomView.placements.filter(
+        (placement) => placement.id !== activePlacement.id
+      ),
+      activePlacementId: null,
+    });
+  }, [activePlacement, roomView.placements, setRoomView]);
+
   const handleRemoveSelectedPlacement = useCallback(() => {
     if (!activePlacement) {
       return;
@@ -3119,18 +3432,144 @@ export default function RoomViewScreen() {
         {
           text: "Remove",
           style: "destructive",
-          onPress: () => {
-            setRoomView({
-              placements: roomView.placements.filter(
-                (placement) => placement.id !== activePlacement.id
-              ),
-              activePlacementId: null,
-            });
-          },
+          onPress: deleteSelectedPlacement,
         },
       ]
     );
-  }, [activePlacement, roomView.placements, selectedFramedArtwork?.name, setRoomView]);
+  }, [activePlacement, deleteSelectedPlacement, selectedFramedArtwork?.name]);
+
+  const handleDuplicateSelectedPlacement = useCallback(() => {
+    if (!activePlacement) {
+      return;
+    }
+
+    const nextZIndex =
+      activeSourcePlacements.reduce(
+        (maxZIndex, placement) => Math.max(maxZIndex, placement.zIndex ?? 0),
+        -1
+      ) + 1;
+    const duplicateBase = createRoomArtworkPlacement(
+      activePlacement.framedArtworkId,
+      clampRoomPointToRect(
+        {
+          x: activePlacement.center.x + 0.035,
+          y: activePlacement.center.y + 0.035,
+        },
+        placementBounds
+      ),
+      nextZIndex,
+      activePlacement.sourceMode,
+      activePlacement.sourceId
+    );
+    const duplicatePlacement: RoomArtworkPlacementDraft = {
+      ...duplicateBase,
+      scale: activePlacement.scale,
+      rotationDegrees: activePlacement.rotationDegrees,
+      wallShadow: activePlacement.wallShadow ? { ...activePlacement.wallShadow } : undefined,
+      artworkSourceModeOverride: activePlacement.artworkSourceModeOverride,
+      artworkImageUriOverride: activePlacement.artworkImageUriOverride,
+      artworkCropOverride: activePlacement.artworkCropOverride
+        ? { ...activePlacement.artworkCropOverride }
+        : undefined,
+    };
+
+    setRoomView({
+      placements: [...roomView.placements, duplicatePlacement],
+      activePlacementId: duplicatePlacement.id,
+    });
+    void Haptics.selectionAsync();
+  }, [activePlacement, activeSourcePlacements, placementBounds, roomView.placements, setRoomView]);
+
+  const handleSelectedArtworkReplacement = useCallback(
+    (selection: ArtworkImportSelection) => {
+      if (!activePlacement || !selectedDerived?.artworkSize) {
+        return;
+      }
+
+      const artworkCrop = createDefaultArtworkCrop(selection, selectedDerived.artworkSize);
+
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          placement.id === activePlacement.id
+            ? {
+                ...placement,
+                artworkSourceModeOverride: "import",
+                artworkImageUriOverride: selection.imageUri,
+                artworkCropOverride: artworkCrop,
+              }
+            : placement
+        ),
+        activePlacementId: activePlacement.id,
+      });
+      void Haptics.selectionAsync();
+    },
+    [activePlacement, roomView.placements, selectedDerived?.artworkSize, setRoomView]
+  );
+
+  const handleReplaceSelectedArtwork = useCallback(() => {
+    if (!activePlacement) {
+      return;
+    }
+
+    const pickFromLibrary = () => {
+      void importArtworkFromLibrary(handleSelectedArtworkReplacement);
+    };
+    const takePhoto = () => {
+      void importArtworkFromCamera(handleSelectedArtworkReplacement);
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancel", "Choose from Photo Library", "Take Photo"],
+          cancelButtonIndex: 0,
+          userInterfaceStyle: isDark ? "dark" : "light",
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            pickFromLibrary();
+          }
+
+          if (buttonIndex === 2) {
+            takePhoto();
+          }
+        }
+      );
+      return;
+    }
+
+    Alert.alert("Replace Artwork", "Choose a source for the replacement artwork image.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Photo Library", onPress: pickFromLibrary },
+      { text: "Take Photo", onPress: takePhoto },
+    ]);
+  }, [activePlacement, handleSelectedArtworkReplacement, isDark]);
+
+  const handleEditSelectedArtwork = useCallback(() => {
+    if (!activePlacement) {
+      return;
+    }
+
+    setActiveSheet("settings");
+    setActiveRealismTab("frame");
+  }, [activePlacement]);
+
+  useEffect(() => {
+    if (!activePlacement || !isTabletWorkspace || framedArtworkSheetVisible || wallPhotoSourceSheetVisible) {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => {
+      shortcutInputRef.current?.focus();
+    }, 120);
+
+    return () => clearTimeout(focusTimer);
+  }, [
+    activePlacement,
+    framedArtworkSheetVisible,
+    isTabletWorkspace,
+    wallPhotoSourceSheetVisible,
+  ]);
 
   const exportGeometry = useMemo(() => {
     const sourcePixelsPerInch =
@@ -3157,7 +3596,7 @@ export default function RoomViewScreen() {
           return null;
         }
 
-        const preview = artwork.draft.preview;
+        const preview = getPlacementPreview(artwork, placement);
         const derived = buildDerivedGeometry(artwork.draft);
         const finalOuterSize = getSavedArtworkFinalOuterSizeInches(artwork, derived);
 
@@ -3493,6 +3932,16 @@ export default function RoomViewScreen() {
               onChange={handleCalibrationRulerChange}
               onDragStart={() => setIsCalibrationDragging(true)}
               onDragEnd={() => setIsCalibrationDragging(false)}
+            />
+          ) : null}
+
+          {selectedArtworkToolbarPosition ? (
+            <SelectedArtworkToolbar
+              position={selectedArtworkToolbarPosition}
+              onDuplicate={handleDuplicateSelectedPlacement}
+              onReplace={handleReplaceSelectedArtwork}
+              onEdit={handleEditSelectedArtwork}
+              onDelete={deleteSelectedPlacement}
             />
           ) : null}
         </>
@@ -4132,6 +4581,7 @@ export default function RoomViewScreen() {
           shadow={activeSourceWallShadow}
           baseShadow={activeSourceBaseWallShadow}
           materialRealism={activeSourceMaterialRealism}
+          activeRealismTab={activeRealismTab}
           artworkBrightness={activeSourceArtworkBrightness}
           enabled={activeSourceShadowEnabled}
           artworkCount={activeSourcePlacements.length}
@@ -4144,6 +4594,7 @@ export default function RoomViewScreen() {
           onDistanceChange={handleSourceWallShadowDistanceChange}
           onDirectionChange={handleSourceWallShadowDirectionChange}
           onMaterialRealismChange={updateActiveSourceMaterialRealism}
+          onActiveRealismTabChange={setActiveRealismTab}
           onArtworkBrightnessChange={handleSourceArtworkBrightnessChange}
         />
       ) : (
@@ -4209,6 +4660,32 @@ export default function RoomViewScreen() {
           </View>
         </View>
       )}
+
+      {activePlacement && isTabletWorkspace ? (
+        <TextInput
+          ref={shortcutInputRef}
+          value=""
+          onChangeText={() => {}}
+          onKeyPress={(event) => {
+            if (event.nativeEvent.key === "Backspace" || event.nativeEvent.key === "Delete") {
+              deleteSelectedPlacement();
+            }
+          }}
+          showSoftInputOnFocus={false}
+          caretHidden
+          autoCorrect={false}
+          spellCheck={false}
+          accessibilityLabel="Room View keyboard shortcuts"
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            opacity: 0,
+            left: -10,
+            top: -10,
+          }}
+        />
+      ) : null}
 
       <RoomViewBottomSheet
         visible={activeSheet !== null && activeSheet !== "settings"}

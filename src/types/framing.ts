@@ -160,6 +160,8 @@ export interface RoomMaterialRealismDraft {
   bevelSoftness?: number;
   frameDepth?: number;
   innerLipContrast?: number;
+  glassEnabled?: boolean;
+  reflectionStrength?: number;
 }
 
 export interface RoomWallPhotoDraft {
@@ -187,6 +189,9 @@ export interface RoomArtworkPlacementDraft {
   rotationDegrees: number;
   zIndex: number;
   wallShadow?: RoomWallShadowDraft;
+  artworkSourceModeOverride?: ArtworkPreviewSourceMode;
+  artworkImageUriOverride?: string | null;
+  artworkCropOverride?: ArtworkCropState | null;
 }
 
 export interface RoomViewDraft {

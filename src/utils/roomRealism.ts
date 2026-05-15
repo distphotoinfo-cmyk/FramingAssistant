@@ -5,6 +5,8 @@ export interface ResolvedRoomMaterialRealism {
   bevelSoftness: number;
   frameDepth: number;
   innerLipContrast: number;
+  glassEnabled: boolean;
+  reflectionStrength: number;
 }
 
 export const DEFAULT_ROOM_MATERIAL_REALISM: ResolvedRoomMaterialRealism = {
@@ -12,6 +14,8 @@ export const DEFAULT_ROOM_MATERIAL_REALISM: ResolvedRoomMaterialRealism = {
   bevelSoftness: 0.45,
   frameDepth: 1,
   innerLipContrast: 1.2,
+  glassEnabled: false,
+  reflectionStrength: 0.18,
 };
 
 const ROOM_MATERIAL_REALISM_LIMITS = {
@@ -19,6 +23,7 @@ const ROOM_MATERIAL_REALISM_LIMITS = {
   bevelSoftness: { min: 0, max: 1 },
   frameDepth: { min: 0, max: 3 },
   innerLipContrast: { min: 0, max: 4 },
+  reflectionStrength: { min: 0, max: 1 },
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -65,6 +70,16 @@ export function resolveRoomMaterialRealism(
       DEFAULT_ROOM_MATERIAL_REALISM.innerLipContrast,
       ROOM_MATERIAL_REALISM_LIMITS.innerLipContrast.min,
       ROOM_MATERIAL_REALISM_LIMITS.innerLipContrast.max
+    ),
+    glassEnabled:
+      typeof override?.glassEnabled === "boolean"
+        ? override.glassEnabled
+        : DEFAULT_ROOM_MATERIAL_REALISM.glassEnabled,
+    reflectionStrength: resolveRealismValue(
+      override?.reflectionStrength,
+      DEFAULT_ROOM_MATERIAL_REALISM.reflectionStrength,
+      ROOM_MATERIAL_REALISM_LIMITS.reflectionStrength.min,
+      ROOM_MATERIAL_REALISM_LIMITS.reflectionStrength.max
     ),
   };
 }
