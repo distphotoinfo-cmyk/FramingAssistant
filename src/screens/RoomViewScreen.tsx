@@ -58,6 +58,7 @@ import type {
   MeasurementUnit,
   FractionDenominator,
   RoomArtworkPlacementDraft,
+  RoomEnvironmentLighting,
   RoomKnownMeasurementMode,
   RoomMaterialRealismDraft,
   RoomWallShadowDraft,
@@ -1426,6 +1427,7 @@ function PlacedWallArtwork({
   sceneDefaultShadow,
   roomShadowOverride,
   materialRealism,
+  environment,
   artworkBrightness,
   onSelect,
   onMoveEnd,
@@ -1441,6 +1443,7 @@ function PlacedWallArtwork({
   sceneDefaultShadow?: RegisteredRoomPresetScene["defaultShadow"] | null;
   roomShadowOverride?: RoomWallShadowDraft | null;
   materialRealism: ResolvedRoomMaterialRealism;
+  environment: RoomEnvironmentLighting | null;
   artworkBrightness: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
@@ -1632,6 +1635,7 @@ function PlacedWallArtwork({
         depthMode="roomMockup"
         shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
         materialRealism={materialRealism}
+        environment={environment ?? undefined}
         style={{ opacity: 0.992 }}
       />
 
@@ -2450,6 +2454,8 @@ export default function RoomViewScreen() {
   const activeSourceMaterialRealism = resolveRoomMaterialRealism(
     roomView.sourceMaterialRealism?.[activeSourceId] ?? null
   );
+  const activeSourceEnvironment =
+    roomView.sourceMode === "presetRoom" ? activePresetScene.environment ?? null : null;
   const isTabletLandscape =
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
@@ -3468,6 +3474,7 @@ export default function RoomViewScreen() {
               }
               roomShadowOverride={activeSourceWallShadowOverride}
               materialRealism={activeSourceMaterialRealism}
+              environment={activeSourceEnvironment}
               artworkBrightness={activeSourceArtworkBrightness}
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}

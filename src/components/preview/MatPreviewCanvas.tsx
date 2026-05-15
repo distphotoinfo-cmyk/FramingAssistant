@@ -10,6 +10,7 @@ import type {
   FrameProfileId,
   MatCoreColor,
   MatThicknessPly,
+  RoomEnvironmentLighting,
   RoomMaterialRealismDraft,
 } from "../../types/framing";
 import { useAppSettingsStore } from "../../state/appSettingsStore";
@@ -18,6 +19,7 @@ import { getFrameProfile } from "../../utils/frameProfiles";
 import { getOffsetBounds, type NumericSize } from "../../utils/framingGeometry";
 import { hexToHsl, mixHexColors, normalizeHex } from "../../utils/color";
 import { useAppTheme } from "../../theme/AppThemeProvider";
+import { resolveRoomEnvironment } from "../../utils/roomEnvironment";
 import { resolveRoomMaterialRealism } from "../../utils/roomRealism";
 
 interface MatPreviewCanvasProps {
@@ -63,6 +65,7 @@ export interface FinishedFramedArtworkProps {
   depthMode?: "standard" | "roomMockup";
   shadowDirection?: { x: number; y: number };
   materialRealism?: RoomMaterialRealismDraft;
+  environment?: RoomEnvironmentLighting;
   style?: ViewStyle;
 }
 
@@ -694,6 +697,7 @@ export function FinishedFramedArtwork({
   depthMode = "standard",
   shadowDirection,
   materialRealism,
+  environment,
   style,
 }: FinishedFramedArtworkProps) {
   const { isDark } = useAppTheme();
@@ -718,6 +722,13 @@ export function FinishedFramedArtwork({
     ? getLightDirectionFromShadowDirection(shadowDirection)
     : STANDARD_PREVIEW_LIGHT_DIRECTION;
   const roomMaterialRealism = resolveRoomMaterialRealism(materialRealism);
+  const roomEnvironment = resolveRoomEnvironment(isRoomMockupDepth ? environment : null);
+  const environmentHighlightScale = isRoomMockupDepth ? roomEnvironment.highlightScale : 1;
+  const environmentShadowScale = isRoomMockupDepth ? roomEnvironment.shadowScale : 1;
+  const environmentContrastScale = isRoomMockupDepth ? roomEnvironment.contrastScale : 1;
+  const environmentAmbientOcclusionScale = isRoomMockupDepth
+    ? roomEnvironment.ambientOcclusionScale
+    : 1;
   const roomBevelDepth = isRoomMockupDepth ? roomMaterialRealism.bevelDepth : 1;
   const roomBevelSoftness = isRoomMockupDepth ? roomMaterialRealism.bevelSoftness : 0;
   const roomFrameDepth = isRoomMockupDepth ? roomMaterialRealism.frameDepth : 1;
@@ -727,24 +738,31 @@ export function FinishedFramedArtwork({
   const roomBevelOverdrive = Math.max(0, roomBevelDepth - 1.5);
   const roomBevelOverdriveRatio = clamp(roomBevelOverdrive / 1.5, 0, 1);
   const roomBevelContrast = clamp(
-    clamp(0.62 + roomBevelDepth * 0.4, 0, 1.16) + roomBevelOverdrive * 0.55,
+    (clamp(0.62 + roomBevelDepth * 0.4, 0, 1.16) + roomBevelOverdrive * 0.55) *
+      environmentContrastScale,
     0,
-    2.08
+    2.12
   );
-  const matShadowBoost = isRoomMockupDepth ? 1 + roomBevelDepth * 0.6 : 1;
-  const matHighlightBoost = isRoomMockupDepth ? 1 + roomBevelDepth * 0.42 : 1;
+  const matShadowBoost = isRoomMockupDepth
+    ? (1 + roomBevelDepth * 0.6) * environmentShadowScale
+    : 1;
+  const matHighlightBoost = isRoomMockupDepth
+    ? (1 + roomBevelDepth * 0.42) * environmentHighlightScale
+    : 1;
   const frameShadowBoost = isRoomMockupDepth
-    ? 1 + roomFrameDepth * (0.5 + darkFrameLiftRatio * 0.34)
+    ? (1 + roomFrameDepth * (0.5 + darkFrameLiftRatio * 0.34)) * environmentShadowScale
     : 1;
   const frameHighlightBoost = isRoomMockupDepth
-    ? 1 + roomFrameDepth * (0.28 + darkFrameLiftRatio * 0.26)
+    ? (1 + roomFrameDepth * (0.28 + darkFrameLiftRatio * 0.26)) * environmentHighlightScale
     : 1;
   const frameFaceDepthIntensity = isRoomMockupDepth
-    ? 1 + roomFrameDepth * (0.56 + darkFrameLiftRatio * 0.22)
+    ? (1 + roomFrameDepth * (0.56 + darkFrameLiftRatio * 0.22)) *
+      clamp(environmentContrastScale, 0.84, 1.14)
     : 1;
   const frameInnerLipContrast = isRoomMockupDepth
     ? roomInnerLipContrast *
-      (1 + darkFrameLiftRatio * 0.62 + roomFrameOverdrive * (0.18 + darkFrameLiftRatio * 0.24))
+      (1 + darkFrameLiftRatio * 0.62 + roomFrameOverdrive * (0.18 + darkFrameLiftRatio * 0.24)) *
+      clamp(environmentContrastScale * environmentShadowScale, 0.82, 1.22)
     : roomInnerLipContrast;
   const bevelUnitScale = unit === "cm" ? 2.54 : 1;
   const bevelVisualScale = 1.5625;
@@ -901,23 +919,30 @@ export function FinishedFramedArtwork({
     : baseBevelPalette;
   const frameMatOcclusionColors = buildDirectionalEdgeColors(
     roomLightDirection,
-    0.1 + roomFrameDepth * 0.08 + frameInnerLipContrast * 0.02,
-    0.06 + roomFrameDepth * 0.04 + frameInnerLipContrast * 0.015,
+    (0.1 + roomFrameDepth * 0.08 + frameInnerLipContrast * 0.02) *
+      environmentAmbientOcclusionScale,
+    (0.06 + roomFrameDepth * 0.04 + frameInnerLipContrast * 0.015) *
+      environmentAmbientOcclusionScale,
     true
   );
   const apertureOcclusionColors = buildDirectionalEdgeColors(
     roomLightDirection,
-    (isWhiteCore ? 0.055 : 0.075) +
+    ((isWhiteCore ? 0.055 : 0.075) +
       roomBevelDepth * (isWhiteCore ? 0.085 : 0.11) +
-      roomBevelOverdrive * (isWhiteCore ? 0.04 : 0.055),
-    (isWhiteCore ? 0.035 : 0.052) +
+      roomBevelOverdrive * (isWhiteCore ? 0.04 : 0.055)) *
+      environmentAmbientOcclusionScale,
+    ((isWhiteCore ? 0.035 : 0.052) +
       roomBevelDepth * (isWhiteCore ? 0.05 : 0.062) +
-      roomBevelOverdrive * (isWhiteCore ? 0.025 : 0.035),
+      roomBevelOverdrive * (isWhiteCore ? 0.025 : 0.035)) *
+      environmentAmbientOcclusionScale,
     true
   );
   const apertureEdgeAlpha = clamp(
     bevelProfile.apertureEdgeAlpha *
-      (isRoomMockupDepth ? 0.6 + roomBevelDepth * 0.45 + roomBevelOverdrive * 0.24 : 1),
+      (isRoomMockupDepth
+        ? (0.6 + roomBevelDepth * 0.45 + roomBevelOverdrive * 0.24) *
+          environmentAmbientOcclusionScale
+        : 1),
     0,
     isRoomMockupDepth ? 0.16 : 0.18
   );
@@ -1281,6 +1306,46 @@ export function FinishedFramedArtwork({
           {bevelOpeningContent}
         </View>
       )}
+      {isRoomMockupDepth && roomEnvironment.ambientTintOpacity > 0.001 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: roomEnvironment.ambientTintColor,
+          }}
+        />
+      ) : null}
+      {isRoomMockupDepth && roomEnvironment.ambientDimmingOpacity > 0.001 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: roomEnvironment.ambientDimmingColor,
+          }}
+        />
+      ) : null}
+      {isRoomMockupDepth && roomEnvironment.edgeBlendOpacity > 0.001 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            borderWidth: Math.max(1, PixelRatio.roundToNearestPixel(1)),
+            borderColor: roomEnvironment.edgeBlendColor,
+          }}
+        />
+      ) : null}
     </View>
   );
 }

@@ -32,6 +32,13 @@
     }
   },
   "lightingDirection": "left",
+  "environment": {
+    "wallBrightness": 0.76,
+    "warmth": 0.18,
+    "ambientLight": 0.78,
+    "contrast": 0.42,
+    "edgeBlend": 0.45
+  },
   "defaultShadow": {
     "opacity": 0.31,
     "offsetX": 13,

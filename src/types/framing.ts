@@ -130,6 +130,7 @@ export interface RoomPresetScene {
   artworkScaleMultiplier?: number;
   floorLine?: RoomViewLine;
   lightingDirection?: RoomSceneLightingDirection;
+  environment?: RoomEnvironmentLighting;
   defaultShadow?: {
     opacity: number;
     offsetX: number;
@@ -137,6 +138,14 @@ export interface RoomPresetScene {
     blurRadius: number;
   };
   pixelsPerInch: number;
+}
+
+export interface RoomEnvironmentLighting {
+  wallBrightness?: number;
+  warmth?: number;
+  ambientLight?: number;
+  contrast?: number;
+  edgeBlend?: number;
 }
 
 export interface RoomWallShadowDraft {
