@@ -122,12 +122,16 @@ const ARTWORK_THUMBNAIL_HEIGHT = 68;
 const WALL_SHADOW_MAX_SOFTNESS = 160;
 const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
-const SELECTED_ARTWORK_TOOLBAR_WIDTH = 204;
-const SELECTED_ARTWORK_TOOLBAR_HEIGHT = 48;
+const SELECTED_ARTWORK_TOOLBAR_WIDTH = 292;
+const SELECTED_ARTWORK_TOOLBAR_BASE_HEIGHT = 56;
+const SELECTED_ARTWORK_TOOLBAR_ALIGN_HEIGHT = 132;
+const SELECTED_ARTWORK_TOOLBAR_DISTRIBUTE_HEIGHT = 172;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
 type RoomRealismControlTab = "wall" | "mat" | "frame" | "glass";
+type RoomAlignmentAction = "left" | "center" | "right" | "top" | "middle" | "bottom";
+type RoomDistributionAction = "horizontal" | "vertical";
 
 const ROOM_SOURCE_OPTIONS: {
   label: string;
@@ -224,9 +228,11 @@ function clampRoomPointToRect(point: RoomViewPoint, rect: RoomViewRect): RoomVie
 function getSelectedArtworkToolbarPosition({
   selectedArtwork,
   imageRect,
+  height,
 }: {
   selectedArtwork: WallArtworkRenderItem | null;
   imageRect: DisplayedImageRect;
+  height: number;
 }) {
   if (!selectedArtwork || imageRect.width <= 0 || imageRect.height <= 0) {
     return null;
@@ -234,7 +240,7 @@ function getSelectedArtworkToolbarPosition({
 
   const margin = 12;
   const defaultLeft = imageRect.left + imageRect.width - SELECTED_ARTWORK_TOOLBAR_WIDTH - margin;
-  const defaultTop = imageRect.top + imageRect.height - SELECTED_ARTWORK_TOOLBAR_HEIGHT - margin;
+  const defaultTop = imageRect.top + imageRect.height - height - margin;
   const selectedLeft =
     imageRect.left +
     selectedArtwork.placement.center.x * imageRect.width -
@@ -246,7 +252,7 @@ function getSelectedArtworkToolbarPosition({
   const selectedRight = selectedLeft + selectedArtwork.displaySize.width;
   const selectedBottom = selectedTop + selectedArtwork.displaySize.height;
   const toolbarRight = defaultLeft + SELECTED_ARTWORK_TOOLBAR_WIDTH;
-  const toolbarBottom = defaultTop + SELECTED_ARTWORK_TOOLBAR_HEIGHT;
+  const toolbarBottom = defaultTop + height;
   const overlapsSelected =
     defaultLeft < selectedRight &&
     toolbarRight > selectedLeft &&
@@ -257,7 +263,7 @@ function getSelectedArtworkToolbarPosition({
     return { left: defaultLeft, top: defaultTop };
   }
 
-  const aboveSelectedTop = selectedTop - SELECTED_ARTWORK_TOOLBAR_HEIGHT - margin;
+  const aboveSelectedTop = selectedTop - height - margin;
 
   if (aboveSelectedTop >= imageRect.top + margin) {
     return {
@@ -269,6 +275,40 @@ function getSelectedArtworkToolbarPosition({
   return {
     left: imageRect.left + margin,
     top: defaultTop,
+  };
+}
+
+function getSelectedArtworkToolbarHeight(selectedCount: number) {
+  if (selectedCount >= 3) {
+    return SELECTED_ARTWORK_TOOLBAR_DISTRIBUTE_HEIGHT;
+  }
+
+  if (selectedCount >= 2) {
+    return SELECTED_ARTWORK_TOOLBAR_ALIGN_HEIGHT;
+  }
+
+  return SELECTED_ARTWORK_TOOLBAR_BASE_HEIGHT;
+}
+
+function getArtworkNormalizedBounds(
+  item: WallArtworkRenderItem,
+  stageWidth: number,
+  stageHeight: number
+) {
+  const width = stageWidth > 0 ? item.displaySize.width / stageWidth : 0;
+  const height = stageHeight > 0 ? item.displaySize.height / stageHeight : 0;
+
+  return {
+    id: item.placement.id,
+    centerX: item.placement.center.x,
+    centerY: item.placement.center.y,
+    left: item.placement.center.x - width / 2,
+    right: item.placement.center.x + width / 2,
+    top: item.placement.center.y - height / 2,
+    bottom: item.placement.center.y + height / 2,
+    width,
+    height,
+    item,
   };
 }
 
@@ -365,28 +405,51 @@ function WallCastShadow({
 
 function SelectedArtworkToolbar({
   position,
+  selectedCount,
+  isMultiSelectMode,
   onDuplicate,
   onReplace,
   onEdit,
   onDelete,
+  onToggleMultiSelect,
+  onAlign,
+  onDistribute,
 }: {
   position: { left: number; top: number };
+  selectedCount: number;
+  isMultiSelectMode: boolean;
   onDuplicate: () => void;
   onReplace: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onToggleMultiSelect: () => void;
+  onAlign: (action: RoomAlignmentAction) => void;
+  onDistribute: (action: RoomDistributionAction) => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
+  const toolbarHeight = getSelectedArtworkToolbarHeight(selectedCount);
+  const canAlign = selectedCount >= 2;
+  const canDistribute = selectedCount >= 3;
   const actions: {
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
     tone?: "default" | "danger";
+    active?: boolean;
     onPress: () => void;
   }[] = [
     { label: "Duplicate", icon: "copy-outline", onPress: onDuplicate },
     { label: "Replace Artwork", icon: "image-outline", onPress: onReplace },
     { label: "Edit Framing", icon: "options-outline", onPress: onEdit },
+    { label: "Multi Select", icon: "albums-outline", active: isMultiSelectMode, onPress: onToggleMultiSelect },
     { label: "Delete", icon: "trash-outline", tone: "danger", onPress: onDelete },
+  ];
+  const alignActions: { label: string; shortLabel: string; action: RoomAlignmentAction }[] = [
+    { label: "Align Left", shortLabel: "L", action: "left" },
+    { label: "Align Center", shortLabel: "C", action: "center" },
+    { label: "Align Right", shortLabel: "R", action: "right" },
+    { label: "Align Top", shortLabel: "T", action: "top" },
+    { label: "Align Middle", shortLabel: "M", action: "middle" },
+    { label: "Align Bottom", shortLabel: "B", action: "bottom" },
   ];
 
   return (
@@ -397,21 +460,19 @@ function SelectedArtworkToolbar({
         left: position.left,
         top: position.top,
         width: SELECTED_ARTWORK_TOOLBAR_WIDTH,
-        height: SELECTED_ARTWORK_TOOLBAR_HEIGHT,
+        height: toolbarHeight,
         zIndex: 60,
       }}
     >
       <View
         style={{
-          height: SELECTED_ARTWORK_TOOLBAR_HEIGHT,
-          borderRadius: radii.pill,
+          minHeight: toolbarHeight,
+          borderRadius: radii.xl,
           borderWidth: 1,
           borderColor: colors.borderStrong,
           backgroundColor: colors.backgroundCard,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          paddingHorizontal: spacing.xs,
+          padding: spacing.xs,
+          gap: spacing.xs,
           shadowColor: "#000000",
           shadowOpacity: 0.2,
           shadowRadius: 12,
@@ -419,41 +480,156 @@ function SelectedArtworkToolbar({
           elevation: 8,
         }}
       >
-        {actions.map((action) => {
-          const actionColor = action.tone === "danger" ? colors.warning : colors.textPrimary;
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+          {actions.map((action) => {
+            const actionColor = action.tone === "danger"
+              ? colors.warning
+              : action.active
+                ? colors.accent
+                : colors.textPrimary;
 
-          return (
-            <Pressable
-              key={action.label}
-              accessibilityRole="button"
-              accessibilityLabel={action.label}
-              onPress={action.onPress}
-              hitSlop={8}
+            return (
+              <Pressable
+                key={action.label}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                accessibilityState={{ selected: action.active }}
+                onPress={action.onPress}
+                hitSlop={8}
+                style={{
+                  width: 54,
+                  height: 42,
+                  borderRadius: radii.lg,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: action.active ? colors.accentSoft : "transparent",
+                }}
+              >
+                <Ionicons name={action.icon} size={20} color={actionColor} />
+                <Text
+                  style={{
+                    ...typography.small,
+                    fontSize: 8,
+                    lineHeight: 10,
+                    color: action.active ? colors.accent : colors.textSecondary,
+                    fontWeight: "700",
+                    marginTop: 1,
+                  }}
+                  numberOfLines={1}
+                >
+                  {action.label === "Replace Artwork"
+                    ? "Replace"
+                    : action.label === "Multi Select"
+                      ? selectedCount > 1 ? `${selectedCount} sel` : "Select"
+                      : action.label.split(" ")[0]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {canAlign ? (
+          <View
+            style={{
+              borderTopWidth: 1,
+              borderTopColor: colors.borderSubtle,
+              paddingTop: spacing.xs,
+              gap: spacing.xs,
+            }}
+          >
+            <Text
               style={{
-                width: 46,
-                height: 38,
-                borderRadius: radii.pill,
-                alignItems: "center",
-                justifyContent: "center",
+                ...typography.small,
+                fontSize: 10,
+                lineHeight: 12,
+                color: colors.textSecondary,
+                fontWeight: "800",
+                textAlign: "center",
               }}
             >
-              <Ionicons name={action.icon} size={20} color={actionColor} />
-              <Text
-                style={{
-                  ...typography.small,
-                  fontSize: 8,
-                  lineHeight: 10,
-                  color: colors.textSecondary,
-                  fontWeight: "700",
-                  marginTop: 1,
-                }}
-                numberOfLines={1}
-              >
-                {action.label === "Replace Artwork" ? "Replace" : action.label.split(" ")[0]}
+              Align
+            </Text>
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 4 }}>
+              {alignActions.map((item) => (
+                <Pressable
+                  key={item.action}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
+                  onPress={() => onAlign(item.action)}
+                  style={{
+                    width: 40,
+                    height: 32,
+                    borderRadius: radii.md,
+                    borderWidth: 1,
+                    borderColor: colors.borderSubtle,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: colors.backgroundInput,
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...typography.small,
+                      color: colors.textPrimary,
+                      fontWeight: "900",
+                    }}
+                  >
+                    {item.shortLabel}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {canDistribute ? (
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: spacing.xs }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Distribute Horizontally"
+              onPress={() => onDistribute("horizontal")}
+              style={{
+                flex: 1,
+                height: 34,
+                borderRadius: radii.md,
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.backgroundInput,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
+              }}
+            >
+              <Ionicons name="swap-horizontal-outline" size={16} color={colors.textPrimary} />
+              <Text style={{ ...typography.small, fontSize: 10, color: colors.textPrimary, fontWeight: "800" }}>
+                Distribute H
               </Text>
             </Pressable>
-          );
-        })}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Distribute Vertically"
+              onPress={() => onDistribute("vertical")}
+              style={{
+                flex: 1,
+                height: 34,
+                borderRadius: radii.md,
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                backgroundColor: colors.backgroundInput,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
+              }}
+            >
+              <Ionicons name="swap-vertical-outline" size={16} color={colors.textPrimary} />
+              <Text style={{ ...typography.small, fontSize: 10, color: colors.textPrimary, fontWeight: "800" }}>
+                Distribute V
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -1659,6 +1835,8 @@ function PlacedWallArtwork({
   const { colors } = useAppTheme();
   const preview = placedArtwork.preview;
   const dragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [committedCenterOverride, setCommittedCenterOverride] =
+    useState<RoomViewPoint | null>(null);
   const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
@@ -1677,12 +1855,12 @@ function PlacedWallArtwork({
       !isDraggingRef.current &&
       roomPointsAreClose(pendingCenter, placedArtwork.placement.center)
     ) {
-      dragOffset.setValue({ x: 0, y: 0 });
       pendingCenterRef.current = null;
+      setCommittedCenterOverride(null);
     }
-  }, [dragOffset, placedArtwork.placement.center]);
+  }, [placedArtwork.placement.center]);
 
-  const getNextCenter = useCallback(
+  const getRawDragCenter = useCallback(
     (gestureState: PanResponderGestureState) => {
       if (stageSize.width <= 0 || stageSize.height <= 0) {
         return placedArtwork.placement.center;
@@ -1702,9 +1880,7 @@ function PlacedWallArtwork({
       });
     },
     [
-      placedArtwork.displaySize.height,
-      placedArtwork.displaySize.width,
-      placedArtwork.placement.center,
+      placedArtwork,
       placementBounds,
       snapGridSizePixels,
       stageSize.height,
@@ -1714,14 +1890,22 @@ function PlacedWallArtwork({
 
   const finishDrag = useCallback(
     (gestureState: PanResponderGestureState) => {
-      const nextCenter = getNextCenter(gestureState);
+      const nextCenter = getRawDragCenter(gestureState);
 
       pendingCenterRef.current = nextCenter;
       isDraggingRef.current = false;
+      setCommittedCenterOverride(nextCenter);
+      dragOffset.setValue({ x: 0, y: 0 });
       onMoveEnd(placedArtwork.placement.id, nextCenter);
       onDragEnd();
     },
-    [getNextCenter, onDragEnd, onMoveEnd, placedArtwork.placement.id]
+    [
+      dragOffset,
+      getRawDragCenter,
+      onDragEnd,
+      onMoveEnd,
+      placedArtwork.placement.id,
+    ]
   );
 
   const panResponder = useMemo(
@@ -1738,6 +1922,7 @@ function PlacedWallArtwork({
           isDraggingRef.current = true;
           dragOffset.stopAnimation();
           dragOffset.setValue({ x: 0, y: 0 });
+          setCommittedCenterOverride(null);
           dragStartCenterRef.current = placedArtwork.placement.center;
           onSelect(placedArtwork.placement.id);
           onDragStart();
@@ -1746,7 +1931,7 @@ function PlacedWallArtwork({
           _event: GestureResponderEvent,
           gestureState: PanResponderGestureState
         ) => {
-          const nextCenter = getNextCenter(gestureState);
+          const nextCenter = getRawDragCenter(gestureState);
 
           dragOffset.setValue({
             x: (nextCenter.x - dragStartCenterRef.current.x) * stageSize.width,
@@ -1769,7 +1954,7 @@ function PlacedWallArtwork({
     [
       dragOffset,
       finishDrag,
-      getNextCenter,
+      getRawDragCenter,
       onDragStart,
       onSelect,
       placedArtwork.placement.center,
@@ -1779,13 +1964,14 @@ function PlacedWallArtwork({
     ]
   );
 
+  const renderCenter = committedCenterOverride ?? placedArtwork.placement.center;
   const left =
     stageOffset.x +
-    placedArtwork.placement.center.x * stageSize.width -
+    renderCenter.x * stageSize.width -
     placedArtwork.displaySize.width / 2;
   const top =
     stageOffset.y +
-    placedArtwork.placement.center.y * stageSize.height -
+    renderCenter.y * stageSize.height -
     placedArtwork.displaySize.height / 2;
   const cornerMarkers = [
     { left: -2, top: -2, borderLeftWidth: 2, borderTopWidth: 2 },
@@ -2700,6 +2886,8 @@ export default function RoomViewScreen() {
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
   const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
+  const [selectedPlacementIds, setSelectedPlacementIds] = useState<string[]>([]);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
   const [artworkSortMenuVisible, setArtworkSortMenuVisible] = useState(false);
@@ -2909,11 +3097,25 @@ export default function RoomViewScreen() {
     sceneImageWidth,
     unit,
   ]);
+  const selectedPlacementIdSet = useMemo(
+    () => new Set(selectedPlacementIds),
+    [selectedPlacementIds]
+  );
+  const selectedPlacedArtworks = useMemo(
+    () => placedArtworks.filter((item) => selectedPlacementIdSet.has(item.placement.id)),
+    [placedArtworks, selectedPlacementIdSet]
+  );
   const selectedPlacedArtwork =
     placedArtworks.find((item) => item.placement.id === roomView.activePlacementId) ?? null;
+  const activeSelectionCount = Math.max(
+    selectedPlacedArtworks.length,
+    selectedPlacedArtwork ? 1 : 0
+  );
+  const selectedArtworkToolbarHeight = getSelectedArtworkToolbarHeight(activeSelectionCount);
   const selectedArtworkToolbarPosition = getSelectedArtworkToolbarPosition({
     selectedArtwork: selectedPlacedArtwork,
     imageRect: displayedImageRect,
+    height: selectedArtworkToolbarHeight,
   });
   const selectedSizeLabel = selectedFramedArtwork
     ? getSavedArtworkSizeLabel(selectedFramedArtwork, unit, imperialPrecision)
@@ -2969,6 +3171,37 @@ export default function RoomViewScreen() {
       setSelectedArtworkProjectFolderId(sortedProjectFolders[0]?.id ?? null);
     }
   }, [selectedArtworkProjectFolderId, sortedProjectFolders]);
+
+  useEffect(() => {
+    const currentSourcePlacementIds = new Set(
+      activeSourcePlacements.map((placement) => placement.id)
+    );
+
+    setSelectedPlacementIds((currentIds) => {
+      const filteredIds = currentIds.filter((id) => currentSourcePlacementIds.has(id));
+
+      if (
+        roomView.activePlacementId &&
+        currentSourcePlacementIds.has(roomView.activePlacementId) &&
+        !filteredIds.includes(roomView.activePlacementId)
+      ) {
+        return [...filteredIds, roomView.activePlacementId];
+      }
+
+      if (!roomView.activePlacementId && filteredIds.length > 0) {
+        return [];
+      }
+
+      if (
+        filteredIds.length === currentIds.length &&
+        filteredIds.every((id, index) => id === currentIds[index])
+      ) {
+        return currentIds;
+      }
+
+      return filteredIds;
+    });
+  }, [activeSourcePlacements, roomView.activePlacementId]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -3129,6 +3362,8 @@ export default function RoomViewScreen() {
             : roomView.presetSceneId,
         activePlacementId: null,
       });
+      setSelectedPlacementIds([]);
+      setIsMultiSelectMode(false);
     },
     [roomView.presetSceneId, setRoomView]
   );
@@ -3140,6 +3375,8 @@ export default function RoomViewScreen() {
         presetSceneId: sceneId,
         activePlacementId: null,
       });
+      setSelectedPlacementIds([]);
+      setIsMultiSelectMode(false);
     },
     [setRoomView]
   );
@@ -3163,6 +3400,8 @@ export default function RoomViewScreen() {
         placements: roomView.placements.filter((placement) => placement.sourceMode !== "myWall"),
         activePlacementId: null,
       });
+      setSelectedPlacementIds([]);
+      setIsMultiSelectMode(false);
     },
     [roomView.placements, setRoomView, unit]
   );
@@ -3265,6 +3504,8 @@ export default function RoomViewScreen() {
         placements: [...roomView.placements, placement],
         activePlacementId: placement.id,
       });
+      setSelectedPlacementIds([placement.id]);
+      setIsMultiSelectMode(false);
       setArtworkSortMenuVisible(false);
       setFramedArtworkSheetVisible(false);
     },
@@ -3280,11 +3521,30 @@ export default function RoomViewScreen() {
 
   const handleSelectPlacement = useCallback(
     (placementId: string) => {
-      setRoomView({
-        activePlacementId: placementId,
-      });
+      if (isMultiSelectMode) {
+        setSelectedPlacementIds((currentIds) =>
+          currentIds.includes(placementId) ? currentIds : [...currentIds, placementId]
+        );
+
+        if (roomView.activePlacementId !== placementId) {
+          setRoomView({
+            activePlacementId: placementId,
+          });
+        }
+        return;
+      }
+
+      setSelectedPlacementIds((currentIds) =>
+        currentIds.length === 1 && currentIds[0] === placementId ? currentIds : [placementId]
+      );
+
+      if (roomView.activePlacementId !== placementId) {
+        setRoomView({
+          activePlacementId: placementId,
+        });
+      }
     },
-    [setRoomView]
+    [isMultiSelectMode, roomView.activePlacementId, setRoomView]
   );
 
   const handleClearPlacementSelection = useCallback(() => {
@@ -3295,6 +3555,8 @@ export default function RoomViewScreen() {
     setRoomView({
       activePlacementId: null,
     });
+    setSelectedPlacementIds([]);
+    setIsMultiSelectMode(false);
   }, [roomView.activePlacementId, setRoomView]);
 
   const handleMovePlacement = useCallback(
@@ -3415,6 +3677,9 @@ export default function RoomViewScreen() {
       ),
       activePlacementId: null,
     });
+    setSelectedPlacementIds((currentIds) =>
+      currentIds.filter((id) => id !== activePlacement.id)
+    );
   }, [activePlacement, roomView.placements, setRoomView]);
 
   const handleRemoveSelectedPlacement = useCallback(() => {
@@ -3477,6 +3742,8 @@ export default function RoomViewScreen() {
       placements: [...roomView.placements, duplicatePlacement],
       activePlacementId: duplicatePlacement.id,
     });
+    setSelectedPlacementIds([duplicatePlacement.id]);
+    setIsMultiSelectMode(false);
     void Haptics.selectionAsync();
   }, [activePlacement, activeSourcePlacements, placementBounds, roomView.placements, setRoomView]);
 
@@ -3553,6 +3820,172 @@ export default function RoomViewScreen() {
     setActiveSheet("settings");
     setActiveRealismTab("frame");
   }, [activePlacement]);
+
+  const handleToggleMultiSelectMode = useCallback(() => {
+    setIsMultiSelectMode((currentMode) => {
+      const nextMode = !currentMode;
+
+      if (nextMode && activePlacement) {
+        setSelectedPlacementIds((currentIds) =>
+          currentIds.includes(activePlacement.id) ? currentIds : [activePlacement.id]
+        );
+      }
+
+      return nextMode;
+    });
+  }, [activePlacement]);
+
+  const handleAlignSelectedPlacements = useCallback(
+    (action: RoomAlignmentAction) => {
+      if (selectedPlacedArtworks.length < 2 || displayedImageRect.width <= 0 || displayedImageRect.height <= 0) {
+        return;
+      }
+
+      const selectedBounds = selectedPlacedArtworks.map((item) =>
+        getArtworkNormalizedBounds(item, displayedImageRect.width, displayedImageRect.height)
+      );
+      const selectionLeft = Math.min(...selectedBounds.map((bounds) => bounds.left));
+      const selectionRight = Math.max(...selectedBounds.map((bounds) => bounds.right));
+      const selectionTop = Math.min(...selectedBounds.map((bounds) => bounds.top));
+      const selectionBottom = Math.max(...selectedBounds.map((bounds) => bounds.bottom));
+      const selectionCenterX = (selectionLeft + selectionRight) / 2;
+      const selectionCenterY = (selectionTop + selectionBottom) / 2;
+      const nextCentersById = new Map<string, RoomViewPoint>();
+
+      selectedBounds.forEach((bounds) => {
+        const nextPoint = { ...bounds.item.placement.center };
+
+        if (action === "left") {
+          nextPoint.x = selectionLeft + bounds.width / 2;
+        } else if (action === "center") {
+          nextPoint.x = selectionCenterX;
+        } else if (action === "right") {
+          nextPoint.x = selectionRight - bounds.width / 2;
+        } else if (action === "top") {
+          nextPoint.y = selectionTop + bounds.height / 2;
+        } else if (action === "middle") {
+          nextPoint.y = selectionCenterY;
+        } else if (action === "bottom") {
+          nextPoint.y = selectionBottom - bounds.height / 2;
+        }
+
+        nextCentersById.set(
+          bounds.id,
+          clampArtworkCenter({
+            point: nextPoint,
+            stageWidth: displayedImageRect.width,
+            stageHeight: displayedImageRect.height,
+            artworkWidth: bounds.item.displaySize.width,
+            artworkHeight: bounds.item.displaySize.height,
+            placementBounds,
+          })
+        );
+      });
+
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          nextCentersById.has(placement.id)
+            ? { ...placement, center: nextCentersById.get(placement.id)! }
+            : placement
+        ),
+      });
+      void Haptics.selectionAsync();
+    },
+    [
+      displayedImageRect.height,
+      displayedImageRect.width,
+      placementBounds,
+      roomView.placements,
+      selectedPlacedArtworks,
+      setRoomView,
+    ]
+  );
+
+  const handleDistributeSelectedPlacements = useCallback(
+    (action: RoomDistributionAction) => {
+      if (selectedPlacedArtworks.length < 3 || displayedImageRect.width <= 0 || displayedImageRect.height <= 0) {
+        return;
+      }
+
+      const selectedBounds = selectedPlacedArtworks.map((item) =>
+        getArtworkNormalizedBounds(item, displayedImageRect.width, displayedImageRect.height)
+      );
+      const nextCentersById = new Map<string, RoomViewPoint>();
+
+      if (action === "horizontal") {
+        const sortedBounds = [...selectedBounds].sort((first, second) => first.left - second.left);
+        const firstLeft = sortedBounds[0].left;
+        const lastRight = sortedBounds[sortedBounds.length - 1].right;
+        const totalWidth = sortedBounds.reduce((sum, bounds) => sum + bounds.width, 0);
+        const gap = (lastRight - firstLeft - totalWidth) / (sortedBounds.length - 1);
+        let cursor = firstLeft;
+
+        sortedBounds.forEach((bounds) => {
+          const nextPoint = {
+            ...bounds.item.placement.center,
+            x: cursor + bounds.width / 2,
+          };
+
+          nextCentersById.set(
+            bounds.id,
+            clampArtworkCenter({
+              point: nextPoint,
+              stageWidth: displayedImageRect.width,
+              stageHeight: displayedImageRect.height,
+              artworkWidth: bounds.item.displaySize.width,
+              artworkHeight: bounds.item.displaySize.height,
+              placementBounds,
+            })
+          );
+          cursor += bounds.width + gap;
+        });
+      } else {
+        const sortedBounds = [...selectedBounds].sort((first, second) => first.top - second.top);
+        const firstTop = sortedBounds[0].top;
+        const lastBottom = sortedBounds[sortedBounds.length - 1].bottom;
+        const totalHeight = sortedBounds.reduce((sum, bounds) => sum + bounds.height, 0);
+        const gap = (lastBottom - firstTop - totalHeight) / (sortedBounds.length - 1);
+        let cursor = firstTop;
+
+        sortedBounds.forEach((bounds) => {
+          const nextPoint = {
+            ...bounds.item.placement.center,
+            y: cursor + bounds.height / 2,
+          };
+
+          nextCentersById.set(
+            bounds.id,
+            clampArtworkCenter({
+              point: nextPoint,
+              stageWidth: displayedImageRect.width,
+              stageHeight: displayedImageRect.height,
+              artworkWidth: bounds.item.displaySize.width,
+              artworkHeight: bounds.item.displaySize.height,
+              placementBounds,
+            })
+          );
+          cursor += bounds.height + gap;
+        });
+      }
+
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          nextCentersById.has(placement.id)
+            ? { ...placement, center: nextCentersById.get(placement.id)! }
+            : placement
+        ),
+      });
+      void Haptics.selectionAsync();
+    },
+    [
+      displayedImageRect.height,
+      displayedImageRect.width,
+      placementBounds,
+      roomView.placements,
+      selectedPlacedArtworks,
+      setRoomView,
+    ]
+  );
 
   useEffect(() => {
     if (!activePlacement || !isTabletWorkspace || framedArtworkSheetVisible || wallPhotoSourceSheetVisible) {
@@ -3895,7 +4328,7 @@ export default function RoomViewScreen() {
             <PlacedWallArtwork
               key={placedArtwork.placement.id}
               placedArtwork={placedArtwork}
-              selected={placedArtwork.placement.id === roomView.activePlacementId}
+              selected={selectedPlacementIdSet.has(placedArtwork.placement.id)}
               stageSize={{
                 width: displayedImageRect.width,
                 height: displayedImageRect.height,
@@ -3938,10 +4371,15 @@ export default function RoomViewScreen() {
           {selectedArtworkToolbarPosition ? (
             <SelectedArtworkToolbar
               position={selectedArtworkToolbarPosition}
+              selectedCount={activeSelectionCount}
+              isMultiSelectMode={isMultiSelectMode}
               onDuplicate={handleDuplicateSelectedPlacement}
               onReplace={handleReplaceSelectedArtwork}
               onEdit={handleEditSelectedArtwork}
               onDelete={deleteSelectedPlacement}
+              onToggleMultiSelect={handleToggleMultiSelectMode}
+              onAlign={handleAlignSelectedPlacements}
+              onDistribute={handleDistributeSelectedPlacements}
             />
           ) : null}
         </>
