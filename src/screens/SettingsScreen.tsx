@@ -9,6 +9,11 @@ import AppCard from "../components/ui/AppCard";
 import AppSheetModal from "../components/ui/AppSheetModal";
 import MeasurementWheelField from "../components/ui/MeasurementWheelField";
 import { useAppSettingsStore } from "../state/appSettingsStore";
+import {
+  canUseExperimentalFeature,
+  useExperimentalFeaturesStore,
+  type ExperimentalFeatureKey,
+} from "../state/experimentalFeaturesStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import type { FractionDenominator } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
@@ -244,6 +249,9 @@ export default function SettingsScreen() {
   const previewSnapIncrementInches = useAppSettingsStore((state) => state.previewSnapIncrementInches);
   const guidanceTestingEnabled = useAppSettingsStore((state) => state.guidanceTestingEnabled);
   const alwaysShowGuidanceOnLaunch = useAppSettingsStore((state) => state.alwaysShowGuidanceOnLaunch);
+  const featureToggles = useExperimentalFeaturesStore((state) => state.featureToggles);
+  const entitlements = useExperimentalFeaturesStore((state) => state.entitlements);
+  const usage = useExperimentalFeaturesStore((state) => state.usage);
   const setUnit = useAppSettingsStore((state) => state.setUnit);
   const setImperialPrecision = useAppSettingsStore((state) => state.setImperialPrecision);
   const setPreviewSnapIncrementInches = useAppSettingsStore((state) => state.setPreviewSnapIncrementInches);
@@ -251,6 +259,11 @@ export default function SettingsScreen() {
   const setAlwaysShowGuidanceOnLaunch = useAppSettingsStore(
     (state) => state.setAlwaysShowGuidanceOnLaunch
   );
+  const setExperimentalFeatureEnabled = useExperimentalFeaturesStore(
+    (state) => state.setFeatureEnabled
+  );
+  const experimentalFeatureAvailable = (feature: ExperimentalFeatureKey) =>
+    canUseExperimentalFeature(feature, entitlements);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -360,6 +373,57 @@ export default function SettingsScreen() {
             The folder button in the header stays available throughout the flow so saved work can live outside the setup steps, similar to Darkroom Assistant&apos;s persistent shell actions.
           </Text>
         </AppCard>
+
+        <View style={{ marginTop: 24 }}>
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: "600",
+              color: colors.textSecondary,
+              marginBottom: 10,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+            }}
+          >
+            Experimental Features
+          </Text>
+
+          <AppCard subtitle="Beta and premium-ready features. These switches are local for now and can be connected to subscriptions later.">
+            <ToggleRow
+              label="AI Wall Enhancement (Beta)"
+              subtitle={
+                experimentalFeatureAvailable("aiWallEnhancement")
+                  ? "Prepare wall photos for cleaner Room View mockups once enhancement tools are connected."
+                  : "Requires AI feature access."
+              }
+              value={featureToggles.aiWallEnhancement}
+              onValueChange={(enabled) => setExperimentalFeatureEnabled("aiWallEnhancement", enabled)}
+              disabled={!experimentalFeatureAvailable("aiWallEnhancement")}
+            />
+            <ToggleRow
+              label="Imported AI Rooms"
+              subtitle={
+                experimentalFeatureAvailable("importedAIRooms")
+                  ? "Allow future AI-created room images to be imported as custom Room View scenes."
+                  : "Requires custom room import access."
+              }
+              value={featureToggles.importedAIRooms}
+              onValueChange={(enabled) => setExperimentalFeatureEnabled("importedAIRooms", enabled)}
+              disabled={!experimentalFeatureAvailable("importedAIRooms")}
+            />
+            <ToggleRow
+              label="AI Room Generation (Coming Soon)"
+              subtitle="Room generation is scaffolded, but disabled until the generation service and entitlement are ready."
+              value={false}
+              onValueChange={() => undefined}
+              disabled
+            />
+            <Text style={{ ...typography.small, color: colors.textSecondary }}>
+              Local AI usage this month: {usage.aiWallEnhancementsUsed} wall enhancements,{" "}
+              {usage.aiRoomsGenerated} generated rooms. Reset period starts {usage.monthlyResetDate}.
+            </Text>
+          </AppCard>
+        </View>
 
         <View style={{ marginTop: 24 }}>
           <Text
