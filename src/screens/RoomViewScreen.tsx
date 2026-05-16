@@ -3120,6 +3120,7 @@ export default function RoomViewScreen() {
   const [wallPhotoSourceSheetVisible, setWallPhotoSourceSheetVisible] = useState(false);
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
   const [saveLayoutSheetVisible, setSaveLayoutSheetVisible] = useState(false);
+  const [startNewPieceAfterLayoutSave, setStartNewPieceAfterLayoutSave] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
   const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
   const [selectedPlacementIds, setSelectedPlacementIds] = useState<string[]>([]);
@@ -3461,6 +3462,32 @@ export default function RoomViewScreen() {
     },
     [activeRoomLayoutSourceLabel, currentSavedRoomLayout, hasActiveScene, sortedProjectFolders]
   );
+  const closeSaveLayoutSheet = useCallback(() => {
+    setSaveLayoutSheetVisible(false);
+    setStartNewPieceAfterLayoutSave(false);
+  }, []);
+  const currentRoomLayoutIsSaved = useMemo(
+    () =>
+      Boolean(
+        currentSavedRoomLayout &&
+          roomLayoutSnapshotsMatch(
+            currentSavedRoomLayout.roomView,
+            buildCurrentRoomLayoutSnapshot(currentSavedRoomLayout.id)
+          )
+      ),
+    [buildCurrentRoomLayoutSnapshot, currentSavedRoomLayout]
+  );
+  const hasRoomLayoutWorkForNewPiece =
+    hasActiveScene &&
+    (activeSourcePlacements.length > 0 ||
+      roomView.sourceMode === "myWall" ||
+      Boolean(currentSavedRoomLayout));
+  const shouldPromptBeforeStartingNewPiece =
+    hasRoomLayoutWorkForNewPiece && !currentRoomLayoutIsSaved;
+  const startNewPiece = useCallback(() => {
+    resetDraft();
+    navigation.navigate("Setup");
+  }, [navigation, resetDraft]);
 
   const handleSaveLayoutPress = useCallback(() => {
     if (!hasActiveScene) {
@@ -3468,13 +3495,7 @@ export default function RoomViewScreen() {
       return;
     }
 
-    if (
-      currentSavedRoomLayout &&
-      roomLayoutSnapshotsMatch(
-        currentSavedRoomLayout.roomView,
-        buildCurrentRoomLayoutSnapshot(currentSavedRoomLayout.id)
-      )
-    ) {
+    if (currentSavedRoomLayout && currentRoomLayoutIsSaved) {
       Alert.alert("This layout is already saved.", undefined, [
         { text: "Cancel", style: "cancel" },
         {
@@ -3490,7 +3511,7 @@ export default function RoomViewScreen() {
     }
 
     openSaveLayoutSheet();
-  }, [buildCurrentRoomLayoutSnapshot, currentSavedRoomLayout, hasActiveScene, openSaveLayoutSheet]);
+  }, [currentRoomLayoutIsSaved, currentSavedRoomLayout, hasActiveScene, openSaveLayoutSheet]);
 
   const handleCreateLayoutProjectFolder = useCallback(() => {
     const folderName = newLayoutProjectFolderName.trim();
@@ -3534,6 +3555,13 @@ export default function RoomViewScreen() {
       savedRoomLayoutId: savedLayout.id,
     });
     setSaveLayoutSheetVisible(false);
+    setStartNewPieceAfterLayoutSave(false);
+
+    if (startNewPieceAfterLayoutSave) {
+      startNewPiece();
+      return;
+    }
+
     Alert.alert("Layout Saved", `"${savedLayout.name}" is saved in your project folder.`);
   }, [
     activePresetScene.id,
@@ -3545,8 +3573,37 @@ export default function RoomViewScreen() {
     saveRoomLayout,
     selectedLayoutProjectFolderId,
     setRoomView,
+    startNewPiece,
+    startNewPieceAfterLayoutSave,
     unit,
   ]);
+
+  const handleStartNewPiecePress = useCallback(() => {
+    if (!shouldPromptBeforeStartingNewPiece) {
+      startNewPiece();
+      return;
+    }
+
+    Alert.alert(
+      "Save this layout?",
+      "Save the current gallery or wall layout before starting a new piece.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Start Without Saving",
+          style: "destructive",
+          onPress: startNewPiece,
+        },
+        {
+          text: "Save Layout",
+          onPress: () => {
+            setStartNewPieceAfterLayoutSave(true);
+            openSaveLayoutSheet();
+          },
+        },
+      ]
+    );
+  }, [openSaveLayoutSheet, shouldPromptBeforeStartingNewPiece, startNewPiece]);
 
   const handleSaveSelectedArtwork = useCallback(() => {
     if (!activePlacement || !selectedFramedArtwork) {
@@ -5701,11 +5758,8 @@ export default function RoomViewScreen() {
                 ) : null}
 
                 <AppButton
-                  label="Start New Draft"
-                  onPress={() => {
-                    resetDraft();
-                    navigation.navigate("Setup");
-                  }}
+                  label="Start New Piece"
+                  onPress={handleStartNewPiecePress}
                   style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
                 />
             </View>
@@ -5751,7 +5805,7 @@ export default function RoomViewScreen() {
       <AppSheetModal
         visible={saveLayoutSheetVisible}
         title="Save Layout"
-        onClose={() => setSaveLayoutSheetVisible(false)}
+        onClose={closeSaveLayoutSheet}
       >
         <AppTextField
           label="Layout name"
