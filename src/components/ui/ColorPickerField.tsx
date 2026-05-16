@@ -213,6 +213,9 @@ interface ColorPickerFieldProps {
   variant?: "field" | "swatch";
   accessibilityLabel?: string;
   style?: ViewStyle;
+  swatchSize?: number;
+  swatchInnerSize?: number;
+  swatchHitSlop?: number;
 }
 
 export default function ColorPickerField({
@@ -226,6 +229,9 @@ export default function ColorPickerField({
   variant = "field",
   accessibilityLabel,
   style,
+  swatchSize = 36,
+  swatchInnerSize = 18,
+  swatchHitSlop = 8,
 }: ColorPickerFieldProps) {
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const [visible, setVisible] = useState(false);
@@ -474,11 +480,11 @@ export default function ColorPickerField({
           onPress={() => setVisible(true)}
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel ?? label}
-          hitSlop={8}
+          hitSlop={swatchHitSlop}
           style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
+            width: swatchSize,
+            height: swatchSize,
+            borderRadius: swatchSize / 2,
             borderWidth: 1,
             borderColor: colors.borderStrong,
             backgroundColor: colors.backgroundCard,
@@ -489,8 +495,8 @@ export default function ColorPickerField({
         >
           <View
             style={{
-              width: 18,
-              height: 18,
+              width: swatchInnerSize,
+              height: swatchInnerSize,
               borderRadius: 999,
               backgroundColor: normalizedValue,
               borderWidth: 1,

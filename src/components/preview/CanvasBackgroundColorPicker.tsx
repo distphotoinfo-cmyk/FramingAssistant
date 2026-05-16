@@ -19,7 +19,13 @@ const CANVAS_BACKGROUND_DEFAULT_COLORS = [
   "#E7DED2",
 ];
 
-export default function CanvasBackgroundColorPicker() {
+type CanvasBackgroundColorPickerProps = {
+  compact?: boolean;
+};
+
+export default function CanvasBackgroundColorPicker({
+  compact = false,
+}: CanvasBackgroundColorPickerProps) {
   const { spacing } = useAppTheme();
   const canvasBackgroundColorHex = useAppSettingsStore(
     (state) => state.canvasBackgroundColorHex
@@ -38,8 +44,8 @@ export default function CanvasBackgroundColorPicker() {
     <View
       style={{
         position: "absolute",
-        top: spacing.lg,
-        right: spacing.lg,
+        top: compact ? spacing.sm : spacing.lg,
+        right: compact ? spacing.sm : spacing.lg,
         zIndex: 8,
       }}
     >
@@ -53,6 +59,9 @@ export default function CanvasBackgroundColorPicker() {
         onChange={setCanvasBackgroundColorHex}
         onSavePreset={saveCanvasBackgroundColorPreset}
         accessibilityLabel="Change canvas background color"
+        swatchSize={compact ? 24 : undefined}
+        swatchInnerSize={compact ? 10 : undefined}
+        swatchHitSlop={compact ? 10 : undefined}
       />
     </View>
   );

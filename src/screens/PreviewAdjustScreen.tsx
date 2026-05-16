@@ -376,6 +376,7 @@ export default function PreviewAdjustScreen() {
   const lastLiveOffsetsUpdateRef = useRef(0);
   const preview = draft.preview ?? createInitialPreviewDraft();
   const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
+  const isPhoneWorkspace = tabletWorkspaceMode === "phone";
   const isTabletPortrait = tabletWorkspaceMode === "tabletPortrait";
   const isTabletLandscape = tabletWorkspaceMode === "tabletLandscape";
   const isShortViewport = windowHeight < 620;
@@ -834,12 +835,14 @@ export default function PreviewAdjustScreen() {
             canvasHeight={previewCanvasHeight}
             layoutVariant="workspace"
           />
-          <CanvasBackgroundColorPicker />
+          <CanvasBackgroundColorPicker compact={isPhoneWorkspace} />
           <ArtworkCanvasActionOverlay
             guidanceId="preview-adjust-upload-artwork"
             label={artworkCanvasActionLabel}
-            compact={isTabletPortrait}
-            cornerInset={isTabletPortrait ? spacing.sm : undefined}
+            compact={isPhoneWorkspace || isTabletPortrait}
+            mini={isPhoneWorkspace}
+            placement="overlay"
+            cornerInset={isPhoneWorkspace || isTabletPortrait ? spacing.sm : undefined}
             onPress={openArtworkSourceChooser}
           />
         </View>

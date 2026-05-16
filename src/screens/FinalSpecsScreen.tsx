@@ -198,6 +198,7 @@ function FinalCutDiagram({
   unit,
   imperialPrecision,
   canvasHeight,
+  compactCanvasControls = false,
 }: {
   draft: FramingProjectDraft;
   derived: DerivedFramingGeometry;
@@ -205,6 +206,7 @@ function FinalCutDiagram({
   unit: MeasurementUnit;
   imperialPrecision: FractionDenominator;
   canvasHeight: number;
+  compactCanvasControls?: boolean;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
   const canvasBackgroundColorHex = useAppSettingsStore((state) => state.canvasBackgroundColorHex);
@@ -240,7 +242,7 @@ function FinalCutDiagram({
           position: "relative",
         }}
       >
-        <CanvasBackgroundColorPicker />
+        <CanvasBackgroundColorPicker compact={compactCanvasControls} />
         <Text style={{ ...typography.eyebrow, color: colors.textSecondary, marginBottom: spacing.xs }}>
           Final cut diagram
         </Text>
@@ -368,7 +370,7 @@ function FinalCutDiagram({
         position: "relative",
       }}
     >
-      <CanvasBackgroundColorPicker />
+      <CanvasBackgroundColorPicker compact={compactCanvasControls} />
       <Text style={{ ...typography.eyebrow, color: colors.textSecondary, marginBottom: spacing.xs }}>
         Final cut diagram
       </Text>
@@ -794,6 +796,7 @@ export default function FinalSpecsScreen() {
                 unit={unit}
                 imperialPrecision={imperialPrecision}
                 canvasHeight={previewCanvasHeight}
+                compactCanvasControls={isPhoneWorkspace}
               />
             </View>
 

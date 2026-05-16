@@ -168,6 +168,7 @@ const ROOM_VIEW_DOCK_ITEMS: {
   { label: "Settings", sheet: "settings", icon: "options-outline" },
   { label: "Export", sheet: "export", icon: "share-outline" },
 ];
+const ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET = 18;
 
 const ROOM_REALISM_TABS: {
   label: string;
@@ -1842,6 +1843,7 @@ function PlacedWallArtwork({
   environment,
   sceneLightingZones,
   artworkBrightness,
+  touchTargetInset = 0,
   onSelect,
   onMoveEnd,
   onGroupMoveEnd,
@@ -1863,6 +1865,7 @@ function PlacedWallArtwork({
   environment: RoomEnvironmentLighting | null;
   sceneLightingZones?: RoomSceneLightingZone[] | null;
   artworkBrightness: number;
+  touchTargetInset?: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
   onGroupMoveEnd: (centersById: Map<string, RoomViewPoint>) => void;
@@ -2125,11 +2128,15 @@ function PlacedWallArtwork({
   const left =
     stageOffset.x +
     renderCenter.x * stageSize.width -
-    placedArtwork.displaySize.width / 2;
+    placedArtwork.displaySize.width / 2 -
+    touchTargetInset;
   const top =
     stageOffset.y +
     renderCenter.y * stageSize.height -
-    placedArtwork.displaySize.height / 2;
+    placedArtwork.displaySize.height / 2 -
+    touchTargetInset;
+  const hitTargetWidth = placedArtwork.displaySize.width + touchTargetInset * 2;
+  const hitTargetHeight = placedArtwork.displaySize.height + touchTargetInset * 2;
   const normalizedArtworkRect = useMemo(
     () => ({
       x:
@@ -2216,14 +2223,15 @@ function PlacedWallArtwork({
   return (
     <Animated.View
       {...panResponder.panHandlers}
+      collapsable={touchTargetInset <= 0}
       accessibilityRole="imagebutton"
       accessibilityLabel={`Placed framed artwork ${placedArtwork.artwork.name}`}
       style={{
         position: "absolute",
         left,
         top,
-        width: placedArtwork.displaySize.width,
-        height: placedArtwork.displaySize.height,
+        width: hitTargetWidth,
+        height: hitTargetHeight,
         overflow: "visible",
         zIndex: 10 + placedArtwork.placement.zIndex,
         transform: [
@@ -2234,106 +2242,61 @@ function PlacedWallArtwork({
         ],
       }}
     >
-      <WallCastShadow
-        width={placedArtwork.displaySize.width}
-        height={placedArtwork.displaySize.height}
-        shadow={wallShadow}
-      />
-
-      <FinishedFramedArtwork
-        artworkSize={placedArtwork.renderGeometry.artworkSize}
-        openingSize={placedArtwork.renderGeometry.openingSize}
-        outerMatSize={placedArtwork.renderGeometry.outerMatSize}
-        frameProfileId={preview.frameProfileId}
-        frameColorHex={placedArtwork.frameColorHex}
-        matThicknessPly={preview.matThicknessPly}
-        matColorHex={preview.matColorHex}
-        matCoreColor={preview.matCoreColor}
-        mountingBoardColorHex={preview.mountingBoardColorHex}
-        offsetX={placedArtwork.renderGeometry.offsetX}
-        offsetY={placedArtwork.renderGeometry.offsetY}
-        artworkSourceMode={preview.artworkSourceMode}
-        artworkImageUri={preview.artworkImageUri}
-        artworkCrop={preview.artworkCrop}
-        physicalScale={placedArtwork.physicalScale}
-        showShadow={false}
-        depthMode="roomMockup"
-        shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
-        materialRealism={effectiveMaterialRealism}
-        environment={effectiveEnvironment ?? undefined}
-        style={{ opacity: 0.992 }}
-      />
-
-      {Math.abs(effectiveArtworkBrightness - 1) > 0.005 ? (
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            width: placedArtwork.displaySize.width,
-            height: placedArtwork.displaySize.height,
-            backgroundColor: brightnessOverlayColor,
-            opacity: brightnessOverlayOpacity,
-            zIndex: 1,
-          }}
-        />
-      ) : null}
-
       <View
-        pointerEvents="none"
         style={{
           position: "absolute",
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 2,
+          left: touchTargetInset,
+          top: touchTargetInset,
+          width: placedArtwork.displaySize.width,
+          height: placedArtwork.displaySize.height,
         }}
       >
-        <View
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            right: 0,
-            height: 1,
-            backgroundColor: "rgba(255,255,255,0.16)",
-          }}
+        <WallCastShadow
+          width={placedArtwork.displaySize.width}
+          height={placedArtwork.displaySize.height}
+          shadow={wallShadow}
         />
-        <View
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 1,
-            backgroundColor: "rgba(255,255,255,0.1)",
-          }}
-        />
-        <View
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 1,
-            backgroundColor: "rgba(0,0,0,0.16)",
-          }}
-        />
-        <View
-          style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            width: 1,
-            backgroundColor: "rgba(0,0,0,0.13)",
-          }}
-        />
-      </View>
 
-      {selected ? (
+        <FinishedFramedArtwork
+          artworkSize={placedArtwork.renderGeometry.artworkSize}
+          openingSize={placedArtwork.renderGeometry.openingSize}
+          outerMatSize={placedArtwork.renderGeometry.outerMatSize}
+          frameProfileId={preview.frameProfileId}
+          frameColorHex={placedArtwork.frameColorHex}
+          matThicknessPly={preview.matThicknessPly}
+          matColorHex={preview.matColorHex}
+          matCoreColor={preview.matCoreColor}
+          mountingBoardColorHex={preview.mountingBoardColorHex}
+          offsetX={placedArtwork.renderGeometry.offsetX}
+          offsetY={placedArtwork.renderGeometry.offsetY}
+          artworkSourceMode={preview.artworkSourceMode}
+          artworkImageUri={preview.artworkImageUri}
+          artworkCrop={preview.artworkCrop}
+          physicalScale={placedArtwork.physicalScale}
+          showShadow={false}
+          depthMode="roomMockup"
+          shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
+          materialRealism={effectiveMaterialRealism}
+          environment={effectiveEnvironment ?? undefined}
+          style={{ opacity: 0.992 }}
+        />
+
+        {Math.abs(effectiveArtworkBrightness - 1) > 0.005 ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: placedArtwork.displaySize.width,
+              height: placedArtwork.displaySize.height,
+              backgroundColor: brightnessOverlayColor,
+              opacity: brightnessOverlayOpacity,
+              zIndex: 1,
+            }}
+          />
+        ) : null}
+
         <View
           pointerEvents="none"
           style={{
@@ -2342,23 +2305,78 @@ function PlacedWallArtwork({
             top: 0,
             right: 0,
             bottom: 0,
-            zIndex: 3,
+            zIndex: 2,
           }}
         >
-          {cornerMarkers.map((cornerStyle, index) => (
-            <View
-              key={index}
-              style={{
-                position: "absolute",
-                width: 14,
-                height: 14,
-                borderColor: colors.accent,
-                ...cornerStyle,
-              }}
-            />
-          ))}
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              right: 0,
+              height: 1,
+              backgroundColor: "rgba(255,255,255,0.16)",
+            }}
+          />
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 1,
+              backgroundColor: "rgba(255,255,255,0.1)",
+            }}
+          />
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 1,
+              backgroundColor: "rgba(0,0,0,0.16)",
+            }}
+          />
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 1,
+              backgroundColor: "rgba(0,0,0,0.13)",
+            }}
+          />
         </View>
-      ) : null}
+
+        {selected ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 3,
+            }}
+          >
+            {cornerMarkers.map((cornerStyle, index) => (
+              <View
+                key={index}
+                style={{
+                  position: "absolute",
+                  width: 14,
+                  height: 14,
+                  borderColor: colors.accent,
+                  ...cornerStyle,
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+      </View>
     </Animated.View>
   );
 }
@@ -3125,7 +3143,12 @@ export default function RoomViewScreen() {
   const handledRoomViewLaunchIdRef = useRef<string | null>(null);
   const pendingWallPhotoArtworkIdRef = useRef<string | null>(null);
   const groupDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-  const backgroundTapStartRef = useRef<{ x: number; y: number } | null>(null);
+  const backgroundTapStartRef = useRef<{
+    pageX: number;
+    pageY: number;
+    stageX: number;
+    stageY: number;
+  } | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
   const [isExporting, setIsExporting] = useState(false);
@@ -4394,6 +4417,55 @@ export default function RoomViewScreen() {
     setIsMultiSelectMode(false);
   }, [isMultiSelectMode, roomView.activePlacementId, selectedPlacementIds.length, setRoomView]);
 
+  const getPhonePlacementHitAtStagePoint = useCallback(
+    (stagePoint: RoomViewPoint) => {
+      if (
+        !isPhoneWorkspace ||
+        displayedImageRect.width <= 0 ||
+        displayedImageRect.height <= 0
+      ) {
+        return null;
+      }
+
+      for (let index = placedArtworks.length - 1; index >= 0; index -= 1) {
+        const placedArtwork = placedArtworks[index];
+        const left =
+          displayedImageRect.left +
+          placedArtwork.placement.center.x * displayedImageRect.width -
+          placedArtwork.displaySize.width / 2 -
+          ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET;
+        const top =
+          displayedImageRect.top +
+          placedArtwork.placement.center.y * displayedImageRect.height -
+          placedArtwork.displaySize.height / 2 -
+          ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET;
+        const right =
+          left + placedArtwork.displaySize.width + ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET * 2;
+        const bottom =
+          top + placedArtwork.displaySize.height + ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET * 2;
+
+        if (
+          stagePoint.x >= left &&
+          stagePoint.x <= right &&
+          stagePoint.y >= top &&
+          stagePoint.y <= bottom
+        ) {
+          return placedArtwork.placement.id;
+        }
+      }
+
+      return null;
+    },
+    [
+      displayedImageRect.height,
+      displayedImageRect.left,
+      displayedImageRect.top,
+      displayedImageRect.width,
+      isPhoneWorkspace,
+      placedArtworks,
+    ]
+  );
+
   const handleBackgroundResponderGrant = useCallback(
     (event: GestureResponderEvent) => {
       if (isArtworkDragging || isCalibrationDragging) {
@@ -4402,8 +4474,10 @@ export default function RoomViewScreen() {
       }
 
       backgroundTapStartRef.current = {
-        x: event.nativeEvent.pageX,
-        y: event.nativeEvent.pageY,
+        pageX: event.nativeEvent.pageX,
+        pageY: event.nativeEvent.pageY,
+        stageX: event.nativeEvent.locationX,
+        stageY: event.nativeEvent.locationY,
       };
     },
     [isArtworkDragging, isCalibrationDragging]
@@ -4419,15 +4493,31 @@ export default function RoomViewScreen() {
         return;
       }
 
-      const deltaX = event.nativeEvent.pageX - start.x;
-      const deltaY = event.nativeEvent.pageY - start.y;
+      const deltaX = event.nativeEvent.pageX - start.pageX;
+      const deltaY = event.nativeEvent.pageY - start.pageY;
       const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
 
       if (distance <= 8) {
+        const phoneFallbackPlacementId = getPhonePlacementHitAtStagePoint({
+          x: start.stageX,
+          y: start.stageY,
+        });
+
+        if (phoneFallbackPlacementId) {
+          handleSelectPlacement(phoneFallbackPlacementId);
+          return;
+        }
+
         handleClearPlacementSelection();
       }
     },
-    [handleClearPlacementSelection, isArtworkDragging, isCalibrationDragging]
+    [
+      getPhonePlacementHitAtStagePoint,
+      handleClearPlacementSelection,
+      handleSelectPlacement,
+      isArtworkDragging,
+      isCalibrationDragging,
+    ]
   );
 
   const handleMovePlacement = useCallback(
@@ -5136,10 +5226,10 @@ export default function RoomViewScreen() {
             }}
             style={{
               position: "absolute",
-              left: displayedImageRect.left,
-              top: displayedImageRect.top,
-              width: displayedImageRect.width,
-              height: displayedImageRect.height,
+              left: isPhoneWorkspace ? 0 : displayedImageRect.left,
+              top: isPhoneWorkspace ? 0 : displayedImageRect.top,
+              width: isPhoneWorkspace ? stageSize.width : displayedImageRect.width,
+              height: isPhoneWorkspace ? stageSize.height : displayedImageRect.height,
               zIndex: 1,
             }}
           />
@@ -5178,6 +5268,7 @@ export default function RoomViewScreen() {
                   : null
               }
               artworkBrightness={activeSourceArtworkBrightness}
+              touchTargetInset={isPhoneWorkspace ? ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET : 0}
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
               onGroupMoveEnd={handleMovePlacementGroup}
@@ -5279,7 +5370,7 @@ export default function RoomViewScreen() {
   );
 
   const wallPhotoPreviewTitle =
-    isTabletLandscape
+    isPhoneWorkspace || isTabletLandscape
       ? undefined
       : roomView.sourceMode === "presetRoom"
         ? activePresetScene.title
@@ -5287,7 +5378,7 @@ export default function RoomViewScreen() {
           ? "Wall photo"
           : undefined;
   const wallPhotoPreviewSubtitle =
-    isTabletLandscape
+    isPhoneWorkspace || isTabletLandscape
       ? undefined
       : roomView.sourceMode === "presetRoom"
         ? activePresetScene.description
@@ -5299,12 +5390,12 @@ export default function RoomViewScreen() {
       style={{
         flex: 1,
         minHeight: 0,
-        backgroundColor: colors.backgroundCard,
-        borderWidth: 2,
+        backgroundColor: isPhoneWorkspace ? "transparent" : colors.backgroundCard,
+        borderWidth: isPhoneWorkspace ? 0 : 2,
         borderColor: colors.borderStrong,
-        borderRadius: radii.lg,
-        padding: spacing.lg,
-        gap: spacing.md,
+        borderRadius: isPhoneWorkspace ? 0 : radii.lg,
+        padding: isPhoneWorkspace ? 0 : spacing.lg,
+        gap: isPhoneWorkspace ? spacing.xs : spacing.md,
       }}
     >
       {wallPhotoPreviewTitle ? (
@@ -5332,6 +5423,7 @@ export default function RoomViewScreen() {
           flex: 1,
           minHeight: 0,
           justifyContent: "center",
+          width: "100%",
         }}
       >
         {wallPhotoStageSection}
@@ -5856,9 +5948,9 @@ export default function RoomViewScreen() {
         style={{
           flex: 1,
           minHeight: 0,
-          paddingHorizontal: spacing.lg,
-          paddingTop: spacing.md,
-          paddingBottom: spacing.md,
+          paddingHorizontal: isPhoneWorkspace ? spacing.xs : spacing.lg,
+          paddingTop: isPhoneWorkspace ? spacing.xs : spacing.md,
+          paddingBottom: isPhoneWorkspace ? spacing.xs : spacing.md,
         }}
       >
         <View
@@ -5870,7 +5962,13 @@ export default function RoomViewScreen() {
             alignSelf: "center",
           }}
         >
-          <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
+          <View
+            style={{
+              flex: 1,
+              minHeight: 0,
+              gap: isPhoneWorkspace ? spacing.xs : spacing.md,
+            }}
+          >
             {wallPhotoCardSection}
             {isTabletLandscape ? wallGeometryWarningSection : null}
             {isShadowSheetOpen ? null : roomViewDockSection}

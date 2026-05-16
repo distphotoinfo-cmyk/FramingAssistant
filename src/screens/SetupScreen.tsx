@@ -307,6 +307,7 @@ export default function SetupScreen() {
   const openingAmount = draft.reveal.openingAmount || getDefaultOpeningAmount(unit);
   const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
   const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WORKSPACE_BREAKPOINT;
+  const isPhoneWorkspace = tabletWorkspaceMode === "phone";
   const isTabletPortrait = tabletWorkspaceMode === "tabletPortrait";
   const isTabletLandscape = tabletWorkspaceMode === "tabletLandscape";
   const isShortViewport = windowHeight < 620;
@@ -581,13 +582,15 @@ export default function SetupScreen() {
           />
         </View>
 
-        <CanvasBackgroundColorPicker />
+        <CanvasBackgroundColorPicker compact={isPhoneWorkspace} />
 
         {showStepOneArtworkOverlay ? (
           <ArtworkCanvasActionOverlay
             label={stepOneArtworkActionLabel}
-            compact={isTabletPortrait}
-            cornerInset={isTabletPortrait ? spacing.sm : undefined}
+            compact={isPhoneWorkspace || isTabletPortrait}
+            mini={isPhoneWorkspace}
+            placement="overlay"
+            cornerInset={isPhoneWorkspace || isTabletPortrait ? spacing.sm : undefined}
             onPress={openArtworkSourceChooser}
           />
         ) : null}
@@ -595,6 +598,7 @@ export default function SetupScreen() {
     ),
     [
       hasImportedArtwork,
+      isPhoneWorkspace,
       isTabletPortrait,
       openArtworkSourceChooser,
       preview.artworkCrop,
