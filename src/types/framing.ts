@@ -181,10 +181,26 @@ export interface RoomMaterialRealismDraft {
   reflectionStrength?: number;
 }
 
+export type AIWallEnhancementMode = "cleanWall" | "relight" | "perspectiveAssist";
+
+export interface RoomWallPhotoAIEnhancement {
+  provider: "backend" | "replicate" | "placeholder";
+  mode: AIWallEnhancementMode;
+  originalImageUri: string;
+  enhancedImageUri: string;
+  enhancedAt: string;
+  displayAdjustments?: {
+    brightness?: number;
+    warmth?: number;
+    contrast?: number;
+  };
+}
+
 export interface RoomWallPhotoDraft {
   imageUri: string;
   imageWidth: number | null;
   imageHeight: number | null;
+  aiEnhancement?: RoomWallPhotoAIEnhancement | null;
 }
 
 export interface RoomScaleCalibrationDraft {

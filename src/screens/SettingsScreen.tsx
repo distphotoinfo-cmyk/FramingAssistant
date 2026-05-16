@@ -393,7 +393,7 @@ export default function SettingsScreen() {
               label="AI Wall Enhancement (Beta)"
               subtitle={
                 experimentalFeatureAvailable("aiWallEnhancement")
-                  ? "Prepare wall photos for cleaner Room View mockups once enhancement tools are connected."
+                  ? "Adds beta wall photo cleanup controls to Room View."
                   : "Requires AI feature access."
               }
               value={featureToggles.aiWallEnhancement}

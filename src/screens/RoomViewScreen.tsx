@@ -49,7 +49,12 @@ import {
   getPresetRoomSceneById,
   type RegisteredRoomPresetScene,
 } from "../data/presetRoomScenes";
+import { enhanceWallPhoto } from "../services/ai/enhanceWallPhoto";
 import { useAppSettingsStore } from "../state/appSettingsStore";
+import {
+  canUseExperimentalFeature,
+  useExperimentalFeaturesStore,
+} from "../state/experimentalFeaturesStore";
 import {
   createInitialRoomViewDraft,
   createRoomArtworkPlacement,
@@ -1884,10 +1889,11 @@ function PlacedWallArtwork({
       !isDraggingRef.current &&
       roomPointsAreClose(pendingCenter, placedArtwork.placement.center)
     ) {
+      dragOffset.setValue({ x: 0, y: 0 });
       pendingCenterRef.current = null;
       setCommittedCenterOverride(null);
     }
-  }, [placedArtwork.placement.center]);
+  }, [dragOffset, placedArtwork.placement.center]);
 
   const getRawDragCenter = useCallback(
     (gestureState: PanResponderGestureState) => {
@@ -2006,9 +2012,11 @@ function PlacedWallArtwork({
         isDraggingRef.current = false;
         onGroupMoveEnd(centersById);
         onDragEnd();
-        requestAnimationFrame(() => {
+
+        if (centersById.size === 0) {
           groupDragOffset.setValue({ x: 0, y: 0 });
-        });
+        }
+
         return;
       }
 
@@ -2017,12 +2025,10 @@ function PlacedWallArtwork({
       pendingCenterRef.current = nextCenter;
       isDraggingRef.current = false;
       setCommittedCenterOverride(nextCenter);
-      dragOffset.setValue({ x: 0, y: 0 });
       onMoveEnd(placedArtwork.placement.id, nextCenter);
       onDragEnd();
     },
     [
-      dragOffset,
       getGroupDragResult,
       getRawDragCenter,
       groupDragOffset,
@@ -2112,6 +2118,10 @@ function PlacedWallArtwork({
   const renderCenter =
     externalCommittedCenterOverride ?? committedCenterOverride ?? placedArtwork.placement.center;
   const activeDragOffset = isGroupDragMember ? groupDragOffset : dragOffset;
+  const dragTransforms =
+    externalCommittedCenterOverride || committedCenterOverride
+      ? []
+      : activeDragOffset.getTranslateTransform();
   const left =
     stageOffset.x +
     renderCenter.x * stageSize.width -
@@ -2217,7 +2227,7 @@ function PlacedWallArtwork({
         overflow: "visible",
         zIndex: 10 + placedArtwork.placement.zIndex,
         transform: [
-          ...activeDragOffset.getTranslateTransform(),
+          ...dragTransforms,
           {
             rotate: `${placedArtwork.placement.rotationDegrees}deg`,
           },
@@ -3096,6 +3106,8 @@ export default function RoomViewScreen() {
   const unit = useAppSettingsStore((state) => state.unit);
   const setAppUnit = useAppSettingsStore((state) => state.setUnit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
+  const experimentalFeatureToggles = useExperimentalFeaturesStore((state) => state.featureToggles);
+  const experimentalEntitlements = useExperimentalFeaturesStore((state) => state.entitlements);
   const draft = useFramingFlowStore((state) => state.draft);
   const setRoomView = useFramingFlowStore((state) => state.setRoomView);
   const replaceDraft = useFramingFlowStore((state) => state.replaceDraft);
@@ -3131,6 +3143,7 @@ export default function RoomViewScreen() {
   const [selectedLayoutProjectFolderId, setSelectedLayoutProjectFolderId] = useState<string | null>(null);
   const [layoutName, setLayoutName] = useState("");
   const [newLayoutProjectFolderName, setNewLayoutProjectFolderName] = useState("");
+  const [isEnhancingWallPhoto, setIsEnhancingWallPhoto] = useState(false);
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
   const [presetRoomOrientation, setPresetRoomOrientation] =
     useState<RoomPresetSceneOrientation>("landscape");
@@ -3141,6 +3154,17 @@ export default function RoomViewScreen() {
   const roomView = draft.roomView;
   const wallPhoto = roomView.wallPhoto;
   const calibration = roomView.calibration;
+  const aiWallEnhancementAvailable = canUseExperimentalFeature(
+    "aiWallEnhancement",
+    experimentalEntitlements
+  );
+  const aiWallEnhancementEnabled =
+    aiWallEnhancementAvailable && experimentalFeatureToggles.aiWallEnhancement;
+  const wallPhotoEnhancement = wallPhoto?.aiEnhancement ?? null;
+  const showAIWallEnhancementControls =
+    roomView.sourceMode === "myWall" && Boolean(wallPhoto) && aiWallEnhancementEnabled;
+  const showWallPhotoRevertControl =
+    roomView.sourceMode === "myWall" && Boolean(wallPhotoEnhancement);
   const activePresetScene = getPresetRoomSceneById(roomView.presetSceneId);
   const activeSourceId =
     getRoomSourceId(roomView.sourceMode, activePresetScene?.id ?? null) ??
@@ -3397,6 +3421,17 @@ export default function RoomViewScreen() {
     unit === "cm"
       ? "Use a straight-on photo with the long edge of standard A4 paper (29.7 cm) or another known object on the wall for accurate scale."
       : "Use a straight-on photo with the long edge of standard U.S. letter paper (11 in) or another known object on the wall for accurate scale.";
+  const wallPhotoEnhancementBrightnessOpacity = wallPhotoEnhancement?.displayAdjustments
+    ?.brightness
+    ? clampNumber(
+        (wallPhotoEnhancement.displayAdjustments.brightness - 1) * 0.9,
+        0,
+        0.08
+      )
+    : 0;
+  const wallPhotoEnhancementWarmthOpacity = wallPhotoEnhancement?.displayAdjustments?.warmth
+    ? clampNumber(wallPhotoEnhancement.displayAdjustments.warmth * 0.45, 0, 0.07)
+    : 0;
   const calibrationHelperText = `Drag the ruler handles across a known measurement on the wall. Use the long edge of ${standardCalibrationPaperLabel} (${standardCalibrationMeasurementLabel}), or enter a custom measurement.`;
   const hasActiveScene =
     roomView.sourceMode === "presetRoom"
@@ -3762,9 +3797,10 @@ export default function RoomViewScreen() {
     );
 
     if (allCommittedCentersApplied) {
+      groupDragOffset.setValue({ x: 0, y: 0 });
       setGroupCommittedCenterOverrides(null);
     }
-  }, [activeSourcePlacements, groupCommittedCenterOverrides]);
+  }, [activeSourcePlacements, groupCommittedCenterOverrides, groupDragOffset]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -4072,6 +4108,7 @@ export default function RoomViewScreen() {
           imageUri: selection.imageUri,
           imageWidth: selection.imageWidth,
           imageHeight: selection.imageHeight,
+          aiEnhancement: null,
         },
         calibration: initialRoomView.calibration,
         isCalibrationRulerVisible: true,
@@ -4095,6 +4132,87 @@ export default function RoomViewScreen() {
   const handleTakeWallPhoto = useCallback(async () => {
     await importWallPhotoFromCamera(selectWallPhoto);
   }, [selectWallPhoto]);
+
+  const handleEnhanceWallPhoto = useCallback(async () => {
+    if (!wallPhoto) {
+      return;
+    }
+
+    if (!aiWallEnhancementAvailable) {
+      Alert.alert(
+        "AI Wall Enhancement unavailable",
+        "This beta feature is not available for the current entitlement state."
+      );
+      return;
+    }
+
+    if (!aiWallEnhancementEnabled) {
+      Alert.alert(
+        "AI Wall Enhancement is off",
+        "Turn on AI Wall Enhancement in Settings before enhancing a wall photo."
+      );
+      return;
+    }
+
+    setIsEnhancingWallPhoto(true);
+
+    try {
+      const result = await enhanceWallPhoto({
+        imageUri: wallPhoto.imageUri,
+        enhancementMode: "cleanWall",
+        settings: {
+          preservePerspective: true,
+          preserveScaleReferences: true,
+          cleanupWallMarks: true,
+          balanceLighting: true,
+        },
+      });
+
+      setRoomView({
+        savedRoomLayoutId: null,
+        wallPhoto: {
+          ...wallPhoto,
+          imageUri: result.imageUri,
+          aiEnhancement: {
+            provider: result.provider,
+            mode: result.metadata.enhancementMode,
+            originalImageUri:
+              wallPhoto.aiEnhancement?.originalImageUri ?? wallPhoto.imageUri,
+            enhancedImageUri: result.imageUri,
+            enhancedAt: result.metadata.enhancedAt,
+            displayAdjustments: result.metadata.displayAdjustments,
+          },
+        },
+      });
+    } catch (error) {
+      Alert.alert(
+        "Unable to enhance wall photo",
+        error instanceof Error ? error.message : "The wall photo could not be enhanced."
+      );
+    } finally {
+      setIsEnhancingWallPhoto(false);
+    }
+  }, [
+    aiWallEnhancementAvailable,
+    aiWallEnhancementEnabled,
+    setRoomView,
+    wallPhoto,
+  ]);
+
+  const handleRevertWallPhotoEnhancement = useCallback(() => {
+    if (!wallPhoto?.aiEnhancement) {
+      return;
+    }
+
+    setRoomView({
+      savedRoomLayoutId: null,
+      wallPhoto: {
+        ...wallPhoto,
+        imageUri: wallPhoto.aiEnhancement.originalImageUri,
+        aiEnhancement: null,
+      },
+    });
+  }, [setRoomView, wallPhoto]);
 
   const openWallPhotoSourceChooser = useCallback(() => {
     setActiveSheet(null);
@@ -4971,6 +5089,42 @@ export default function RoomViewScreen() {
             />
           ) : null}
 
+          {roomView.sourceMode === "myWall" &&
+          wallPhotoEnhancement &&
+          (wallPhotoEnhancementBrightnessOpacity > 0 ||
+            wallPhotoEnhancementWarmthOpacity > 0) ? (
+            <>
+              {wallPhotoEnhancementBrightnessOpacity > 0 ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    left: displayedImageRect.left,
+                    top: displayedImageRect.top,
+                    width: displayedImageRect.width,
+                    height: displayedImageRect.height,
+                    backgroundColor: `rgba(255,255,255,${wallPhotoEnhancementBrightnessOpacity})`,
+                    zIndex: 0,
+                  }}
+                />
+              ) : null}
+              {wallPhotoEnhancementWarmthOpacity > 0 ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    left: displayedImageRect.left,
+                    top: displayedImageRect.top,
+                    width: displayedImageRect.width,
+                    height: displayedImageRect.height,
+                    backgroundColor: `rgba(255,229,191,${wallPhotoEnhancementWarmthOpacity})`,
+                    zIndex: 0,
+                  }}
+                />
+              ) : null}
+            </>
+          ) : null}
+
           <View
             accessibilityRole="button"
             accessibilityLabel="Deselect framed artwork"
@@ -5206,6 +5360,45 @@ export default function RoomViewScreen() {
         onPress={openWallPhotoSourceChooser}
         style={{ width: "64%", alignSelf: "center" }}
       />
+      {showAIWallEnhancementControls || showWallPhotoRevertControl ? (
+        <View style={{ gap: spacing.xs, alignItems: "center" }}>
+          {showAIWallEnhancementControls ? (
+            <AppButton
+              variant="secondary"
+              label={
+                isEnhancingWallPhoto
+                  ? "Enhancing..."
+                  : wallPhotoEnhancement
+                    ? "Enhance Again"
+                    : "Enhance Wall Photo"
+              }
+              onPress={handleEnhanceWallPhoto}
+              disabled={isEnhancingWallPhoto}
+              style={{ width: "64%", alignSelf: "center" }}
+            />
+          ) : null}
+          {showWallPhotoRevertControl ? (
+            <AppButton
+              variant="secondary"
+              label="Revert to Original"
+              onPress={handleRevertWallPhotoEnhancement}
+              disabled={isEnhancingWallPhoto}
+              style={{ width: "64%", alignSelf: "center" }}
+            />
+          ) : null}
+          <Text
+            style={{
+              ...typography.small,
+              color: wallPhotoEnhancement ? colors.success : colors.textSecondary,
+              textAlign: "center",
+            }}
+          >
+            {wallPhotoEnhancement
+              ? "AI Wall Enhancement applied."
+              : "Beta cleanup prepares this wall photo for cleaner mockups."}
+          </Text>
+        </View>
+      ) : null}
       <Text style={{ ...typography.small, color: colors.textSecondary }}>
         {paperPhotoHelperText}
       </Text>

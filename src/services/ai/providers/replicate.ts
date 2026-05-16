@@ -1,11 +1,15 @@
 export interface ReplicateProviderConfig {
-  apiToken?: string;
-  baseUrl?: string;
+  model?: string;
+  version?: string;
+  supportsAsyncProcessing?: boolean;
 }
 
 export interface ReplicatePredictionRequest {
-  model: string;
+  model?: string;
+  version?: string;
   input: Record<string, unknown>;
+  webhookUrl?: string;
+  waitForCompletion?: boolean;
 }
 
 export interface ReplicatePredictionResult {
@@ -24,10 +28,8 @@ export class ReplicateProvider {
   async createPrediction(
     _request: ReplicatePredictionRequest
   ): Promise<ReplicatePredictionResult> {
-    if (!this.config.apiToken) {
-      throw new Error("Replicate provider is not configured.");
-    }
-
-    throw new Error("Replicate integration is not implemented yet.");
+    throw new Error(
+      "Replicate predictions must be created by the backend. The mobile app should call the AI backend endpoint instead of storing a Replicate API token."
+    );
   }
 }
