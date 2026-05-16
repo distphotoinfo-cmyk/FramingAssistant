@@ -75,6 +75,7 @@ export function createInitialPreviewDraft(): PreviewDraft {
 
 export function createInitialRoomViewDraft(unit: MeasurementUnit = "in"): RoomViewDraft {
   return {
+    savedRoomLayoutId: null,
     sourceMode: "myWall",
     wallPhoto: null,
     presetSceneId: DEFAULT_PRESET_ROOM_SCENE_ID,
@@ -122,6 +123,7 @@ function createInitialDraft(): FramingProjectDraft {
     meta: {
       projectName: "",
       notes: "",
+      savedFramedArtworkId: null,
     },
     artwork: {
       artworkSize: {
@@ -310,6 +312,9 @@ function mergeDraftWithDefaults(
         rotationDegrees: placement.rotationDegrees ?? 0,
         zIndex: placement.zIndex ?? index,
         wallShadow: placement.wallShadow,
+        artworkSourceModeOverride: placement.artworkSourceModeOverride,
+        artworkImageUriOverride: placement.artworkImageUriOverride,
+        artworkCropOverride: placement.artworkCropOverride,
       })),
       activePlacementId:
         draft?.roomView?.activePlacementId ??
@@ -319,6 +324,7 @@ function mergeDraftWithDefaults(
         draft?.roomView?.isCalibrationRulerVisible ?? base.roomView.isCalibrationRulerVisible,
       sourceMode: persistedSourceMode,
       presetSceneId: persistedPresetSceneId,
+      savedRoomLayoutId: draft?.roomView?.savedRoomLayoutId ?? base.roomView.savedRoomLayoutId,
       snapToGridEnabled: draft?.roomView?.snapToGridEnabled ?? base.roomView.snapToGridEnabled,
       gridSize: valueOrDefault(draft?.roomView?.gridSize, base.roomView.gridSize),
       gridSizeUnit: draft?.roomView?.gridSizeUnit ?? base.roomView.gridSizeUnit,

@@ -6,6 +6,7 @@ interface AppCardProps {
   title?: string;
   subtitle?: string;
   tone?: "default" | "accent";
+  compact?: boolean;
   headerAccessory?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -14,6 +15,7 @@ export default function AppCard({
   title,
   subtitle,
   tone = "default",
+  compact = false,
   headerAccessory,
   children,
 }: AppCardProps) {
@@ -27,7 +29,7 @@ export default function AppCard({
         borderWidth: 2,
         borderColor: isAccent ? colors.accent : colors.borderStrong,
         borderRadius: radii.lg,
-        padding: spacing.lg,
+        padding: compact ? spacing.md : spacing.lg,
       }}
     >
       {title ? (
@@ -37,7 +39,7 @@ export default function AppCard({
             alignItems: "center",
             justifyContent: "space-between",
             gap: spacing.md,
-            marginBottom: subtitle ? spacing.xs : spacing.md,
+            marginBottom: subtitle ? spacing.xs : compact ? spacing.sm : spacing.md,
           }}
         >
           <Text style={{ ...typography.sectionTitle, color: colors.textPrimary, flex: 1 }}>
@@ -47,11 +49,17 @@ export default function AppCard({
         </View>
       ) : null}
       {subtitle ? (
-        <Text style={{ ...typography.small, color: colors.textSecondary, marginBottom: spacing.md }}>
+        <Text
+          style={{
+            ...typography.small,
+            color: colors.textSecondary,
+            marginBottom: compact ? spacing.sm : spacing.md,
+          }}
+        >
           {subtitle}
         </Text>
       ) : null}
-      <View style={{ gap: spacing.md }}>
+      <View style={{ gap: compact ? spacing.sm : spacing.md }}>
         {children}
       </View>
     </View>

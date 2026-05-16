@@ -20,6 +20,15 @@ import StepProgress from "../components/StepProgress";
 import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
 import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
 import { GuidanceProvider } from "../components/guidance/GuidanceProvider";
+import {
+  TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH,
+  TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH,
+  TabletWorkspaceContent,
+  getTabletWorkspaceMode,
+  getTabletWorkspacePreviewCanvasHeight,
+} from "../components/layout/TabletWorkspaceLayout";
+import ArtworkCanvasActionOverlay from "../components/preview/ArtworkCanvasActionOverlay";
+import CanvasBackgroundColorPicker from "../components/preview/CanvasBackgroundColorPicker";
 import MatPreviewCanvas from "../components/preview/MatPreviewCanvas";
 import AppButton from "../components/ui/AppButton";
 import AppCard from "../components/ui/AppCard";
@@ -47,25 +56,18 @@ import {
   getSnapIncrement,
 } from "../utils/formatters";
 
-const MAT_DEFAULT_COLORS = [
+const BOARD_DEFAULT_COLORS = [
+  "#FFFFFF",
+  "#F8F6F0",
   "#F4F0E8",
   "#E7DED2",
   "#D8CCBE",
   "#C8CCC8",
+  "#8E948F",
   "#252525",
+  "#000000",
 ];
-const MOUNTING_BOARD_DEFAULT_COLORS = [
-  "#FFFFFF",
-  "#F4F0E8",
-  "#E7DED2",
-  "#C8CCC8",
-  "#252525",
-];
-const TABLET_WIDTH_BREAKPOINT = 768;
-const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
-const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 const PREVIEW_ADJUST_SHEET_GUIDANCE_TARGET_IDS = new Set([
-  "preview-adjust-upload-artwork",
   "preview-adjust-options-card",
   "preview-adjust-live-margins-card",
 ]);
@@ -132,7 +134,7 @@ function DimensionChip({
   );
 }
 
-function HeaderToolIconButton({
+function FloatingPositionIconButton({
   icon,
   onPress,
   accessibilityLabel,
@@ -143,31 +145,35 @@ function HeaderToolIconButton({
   accessibilityLabel: string;
   color?: string;
 }) {
-  const { colors, radii } = useAppTheme();
+  const { colors } = useAppTheme();
 
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      hitSlop={4}
+      hitSlop={6}
       style={({ pressed }) => ({
-        width: 38,
-        height: 38,
+        width: 36,
+        height: 36,
         alignItems: "center",
         justifyContent: "center",
-        borderRadius: radii.md,
-        borderWidth: 1,
-        borderColor: colors.borderStrong,
-        backgroundColor: pressed ? colors.backgroundCard : colors.backgroundInput,
+        borderRadius: 18,
+        backgroundColor: pressed ? colors.backgroundMuted : "transparent",
       })}
     >
-      <Ionicons name={icon} size={19} color={color ?? colors.textSecondary} />
+      <Ionicons name={icon} size={20} color={color ?? colors.textPrimary} />
     </Pressable>
   );
 }
 
-function PanelControlRow({ children }: { children: React.ReactNode }) {
+function PanelControlRow({
+  compact = false,
+  children,
+}: {
+  compact?: boolean;
+  children: React.ReactNode;
+}) {
   const { colors, radii, spacing } = useAppTheme();
 
   return (
@@ -178,7 +184,7 @@ function PanelControlRow({ children }: { children: React.ReactNode }) {
         borderColor: colors.borderSubtle,
         borderRadius: radii.md,
         backgroundColor: colors.backgroundCard,
-        padding: spacing.md,
+        padding: compact ? spacing.sm : spacing.md,
       }}
     >
       {children}
@@ -190,17 +196,22 @@ function PreviewAdjustBottomSheet({
   visible,
   title,
   maxHeight,
+  compact = false,
+  contentMaxWidth,
   onClose,
   children,
 }: {
   visible: boolean;
   title: string;
   maxHeight: number;
+  compact?: boolean;
+  contentMaxWidth?: number;
   onClose: () => void;
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radii, spacing, typography } = useAppTheme();
+  const shouldConstrainContent = Boolean(contentMaxWidth || compact);
 
   if (!visible) {
     return null;
@@ -247,9 +258,9 @@ function PreviewAdjustBottomSheet({
           borderBottomWidth: 0,
           borderColor: colors.borderStrong,
           paddingTop: spacing.sm,
-          paddingHorizontal: spacing.lg,
-          paddingBottom: Math.max(insets.bottom, spacing.lg),
-          gap: spacing.md,
+          paddingHorizontal: compact ? spacing.md : spacing.lg,
+          paddingBottom: Math.max(insets.bottom, compact ? spacing.md : spacing.lg),
+          gap: compact ? spacing.sm : spacing.md,
         }}
       >
         <View
@@ -268,6 +279,13 @@ function PreviewAdjustBottomSheet({
             alignItems: "center",
             justifyContent: "space-between",
             gap: spacing.md,
+            ...(contentMaxWidth
+              ? {
+                  width: "100%",
+                  maxWidth: contentMaxWidth,
+                  alignSelf: "center",
+                }
+              : {}),
           }}
         >
           <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
@@ -294,10 +312,26 @@ function PreviewAdjustBottomSheet({
         </View>
 
         <ScrollView
-          contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+          contentContainerStyle={{
+            alignItems: shouldConstrainContent ? "center" : undefined,
+            gap: shouldConstrainContent ? undefined : spacing.md,
+            paddingBottom: spacing.xs,
+          }}
           showsVerticalScrollIndicator
         >
-          {children}
+          {shouldConstrainContent ? (
+            <View
+              style={{
+                width: "100%",
+                maxWidth: contentMaxWidth,
+                gap: compact ? spacing.sm : spacing.md,
+              }}
+            >
+              {children}
+            </View>
+          ) : (
+            children
+          )}
         </ScrollView>
       </View>
     </View>
@@ -341,18 +375,19 @@ export default function PreviewAdjustScreen() {
   const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
   const lastLiveOffsetsUpdateRef = useRef(0);
   const preview = draft.preview ?? createInitialPreviewDraft();
-  const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT;
-  const isTabletLandscape =
-    isTabletScreen && windowWidth > windowHeight;
+  const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
+  const isTabletPortrait = tabletWorkspaceMode === "tabletPortrait";
+  const isTabletLandscape = tabletWorkspaceMode === "tabletLandscape";
   const isShortViewport = windowHeight < 620;
   const measuredPreviewHeight = previewAreaSize.height > 0 ? previewAreaSize.height : windowHeight * 0.42;
-  const previewCanvasHeight = Math.max(
-    isShortViewport ? 100 : 180,
-    Math.min(
-      isTabletLandscape ? 620 : isTabletScreen ? 520 : 360,
-      measuredPreviewHeight - (isTabletLandscape ? 66 : 58)
-    )
-  );
+  const previewCanvasHeight = getTabletWorkspacePreviewCanvasHeight({
+    mode: tabletWorkspaceMode,
+    measuredPreviewHeight,
+    isShortViewport,
+  });
+  const workspaceVerticalPadding = isTabletPortrait ? spacing.sm : spacing.md;
+  const workspaceGap = isTabletPortrait ? spacing.sm : spacing.md;
+  const progressBottomSpacing = isTabletPortrait ? spacing.md : undefined;
 
   const derived = buildDerivedGeometry(draft);
   const artworkAspectRatio = getArtworkAspectRatio(derived.artworkSize);
@@ -375,6 +410,7 @@ export default function PreviewAdjustScreen() {
     value === undefined ? "Not set" : formatMeasurement(value, unit, imperialPrecision);
   const usingImportedArtwork =
     preview.artworkSourceMode === "import" && Boolean(preview.artworkImageUri);
+  const artworkCanvasActionLabel = usingImportedArtwork ? "Change Artwork" : "Upload Artwork";
   const cropNeedsReview =
     usingImportedArtwork &&
     !isArtworkCropCompatible(preview.artworkCrop, artworkAspectRatio);
@@ -447,13 +483,13 @@ export default function PreviewAdjustScreen() {
         id: "preview-adjust-tools-bubble",
         targetId: "preview-adjust-artwork-tools",
         text: "Re-center, adjust, and crop your artwork to refine the composition.",
-        preferredPlacement: "bottom",
+        preferredPlacement: "top",
       },
       {
         id: "preview-adjust-upload-bubble",
         targetId: "preview-adjust-upload-artwork",
         text: "Upload the artwork you want to display inside the mat.",
-        preferredPlacement: "bottom",
+        preferredPlacement: "top",
       },
       {
         id: "preview-adjust-options-bubble",
@@ -707,6 +743,61 @@ export default function PreviewAdjustScreen() {
     shouldShowPreviewAdjustGuidance,
   ]);
 
+  const positioningToolbarSection = (
+    <GuidanceAnchor
+      id="preview-adjust-artwork-tools"
+      style={{
+        position: "absolute",
+        alignSelf: "center",
+        bottom: spacing.sm,
+        zIndex: 5,
+      }}
+    >
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          borderRadius: radii.pill,
+          backgroundColor: colors.headerBackground,
+          paddingHorizontal: spacing.xs,
+          paddingVertical: spacing.xs,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 4,
+          shadowColor: "#000",
+          shadowOpacity: 0.24,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 8,
+        }}
+      >
+        <FloatingPositionIconButton
+          icon="swap-horizontal"
+          accessibilityLabel="Re-center horizontally"
+          onPress={() => setPreview({ offsetX: 0 })}
+        />
+        <FloatingPositionIconButton
+          icon="swap-vertical"
+          accessibilityLabel="Re-center vertically"
+          onPress={() => setPreview({ offsetY: 0 })}
+        />
+        <FloatingPositionIconButton
+          icon="locate-outline"
+          accessibilityLabel="Re-center all"
+          onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
+        />
+        {usingImportedArtwork ? (
+          <FloatingPositionIconButton
+            icon="crop-outline"
+            accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
+            onPress={handleEditCrop}
+            color={cropNeedsReview ? colors.warning : colors.textPrimary}
+          />
+        ) : null}
+      </View>
+    </GuidanceAnchor>
+  );
+
   const previewCanvasSection = (
     <GuidanceAnchor
       id="preview-adjust-canvas"
@@ -714,29 +805,45 @@ export default function PreviewAdjustScreen() {
     >
       <View
         onLayout={handlePreviewAreaLayout}
-        style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          justifyContent: "center",
+          position: "relative",
+        }}
       >
-        <MatPreviewCanvas
-          artworkSize={derived.artworkSize}
-          openingSize={derived.openingSize}
-          outerMatSize={derived.outerMatSize}
-          frameProfileId={preview.frameProfileId}
-          frameColorHex={resolvedFrameColorHex}
-          matThicknessPly={preview.matThicknessPly}
-          matColorHex={preview.matColorHex}
-          matCoreColor={preview.matCoreColor}
-          mountingBoardColorHex={preview.mountingBoardColorHex}
-          offsetX={preview.offsetX}
-          offsetY={preview.offsetY}
-          snapIncrement={snapIncrement}
-          artworkSourceMode={preview.artworkSourceMode}
-          artworkImageUri={preview.artworkImageUri}
-          artworkCrop={preview.artworkCrop}
-          onAdjustOffsets={handleCommittedOffsets}
-          onLiveOffsetsChange={handleLiveOffsetsChange}
-          canvasHeight={previewCanvasHeight}
-          layoutVariant="workspace"
-        />
+        <View style={{ position: "relative" }}>
+          <MatPreviewCanvas
+            artworkSize={derived.artworkSize}
+            openingSize={derived.openingSize}
+            outerMatSize={derived.outerMatSize}
+            frameProfileId={preview.frameProfileId}
+            frameColorHex={resolvedFrameColorHex}
+            matThicknessPly={preview.matThicknessPly}
+            matColorHex={preview.matColorHex}
+            matCoreColor={preview.matCoreColor}
+            mountingBoardColorHex={preview.mountingBoardColorHex}
+            offsetX={preview.offsetX}
+            offsetY={preview.offsetY}
+            snapIncrement={snapIncrement}
+            artworkSourceMode={preview.artworkSourceMode}
+            artworkImageUri={preview.artworkImageUri}
+            artworkCrop={preview.artworkCrop}
+            onAdjustOffsets={handleCommittedOffsets}
+            onLiveOffsetsChange={handleLiveOffsetsChange}
+            canvasHeight={previewCanvasHeight}
+            layoutVariant="workspace"
+          />
+          <CanvasBackgroundColorPicker />
+          <ArtworkCanvasActionOverlay
+            guidanceId="preview-adjust-upload-artwork"
+            label={artworkCanvasActionLabel}
+            compact={isTabletPortrait}
+            cornerInset={isTabletPortrait ? spacing.sm : undefined}
+            onPress={openArtworkSourceChooser}
+          />
+        </View>
+        {positioningToolbarSection}
       </View>
     </GuidanceAnchor>
   );
@@ -747,198 +854,152 @@ export default function PreviewAdjustScreen() {
     </Text>
   ) : null;
 
-  const positioningToolbarSection = (
-    <GuidanceAnchor id="preview-adjust-artwork-tools">
-      <View
-        style={{
-          minHeight: 58,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          borderRadius: radii.xl,
-          backgroundColor: colors.backgroundCard,
-          paddingHorizontal: spacing.md,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: spacing.md,
-        }}
-      >
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
-            Position
-          </Text>
-          <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
-            Re-center artwork in the mat
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <HeaderToolIconButton
-            icon="swap-horizontal"
-            accessibilityLabel="Re-center horizontally"
-            onPress={() => setPreview({ offsetX: 0 })}
-          />
-          <HeaderToolIconButton
-            icon="swap-vertical"
-            accessibilityLabel="Re-center vertically"
-            onPress={() => setPreview({ offsetY: 0 })}
-          />
-          <HeaderToolIconButton
-            icon="locate-outline"
-            accessibilityLabel="Re-center all"
-            onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
-          />
-          {usingImportedArtwork ? (
-            <HeaderToolIconButton
-              icon="crop-outline"
-              accessibilityLabel={cropNeedsReview ? "Review crop" : "Edit crop"}
-              onPress={handleEditCrop}
-              color={cropNeedsReview ? colors.warning : colors.textSecondary}
-            />
-          ) : null}
-        </View>
-      </View>
-    </GuidanceAnchor>
-  );
+  const artworkFrameSheetCompact = tabletWorkspaceMode !== "phone";
+  const artworkFrameSheetContentMaxWidth = artworkFrameSheetCompact
+    ? isTabletLandscape
+      ? 860
+      : 760
+    : undefined;
+  const mattingControls = (
+    <>
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <ColorPickerField
+          label="Mat color"
+          title="Mat color"
+          value={preview.matColorHex}
+          defaultColors={BOARD_DEFAULT_COLORS}
+          customPresets={matColorPresets}
+          onChange={(matColorHex) => setPreview({ matColorHex })}
+          onSavePreset={saveMatColorPreset}
+        />
+      </PanelControlRow>
 
-  const artworkUploadCardSection = (
-    <AppCard title="Artwork">
-      <GuidanceAnchor id="preview-adjust-upload-artwork">
-        <Pressable
-          onPress={openArtworkSourceChooser}
-          style={{
-            minHeight: 42,
-            borderWidth: 1,
-            borderColor: colors.borderStrong,
-            borderRadius: radii.md,
-            backgroundColor: colors.backgroundInput,
-            paddingHorizontal: spacing.md,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <AppSegmentedControl
+          label="Mat core"
+          options={MAT_CORE_OPTIONS}
+          value={preview.matCoreColor}
+          onChange={(matCoreColor) => setPreview({ matCoreColor })}
+        />
+      </PanelControlRow>
+
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <ColorPickerField
+          label="Mount board color"
+          title="Mount board color"
+          value={preview.mountingBoardColorHex}
+          defaultColors={BOARD_DEFAULT_COLORS}
+          customPresets={matColorPresets}
+          onChange={(mountingBoardColorHex) => setPreview({ mountingBoardColorHex })}
+          onSavePreset={saveMatColorPreset}
+        />
+      </PanelControlRow>
+
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <CompactOptionPicker
+          label="Mat thickness"
+          title="Mat thickness"
+          value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
+          onChange={(value) =>
+            setPreview({
+              matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
+            })
+          }
+          options={[
+            { label: "2 ply", value: "2" },
+            { label: "4 ply", value: "4" },
+            { label: "6 ply", value: "6" },
+            { label: "8 ply", value: "8" },
+          ]}
+        />
+      </PanelControlRow>
+    </>
+  );
+  const frameControls = (
+    <>
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <CompactOptionPicker
+          label="Frame family / style"
+          title="Frame family / style"
+          value={selectedFrameStyleValue}
+          onChange={handleFrameStyleChange}
+          options={FRAME_STYLE_OPTIONS}
+        />
+      </PanelControlRow>
+
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <CompactOptionPicker
+          label="Frame profile / width"
+          title="Frame profile / width"
+          value={selectedFrameProfileValue}
+          onChange={(value) => {
+            if (value === "notApplicable") {
+              return;
+            }
+
+            handleFramePresetChange(value);
           }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-            <Ionicons name="image-outline" size={16} color={colors.textPrimary} />
-            <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }}>
-              Upload Artwork
-            </Text>
-          </View>
-          <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
-        </Pressable>
-      </GuidanceAnchor>
-    </AppCard>
-  );
+          options={frameProfilePickerOptions}
+          disabled={selectedFrameStyleValue === "none"}
+        />
+      </PanelControlRow>
 
+      <PanelControlRow compact={artworkFrameSheetCompact}>
+        <CompactOptionPicker
+          label="Frame finish / color"
+          title="Frame finish / color"
+          value={selectedFrameColorValue}
+          onChange={(value) => {
+            if (value === "notApplicable") {
+              return;
+            }
+
+            handleFrameFinishChange(value as FrameFinishId);
+          }}
+          options={frameColorPickerOptions}
+          disabled={selectedFrameStyleValue === "none"}
+        />
+      </PanelControlRow>
+    </>
+  );
   const optionsCardSection = (
     <GuidanceAnchor id="preview-adjust-options-card">
-      <AppCard title="Matting & Framing">
-        <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
-          Matting
-        </Text>
-        <PanelControlRow>
-          <ColorPickerField
-            label="Mat color"
-            title="Mat color"
-            value={preview.matColorHex}
-            defaultColors={MAT_DEFAULT_COLORS}
-            customPresets={matColorPresets}
-            onChange={(matColorHex) => setPreview({ matColorHex })}
-            onSavePreset={saveMatColorPreset}
-          />
-        </PanelControlRow>
+      <AppCard title="Matting & Framing" compact={artworkFrameSheetCompact}>
+        {artworkFrameSheetCompact ? (
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
+            <View style={{ flex: 1, gap: spacing.sm }}>
+              <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+                Mat settings
+              </Text>
+              {mattingControls}
+            </View>
+            <View style={{ flex: 1, gap: spacing.sm }}>
+              <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+                Frame settings
+              </Text>
+              {frameControls}
+            </View>
+          </View>
+        ) : (
+          <>
+            <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+              Matting
+            </Text>
+            {mattingControls}
 
-        <PanelControlRow>
-          <AppSegmentedControl
-            label="Mat core"
-            options={MAT_CORE_OPTIONS}
-            value={preview.matCoreColor}
-            onChange={(matCoreColor) => setPreview({ matCoreColor })}
-          />
-        </PanelControlRow>
-
-        <PanelControlRow>
-          <ColorPickerField
-            label="Mount board color"
-            title="Mount board color"
-            value={preview.mountingBoardColorHex}
-            defaultColors={MOUNTING_BOARD_DEFAULT_COLORS}
-            customPresets={matColorPresets}
-            onChange={(mountingBoardColorHex) => setPreview({ mountingBoardColorHex })}
-            onSavePreset={saveMatColorPreset}
-          />
-        </PanelControlRow>
-
-        <PanelControlRow>
-          <CompactOptionPicker
-            label="Mat thickness"
-            title="Mat thickness"
-            value={String(preview.matThicknessPly) as "2" | "4" | "6" | "8"}
-            onChange={(value) =>
-              setPreview({
-                matThicknessPly: Number(value) as 2 | 4 | 6 | 8,
-              })
-            }
-            options={[
-              { label: "2 ply", value: "2" },
-              { label: "4 ply", value: "4" },
-              { label: "6 ply", value: "6" },
-              { label: "8 ply", value: "8" },
-            ]}
-          />
-        </PanelControlRow>
-
-        <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
-          Framing
-        </Text>
-        <PanelControlRow>
-          <CompactOptionPicker
-            label="Frame family / style"
-            title="Frame family / style"
-            value={selectedFrameStyleValue}
-            onChange={handleFrameStyleChange}
-            options={FRAME_STYLE_OPTIONS}
-          />
-        </PanelControlRow>
-
-        <PanelControlRow>
-          <CompactOptionPicker
-            label="Frame profile / width"
-            title="Frame profile / width"
-            value={selectedFrameProfileValue}
-            onChange={(value) => {
-              if (value === "notApplicable") {
-                return;
-              }
-
-              handleFramePresetChange(value);
-            }}
-            options={frameProfilePickerOptions}
-            disabled={selectedFrameStyleValue === "none"}
-          />
-        </PanelControlRow>
-
-        <PanelControlRow>
-          <CompactOptionPicker
-            label="Frame finish / color"
-            title="Frame finish / color"
-            value={selectedFrameColorValue}
-            onChange={(value) => {
-              if (value === "notApplicable") {
-                return;
-              }
-
-              handleFrameFinishChange(value as FrameFinishId);
-            }}
-            options={frameColorPickerOptions}
-            disabled={selectedFrameStyleValue === "none"}
-          />
-        </PanelControlRow>
+            <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+              Framing
+            </Text>
+            {frameControls}
+          </>
+        )}
       </AppCard>
     </GuidanceAnchor>
   );
 
   const liveMarginsCardSection = (
     <GuidanceAnchor id="preview-adjust-live-margins-card">
-      <AppCard title="Live margins">
+      <AppCard title="Live margins" compact={artworkFrameSheetCompact}>
         <View style={{ flexDirection: "row", gap: 12 }}>
           <DimensionChip label="Top" value={marginValue(liveMargins?.top)} />
           <DimensionChip label="Right" value={marginValue(liveMargins?.right)} />
@@ -966,34 +1027,27 @@ export default function PreviewAdjustScreen() {
             flex: 1,
             minHeight: 0,
             paddingHorizontal: spacing.lg,
-            paddingTop: spacing.md,
-            paddingBottom: spacing.md,
+            paddingTop: workspaceVerticalPadding,
+            paddingBottom: workspaceVerticalPadding,
           }}
         >
-          <View
-            style={{
-              flex: 1,
-              minHeight: 0,
-              width: "100%",
-              maxWidth: isTabletLandscape
-                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
-                : layout.contentMaxWidth,
-              alignSelf: "center",
-            }}
+          <TabletWorkspaceContent
+            mode={tabletWorkspaceMode}
+            phoneContentMaxWidth={layout.contentMaxWidth}
           >
             <StepProgress
               currentStep={currentStep.stepNumber}
               totalSteps={totalSteps}
               label={currentStep.shortLabel}
+              bottomSpacing={progressBottomSpacing}
             />
 
-            <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
+            <View style={{ flex: 1, minHeight: 0, gap: workspaceGap }}>
               {previewCanvasSection}
               {previewWarningSection}
-              {positioningToolbarSection}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Open Artwork and Frame settings"
+                accessibilityLabel="Open Framing Materials settings"
                 onPress={() => setArtworkFrameSheetVisible(true)}
                 style={({ pressed }) => ({
                   minHeight: 58,
@@ -1021,7 +1075,7 @@ export default function PreviewAdjustScreen() {
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
-                    Artwork & Frame
+                    Framing Materials
                   </Text>
                   <Text
                     style={{ ...typography.small, color: colors.textSecondary }}
@@ -1033,7 +1087,7 @@ export default function PreviewAdjustScreen() {
                 <Ionicons name="chevron-up" size={18} color={colors.textSecondary} />
               </Pressable>
             </View>
-          </View>
+          </TabletWorkspaceContent>
         </View>
 
         <View
@@ -1050,7 +1104,7 @@ export default function PreviewAdjustScreen() {
             style={{
               width: "100%",
               maxWidth: isTabletLandscape
-                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                ? TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
                 : layout.contentMaxWidth,
               alignSelf: "center",
             }}
@@ -1058,7 +1112,9 @@ export default function PreviewAdjustScreen() {
             <View
               style={{
                 width: "100%",
-                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                maxWidth: isTabletLandscape
+                  ? TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH
+                  : undefined,
                 alignSelf: "center",
                 minHeight: 44,
                 justifyContent: "center",
@@ -1119,11 +1175,12 @@ export default function PreviewAdjustScreen() {
 
         <PreviewAdjustBottomSheet
           visible={artworkFrameSheetVisible}
-          title="Artwork & Frame"
+          title="Framing Materials"
           maxHeight={artworkFrameSheetMaxHeight}
+          compact={artworkFrameSheetCompact}
+          contentMaxWidth={artworkFrameSheetContentMaxWidth}
           onClose={() => setArtworkFrameSheetVisible(false)}
         >
-          {artworkUploadCardSection}
           {liveMarginsCardSection}
           {optionsCardSection}
         </PreviewAdjustBottomSheet>

@@ -5,7 +5,15 @@ export type FramingFlowParamList = {
 };
 
 export type FramingRootStackParamList = FramingFlowParamList & {
-  RoomView: undefined;
+  RoomView:
+    | {
+        autoPlaceArtworkId?: string;
+        sourceMode?: "myWall" | "presetRoom";
+        presetSceneId?: string;
+        startWallPhotoFlow?: boolean;
+        launchId?: string;
+      }
+    | undefined;
   Settings: undefined;
   SavedProjects: undefined;
   ArtworkCrop: {

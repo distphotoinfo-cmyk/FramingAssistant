@@ -1,0 +1,108 @@
+{
+  "id": "minimalist-industrial-gallery-interior-landscape",
+  "title": "Minimalist Industrial Gallery Interior",
+  "description": "Landscape industrial gallery scene with a cool concrete wall and warm overhead track lights.",
+  "orientation": "landscape",
+  "imagePath": "assets/mockups/landscape/Minimalist industrial gallery interior.png",
+  "sourceImageDimensions": {
+    "width": 1536,
+    "height": 1024
+  },
+  "wallRegion": {
+    "x": 0.07,
+    "y": 0.06,
+    "width": 0.87,
+    "height": 0.74
+  },
+  "safePlacementRegion": {
+    "x": 0.13,
+    "y": 0.16,
+    "width": 0.74,
+    "height": 0.5
+  },
+  "wallPhysicalWidthInches": 160,
+  "artworkScaleMultiplier": 2.86,
+  "floorLine": {
+    "start": {
+      "x": 0.05,
+      "y": 0.8
+    },
+    "end": {
+      "x": 0.94,
+      "y": 0.8
+    }
+  },
+  "lightingDirection": "center",
+  "sceneLightingZones": [
+    {
+      "id": "left-track-spotlight",
+      "type": "spotlight",
+      "center": {
+        "x": 0.24,
+        "y": 0.27
+      },
+      "radiusX": 0.115,
+      "radiusY": 0.2,
+      "intensity": 0.1,
+      "warmth": 0.36,
+      "softness": 0.78,
+      "direction": "center"
+    },
+    {
+      "id": "left-center-track-spotlight",
+      "type": "spotlight",
+      "center": {
+        "x": 0.43,
+        "y": 0.27
+      },
+      "radiusX": 0.115,
+      "radiusY": 0.2,
+      "intensity": 0.11,
+      "warmth": 0.36,
+      "softness": 0.78,
+      "direction": "center"
+    },
+    {
+      "id": "right-center-track-spotlight",
+      "type": "spotlight",
+      "center": {
+        "x": 0.62,
+        "y": 0.27
+      },
+      "radiusX": 0.115,
+      "radiusY": 0.2,
+      "intensity": 0.11,
+      "warmth": 0.36,
+      "softness": 0.78,
+      "direction": "center"
+    },
+    {
+      "id": "right-track-spotlight",
+      "type": "spotlight",
+      "center": {
+        "x": 0.81,
+        "y": 0.27
+      },
+      "radiusX": 0.115,
+      "radiusY": 0.2,
+      "intensity": 0.1,
+      "warmth": 0.36,
+      "softness": 0.78,
+      "direction": "center"
+    }
+  ],
+  "environment": {
+    "wallBrightness": 0.5,
+    "warmth": 0.08,
+    "ambientLight": 0.5,
+    "contrast": 0.68,
+    "edgeBlend": 0.58
+  },
+  "defaultShadow": {
+    "opacity": 0.38,
+    "offsetX": 0,
+    "offsetY": 20,
+    "blurRadius": 36
+  },
+  "pixelsPerInch": 17
+}

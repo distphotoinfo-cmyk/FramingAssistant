@@ -9,6 +9,7 @@ interface AppSheetModalProps {
   children: React.ReactNode;
   showDoneButton?: boolean;
   headerActions?: React.ReactNode;
+  maxWidth?: number;
 }
 
 export default function AppSheetModal({
@@ -18,6 +19,7 @@ export default function AppSheetModal({
   children,
   showDoneButton = false,
   headerActions,
+  maxWidth = 360,
 }: AppSheetModalProps) {
   const { colors, radii, spacing, typography } = useAppTheme();
 
@@ -37,7 +39,7 @@ export default function AppSheetModal({
           onPress={() => undefined}
           style={{
             width: "100%",
-            maxWidth: 360,
+            maxWidth,
             backgroundColor: colors.backgroundCard,
             borderWidth: 2,
             borderColor: colors.borderStrong,

@@ -1465,6 +1465,7 @@ export default function MatPreviewCanvas({
 }: MatPreviewCanvasProps) {
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const unit = useAppSettingsStore((state) => state.unit);
+  const canvasBackgroundColorHex = useAppSettingsStore((state) => state.canvasBackgroundColorHex);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const latestOffsetsRef = useRef({ offsetX, offsetY });
   const isDraggingRef = useRef(false);
@@ -1491,9 +1492,8 @@ export default function MatPreviewCanvas({
   const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
-  const previewCardColor = isDark ? "#E7DED2" : "#F3EEE6";
-  const previewCardBorderColor = isDark ? "#CFC3B5" : "#DCD2C6";
-  const previewLabelColor = isDark ? "#6F665B" : colors.textSecondary;
+  const previewCardColor = normalizeHex(canvasBackgroundColorHex, "#111111");
+  const previewCardBorderColor = colors.borderStrong;
   const previewCardPaddingHorizontal = isWorkspaceLayout ? spacing.xl : spacing.lg;
   const previewCardPaddingTop = isWorkspaceLayout ? spacing.lg : spacing.md;
   const previewCardPaddingBottom = isWorkspaceLayout ? spacing.xl : spacing.lg;
@@ -2024,10 +2024,6 @@ export default function MatPreviewCanvas({
         paddingBottom: previewCardPaddingBottom,
       }}
     >
-      <Text style={{ ...typography.eyebrow, color: previewLabelColor, marginBottom: spacing.xs }}>
-        Preview
-      </Text>
-
       <View
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;

@@ -59,18 +59,51 @@ export interface SavedFramingProject {
   draft: FramingProjectDraft;
 }
 
+export interface SavedRoomLayout {
+  id: string;
+  projectFolderId: string;
+  name: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  savedAt: string;
+  unit: MeasurementUnit;
+  roomView: FramingProjectDraft["roomView"];
+  sourceMode: FramingProjectDraft["roomView"]["sourceMode"];
+  sourceId: string;
+  presetSceneId: string | null;
+  wallPhoto: FramingProjectDraft["roomView"]["wallPhoto"];
+  placementCount: number;
+  placedFramedArtworkIds: string[];
+}
+
+type SavedFramedArtworkInput = Omit<
+  SavedFramedArtwork,
+  "id" | "createdAt" | "updatedAt" | "savedAt" | "renderData"
+> &
+  Partial<Pick<SavedFramedArtwork, "renderData">>;
+
+type SavedRoomLayoutInput = Omit<
+  SavedRoomLayout,
+  "id" | "createdAt" | "updatedAt" | "savedAt" | "placementCount" | "placedFramedArtworkIds"
+>;
+
 interface SavedProjectsState {
   projects: SavedFramingProject[];
   projectFolders: ProjectFolder[];
   framedArtworks: SavedFramedArtwork[];
+  roomLayouts: SavedRoomLayout[];
   createProjectFolder: (name: string) => ProjectFolder;
   saveProject: (project: Omit<SavedFramingProject, "id" | "savedAt">) => SavedFramingProject;
-  saveFramedArtwork: (
-    artwork: Omit<SavedFramedArtwork, "id" | "createdAt" | "updatedAt" | "savedAt" | "renderData"> &
-      Partial<Pick<SavedFramedArtwork, "renderData">>
-  ) => SavedFramedArtwork;
+  saveFramedArtwork: (artwork: SavedFramedArtworkInput) => SavedFramedArtwork;
+  saveRoomLayout: (layout: SavedRoomLayoutInput) => SavedRoomLayout;
+  updateFramedArtwork: (
+    id: string,
+    artwork: SavedFramedArtworkInput
+  ) => SavedFramedArtwork | null;
   deleteProject: (id: string) => void;
   deleteFramedArtwork: (id: string) => void;
+  deleteRoomLayout: (id: string) => void;
 }
 
 function buildRenderData(
@@ -100,8 +133,11 @@ function normalizePersistedState(
   const now = new Date().toISOString();
   const persistedFolders = typedState?.projectFolders ?? [];
   const persistedArtworks = typedState?.framedArtworks ?? [];
+  const persistedRoomLayouts = typedState?.roomLayouts ?? [];
   const needsDefaultFolder =
-    persistedArtworks.some((artwork) => !artwork.projectFolderId) && persistedFolders.length === 0;
+    (persistedArtworks.some((artwork) => !artwork.projectFolderId) ||
+      persistedRoomLayouts.some((layout) => !layout.projectFolderId)) &&
+    persistedFolders.length === 0;
   const defaultFolder: ProjectFolder = {
     id: "project-folder-general",
     name: DEFAULT_PROJECT_FOLDER_NAME,
@@ -125,6 +161,31 @@ function normalizePersistedState(
       renderData: artwork.renderData ?? buildRenderData(artwork.draft, finalOuterSizeInches),
     };
   });
+  const roomLayouts = persistedRoomLayouts.map((layout) => {
+    const createdAt = layout.createdAt ?? layout.savedAt ?? now;
+    const updatedAt = layout.updatedAt ?? layout.savedAt ?? createdAt;
+    const roomView = {
+      ...layout.roomView,
+      savedRoomLayoutId: layout.roomView?.savedRoomLayoutId ?? layout.id,
+    };
+    const placedFramedArtworkIds =
+      layout.placedFramedArtworkIds ??
+      roomView.placements
+        .map((placement) => placement.framedArtworkId)
+        .filter((id): id is string => Boolean(id));
+
+    return {
+      ...layout,
+      projectFolderId: layout.projectFolderId ?? fallbackFolderId,
+      createdAt,
+      updatedAt,
+      savedAt: layout.savedAt ?? createdAt,
+      notes: layout.notes ?? "",
+      roomView,
+      placementCount: layout.placementCount ?? roomView.placements.length,
+      placedFramedArtworkIds,
+    };
+  });
 
   return {
     ...currentState,
@@ -132,6 +193,7 @@ function normalizePersistedState(
     projects: typedState?.projects ?? currentState.projects,
     projectFolders,
     framedArtworks,
+    roomLayouts,
   };
 }
 
@@ -141,6 +203,7 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
       projects: [],
       projectFolders: [],
       framedArtworks: [],
+      roomLayouts: [],
       createProjectFolder: (name) => {
         const trimmedName = name.trim() || DEFAULT_PROJECT_FOLDER_NAME;
         const timestamp = new Date().toISOString();
@@ -172,13 +235,23 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
       },
       saveFramedArtwork: (artwork) => {
         const timestamp = new Date().toISOString();
-        const renderData = artwork.renderData ?? buildRenderData(artwork.draft, artwork.finalOuterSizeInches);
+        const id = createId("framed-artwork");
+        const draft = {
+          ...artwork.draft,
+          meta: {
+            ...artwork.draft.meta,
+            projectName: artwork.name,
+            savedFramedArtworkId: id,
+          },
+        };
+        const renderData = artwork.renderData ?? buildRenderData(draft, artwork.finalOuterSizeInches);
         const savedArtwork: SavedFramedArtwork = {
           ...artwork,
-          id: createId("framed-artwork"),
+          id,
           createdAt: timestamp,
           updatedAt: timestamp,
           savedAt: timestamp,
+          draft,
           renderData,
         };
 
@@ -191,6 +264,82 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
 
         return savedArtwork;
       },
+      saveRoomLayout: (layout) => {
+        const timestamp = new Date().toISOString();
+        const id = createId("room-layout");
+        const roomView = {
+          ...layout.roomView,
+          savedRoomLayoutId: id,
+        };
+        const savedLayout: SavedRoomLayout = {
+          ...layout,
+          id,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          savedAt: timestamp,
+          roomView,
+          placementCount: roomView.placements.length,
+          placedFramedArtworkIds: roomView.placements
+            .map((placement) => placement.framedArtworkId)
+            .filter((framedArtworkId): framedArtworkId is string => Boolean(framedArtworkId)),
+        };
+
+        set((state) => ({
+          roomLayouts: [savedLayout, ...state.roomLayouts],
+          projectFolders: state.projectFolders.map((folder) =>
+            folder.id === layout.projectFolderId ? { ...folder, updatedAt: timestamp } : folder
+          ),
+        }));
+
+        return savedLayout;
+      },
+      updateFramedArtwork: (id, artwork) => {
+        const timestamp = new Date().toISOString();
+        const draft = {
+          ...artwork.draft,
+          meta: {
+            ...artwork.draft.meta,
+            projectName: artwork.name,
+            savedFramedArtworkId: id,
+          },
+        };
+        const renderData = artwork.renderData ?? buildRenderData(draft, artwork.finalOuterSizeInches);
+        let updatedArtwork: SavedFramedArtwork | null = null;
+        let previousProjectFolderId: string | null = null;
+
+        set((state) => {
+          const existingArtwork = state.framedArtworks.find((item) => item.id === id);
+
+          if (!existingArtwork) {
+            return state;
+          }
+
+          previousProjectFolderId = existingArtwork.projectFolderId;
+          updatedArtwork = {
+            ...existingArtwork,
+            ...artwork,
+            id: existingArtwork.id,
+            createdAt: existingArtwork.createdAt,
+            savedAt: existingArtwork.savedAt,
+            updatedAt: timestamp,
+            draft,
+            renderData,
+          };
+
+          return {
+            framedArtworks: state.framedArtworks.map((item) =>
+              item.id === id ? updatedArtwork! : item
+            ),
+            projectFolders: state.projectFolders.map((folder) =>
+              folder.id === artwork.projectFolderId || folder.id === previousProjectFolderId
+                ? { ...folder, updatedAt: timestamp }
+                : folder
+            ),
+          };
+        });
+
+        return updatedArtwork;
+      },
       deleteProject: (id) =>
         set((state) => ({
           projects: state.projects.filter((project) => project.id !== id),
@@ -198,6 +347,10 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
       deleteFramedArtwork: (id) =>
         set((state) => ({
           framedArtworks: state.framedArtworks.filter((artwork) => artwork.id !== id),
+        })),
+      deleteRoomLayout: (id) =>
+        set((state) => ({
+          roomLayouts: state.roomLayouts.filter((layout) => layout.id !== id),
         })),
     }),
     {

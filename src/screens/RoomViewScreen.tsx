@@ -16,9 +16,13 @@ import {
   View,
   type GestureResponderEvent,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type PanResponderGestureState,
+  type ViewStyle,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
+import type { RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
@@ -41,8 +45,6 @@ import AppSheetModal from "../components/ui/AppSheetModal";
 import AppTextField from "../components/ui/AppTextField";
 import {
   DEFAULT_PRESET_ROOM_SCENE_ID,
-  PRESET_ROOM_SCENES,
-  ROOM_SCENE_ORIENTATION_LABELS,
   getPresetRoomScenesByOrientation,
   getPresetRoomSceneById,
   type RegisteredRoomPresetScene,
@@ -53,10 +55,14 @@ import {
   createRoomArtworkPlacement,
   useFramingFlowStore,
 } from "../state/framingFlowStore";
-import { useSavedProjectsStore, type SavedFramedArtwork } from "../state/savedProjectsStore";
+import {
+  useSavedProjectsStore,
+  type SavedFramedArtwork,
+} from "../state/savedProjectsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
 import type {
   ArtworkCropState,
+  FramingProjectDraft,
   MeasurementUnit,
   FractionDenominator,
   PreviewDraft,
@@ -64,7 +70,10 @@ import type {
   RoomEnvironmentLighting,
   RoomKnownMeasurementMode,
   RoomMaterialRealismDraft,
+  RoomPresetSceneOrientation,
+  RoomSceneLightingZone,
   RoomWallShadowDraft,
+  RoomViewDraft,
   RoomViewRect,
   RoomViewPoint,
   RoomViewSourceMode,
@@ -107,6 +116,7 @@ import {
   resolveRoomMaterialRealism,
   type ResolvedRoomMaterialRealism,
 } from "../utils/roomRealism";
+import { resolveSceneLightingEffect } from "../utils/sceneLighting";
 
 const CALIBRATION_HANDLE_SIZE = 38;
 const CALIBRATION_RULER_HEIGHT = 24;
@@ -117,21 +127,13 @@ const MAX_EXPORT_WIDTH = 1800;
 const TABLET_WIDTH_BREAKPOINT = 768;
 const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
 const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
-const ARTWORK_THUMBNAIL_WIDTH = 58;
-const ARTWORK_THUMBNAIL_HEIGHT = 68;
 const WALL_SHADOW_MAX_SOFTNESS = 160;
 const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
-const SELECTED_ARTWORK_TOOLBAR_WIDTH = 292;
-const SELECTED_ARTWORK_TOOLBAR_BASE_HEIGHT = 56;
-const SELECTED_ARTWORK_TOOLBAR_ALIGN_HEIGHT = 132;
-const SELECTED_ARTWORK_TOOLBAR_DISTRIBUTE_HEIGHT = 172;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
 type RoomRealismControlTab = "wall" | "mat" | "frame" | "glass";
-type RoomAlignmentAction = "left" | "center" | "right" | "top" | "middle" | "bottom";
-type RoomDistributionAction = "horizontal" | "vertical";
 
 const ROOM_SOURCE_OPTIONS: {
   label: string;
@@ -222,93 +224,6 @@ function clampRoomPointToRect(point: RoomViewPoint, rect: RoomViewRect): RoomVie
   return {
     x: clampNumber(point.x, rect.x, rect.x + rect.width),
     y: clampNumber(point.y, rect.y, rect.y + rect.height),
-  };
-}
-
-function getSelectedArtworkToolbarPosition({
-  selectedArtwork,
-  imageRect,
-  height,
-}: {
-  selectedArtwork: WallArtworkRenderItem | null;
-  imageRect: DisplayedImageRect;
-  height: number;
-}) {
-  if (!selectedArtwork || imageRect.width <= 0 || imageRect.height <= 0) {
-    return null;
-  }
-
-  const margin = 12;
-  const defaultLeft = imageRect.left + imageRect.width - SELECTED_ARTWORK_TOOLBAR_WIDTH - margin;
-  const defaultTop = imageRect.top + imageRect.height - height - margin;
-  const selectedLeft =
-    imageRect.left +
-    selectedArtwork.placement.center.x * imageRect.width -
-    selectedArtwork.displaySize.width / 2;
-  const selectedTop =
-    imageRect.top +
-    selectedArtwork.placement.center.y * imageRect.height -
-    selectedArtwork.displaySize.height / 2;
-  const selectedRight = selectedLeft + selectedArtwork.displaySize.width;
-  const selectedBottom = selectedTop + selectedArtwork.displaySize.height;
-  const toolbarRight = defaultLeft + SELECTED_ARTWORK_TOOLBAR_WIDTH;
-  const toolbarBottom = defaultTop + height;
-  const overlapsSelected =
-    defaultLeft < selectedRight &&
-    toolbarRight > selectedLeft &&
-    defaultTop < selectedBottom &&
-    toolbarBottom > selectedTop;
-
-  if (!overlapsSelected) {
-    return { left: defaultLeft, top: defaultTop };
-  }
-
-  const aboveSelectedTop = selectedTop - height - margin;
-
-  if (aboveSelectedTop >= imageRect.top + margin) {
-    return {
-      left: defaultLeft,
-      top: aboveSelectedTop,
-    };
-  }
-
-  return {
-    left: imageRect.left + margin,
-    top: defaultTop,
-  };
-}
-
-function getSelectedArtworkToolbarHeight(selectedCount: number) {
-  if (selectedCount >= 3) {
-    return SELECTED_ARTWORK_TOOLBAR_DISTRIBUTE_HEIGHT;
-  }
-
-  if (selectedCount >= 2) {
-    return SELECTED_ARTWORK_TOOLBAR_ALIGN_HEIGHT;
-  }
-
-  return SELECTED_ARTWORK_TOOLBAR_BASE_HEIGHT;
-}
-
-function getArtworkNormalizedBounds(
-  item: WallArtworkRenderItem,
-  stageWidth: number,
-  stageHeight: number
-) {
-  const width = stageWidth > 0 ? item.displaySize.width / stageWidth : 0;
-  const height = stageHeight > 0 ? item.displaySize.height / stageHeight : 0;
-
-  return {
-    id: item.placement.id,
-    centerX: item.placement.center.x,
-    centerY: item.placement.center.y,
-    left: item.placement.center.x - width / 2,
-    right: item.placement.center.x + width / 2,
-    top: item.placement.center.y - height / 2,
-    bottom: item.placement.center.y + height / 2,
-    width,
-    height,
-    item,
   };
 }
 
@@ -403,238 +318,6 @@ function WallCastShadow({
   );
 }
 
-function SelectedArtworkToolbar({
-  position,
-  selectedCount,
-  isMultiSelectMode,
-  onDuplicate,
-  onReplace,
-  onEdit,
-  onDelete,
-  onToggleMultiSelect,
-  onAlign,
-  onDistribute,
-}: {
-  position: { left: number; top: number };
-  selectedCount: number;
-  isMultiSelectMode: boolean;
-  onDuplicate: () => void;
-  onReplace: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onToggleMultiSelect: () => void;
-  onAlign: (action: RoomAlignmentAction) => void;
-  onDistribute: (action: RoomDistributionAction) => void;
-}) {
-  const { colors, radii, spacing, typography } = useAppTheme();
-  const toolbarHeight = getSelectedArtworkToolbarHeight(selectedCount);
-  const canAlign = selectedCount >= 2;
-  const canDistribute = selectedCount >= 3;
-  const actions: {
-    label: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    tone?: "default" | "danger";
-    active?: boolean;
-    onPress: () => void;
-  }[] = [
-    { label: "Duplicate", icon: "copy-outline", onPress: onDuplicate },
-    { label: "Replace Artwork", icon: "image-outline", onPress: onReplace },
-    { label: "Edit Framing", icon: "options-outline", onPress: onEdit },
-    { label: "Multi Select", icon: "albums-outline", active: isMultiSelectMode, onPress: onToggleMultiSelect },
-    { label: "Delete", icon: "trash-outline", tone: "danger", onPress: onDelete },
-  ];
-  const alignActions: { label: string; shortLabel: string; action: RoomAlignmentAction }[] = [
-    { label: "Align Left", shortLabel: "L", action: "left" },
-    { label: "Align Center", shortLabel: "C", action: "center" },
-    { label: "Align Right", shortLabel: "R", action: "right" },
-    { label: "Align Top", shortLabel: "T", action: "top" },
-    { label: "Align Middle", shortLabel: "M", action: "middle" },
-    { label: "Align Bottom", shortLabel: "B", action: "bottom" },
-  ];
-
-  return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: "absolute",
-        left: position.left,
-        top: position.top,
-        width: SELECTED_ARTWORK_TOOLBAR_WIDTH,
-        height: toolbarHeight,
-        zIndex: 60,
-      }}
-    >
-      <View
-        style={{
-          minHeight: toolbarHeight,
-          borderRadius: radii.xl,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          backgroundColor: colors.backgroundCard,
-          padding: spacing.xs,
-          gap: spacing.xs,
-          shadowColor: "#000000",
-          shadowOpacity: 0.2,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 8,
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
-          {actions.map((action) => {
-            const actionColor = action.tone === "danger"
-              ? colors.warning
-              : action.active
-                ? colors.accent
-                : colors.textPrimary;
-
-            return (
-              <Pressable
-                key={action.label}
-                accessibilityRole="button"
-                accessibilityLabel={action.label}
-                accessibilityState={{ selected: action.active }}
-                onPress={action.onPress}
-                hitSlop={8}
-                style={{
-                  width: 54,
-                  height: 42,
-                  borderRadius: radii.lg,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: action.active ? colors.accentSoft : "transparent",
-                }}
-              >
-                <Ionicons name={action.icon} size={20} color={actionColor} />
-                <Text
-                  style={{
-                    ...typography.small,
-                    fontSize: 8,
-                    lineHeight: 10,
-                    color: action.active ? colors.accent : colors.textSecondary,
-                    fontWeight: "700",
-                    marginTop: 1,
-                  }}
-                  numberOfLines={1}
-                >
-                  {action.label === "Replace Artwork"
-                    ? "Replace"
-                    : action.label === "Multi Select"
-                      ? selectedCount > 1 ? `${selectedCount} sel` : "Select"
-                      : action.label.split(" ")[0]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {canAlign ? (
-          <View
-            style={{
-              borderTopWidth: 1,
-              borderTopColor: colors.borderSubtle,
-              paddingTop: spacing.xs,
-              gap: spacing.xs,
-            }}
-          >
-            <Text
-              style={{
-                ...typography.small,
-                fontSize: 10,
-                lineHeight: 12,
-                color: colors.textSecondary,
-                fontWeight: "800",
-                textAlign: "center",
-              }}
-            >
-              Align
-            </Text>
-            <View style={{ flexDirection: "row", justifyContent: "center", gap: 4 }}>
-              {alignActions.map((item) => (
-                <Pressable
-                  key={item.action}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.label}
-                  onPress={() => onAlign(item.action)}
-                  style={{
-                    width: 40,
-                    height: 32,
-                    borderRadius: radii.md,
-                    borderWidth: 1,
-                    borderColor: colors.borderSubtle,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: colors.backgroundInput,
-                  }}
-                >
-                  <Text
-                    style={{
-                      ...typography.small,
-                      color: colors.textPrimary,
-                      fontWeight: "900",
-                    }}
-                  >
-                    {item.shortLabel}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {canDistribute ? (
-          <View style={{ flexDirection: "row", justifyContent: "center", gap: spacing.xs }}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Distribute Horizontally"
-              onPress={() => onDistribute("horizontal")}
-              style={{
-                flex: 1,
-                height: 34,
-                borderRadius: radii.md,
-                borderWidth: 1,
-                borderColor: colors.borderSubtle,
-                backgroundColor: colors.backgroundInput,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
-              }}
-            >
-              <Ionicons name="swap-horizontal-outline" size={16} color={colors.textPrimary} />
-              <Text style={{ ...typography.small, fontSize: 10, color: colors.textPrimary, fontWeight: "800" }}>
-                Distribute H
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Distribute Vertically"
-              onPress={() => onDistribute("vertical")}
-              style={{
-                flex: 1,
-                height: 34,
-                borderRadius: radii.md,
-                borderWidth: 1,
-                borderColor: colors.borderSubtle,
-                backgroundColor: colors.backgroundInput,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
-              }}
-            >
-              <Ionicons name="swap-vertical-outline" size={16} color={colors.textPrimary} />
-              <Text style={{ ...typography.small, fontSize: 10, color: colors.textPrimary, fontWeight: "800" }}>
-                Distribute V
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 type SvgElementRef = React.ElementRef<typeof Svg> & {
   toDataURL?: (
     callback: (base64: string) => void,
@@ -695,6 +378,50 @@ function getFittedStageSize({
   };
 }
 
+function cloneRoomViewDraft(roomView: RoomViewDraft): RoomViewDraft {
+  return JSON.parse(JSON.stringify(roomView)) as RoomViewDraft;
+}
+
+function cloneFramingProjectDraft(draft: FramingProjectDraft): FramingProjectDraft {
+  return JSON.parse(JSON.stringify(draft)) as FramingProjectDraft;
+}
+
+function hasArtworkImageOverride(placement: RoomArtworkPlacementDraft) {
+  return Boolean(
+    placement.artworkSourceModeOverride ||
+      placement.artworkImageUriOverride ||
+      placement.artworkCropOverride
+  );
+}
+
+function pickRoomViewSourceRecord<T>(
+  record: Record<string, T> | undefined,
+  sourceId: string
+): Record<string, T> {
+  if (!record || !(sourceId in record)) {
+    return {};
+  }
+
+  return {
+    [sourceId]: record[sourceId],
+  };
+}
+
+function normalizeRoomLayoutForComparison(roomView: RoomViewDraft) {
+  return {
+    ...cloneRoomViewDraft(roomView),
+    savedRoomLayoutId: null,
+    activePlacementId: null,
+  };
+}
+
+function roomLayoutSnapshotsMatch(first: RoomViewDraft, second: RoomViewDraft) {
+  return (
+    JSON.stringify(normalizeRoomLayoutForComparison(first)) ===
+    JSON.stringify(normalizeRoomLayoutForComparison(second))
+  );
+}
+
 function WallPhotoSourceOption({
   icon,
   label,
@@ -732,13 +459,21 @@ function WallPhotoSourceOption({
   );
 }
 
-function PresetRoomSceneOption({
+function PresetRoomSceneTile({
   scene,
   selected,
+  width,
+  imageHeight,
+  titleLines,
+  compact,
   onPress,
 }: {
   scene: RegisteredRoomPresetScene;
   selected: boolean;
+  width: ViewStyle["width"];
+  imageHeight: number;
+  titleLines: number;
+  compact: boolean;
   onPress: () => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
@@ -746,56 +481,237 @@ function PresetRoomSceneOption({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`Choose ${scene.title}`}
       style={{
+        width,
         borderWidth: 1,
         borderColor: selected ? colors.accent : colors.borderStrong,
         borderRadius: radii.md,
         backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
-        padding: spacing.sm,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: spacing.md,
+        overflow: "hidden",
       }}
     >
       <PresetRoomSceneImage
         scene={scene}
+        resizeMode="cover"
         style={{
-          width: 76,
-          height: 48,
-          borderRadius: radii.sm,
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: colors.borderSubtle,
+          height: imageHeight,
+          width: "100%",
         }}
       />
-
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View
+        pointerEvents="none"
+        style={{
+          minHeight: compact ? 44 : 52,
+          justifyContent: "center",
+          backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+          paddingHorizontal: compact ? spacing.sm : spacing.md,
+          paddingVertical: compact ? 7 : 8,
+        }}
+      >
         <Text
-          style={{ fontSize: 15, fontWeight: "700", color: colors.textPrimary }}
-          numberOfLines={1}
+          style={{
+            ...typography.small,
+            color: colors.textPrimary,
+            fontSize: compact ? 12 : 13,
+            lineHeight: compact ? 15 : 16,
+            fontWeight: "800",
+          }}
+          numberOfLines={titleLines}
+          ellipsizeMode="tail"
         >
           {scene.title}
         </Text>
-        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={2}>
-          {scene.description}
-        </Text>
       </View>
-
-      {selected ? (
-        <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
-      ) : null}
     </Pressable>
   );
 }
 
 function RoomViewBottomDock({
   activeSheet,
+  scrollable,
+  selectedCount,
+  isMultiSelectMode,
+  hasSelectedArtwork,
+  canSelectArtwork,
+  onDuplicate,
+  onReplace,
+  onEditArtwork,
+  onSelectArtwork,
+  onSave,
+  onDelete,
   onOpenSheet,
 }: {
   activeSheet: RoomViewDockSheet | null;
+  scrollable: boolean;
+  selectedCount: number;
+  isMultiSelectMode: boolean;
+  hasSelectedArtwork: boolean;
+  canSelectArtwork: boolean;
+  onDuplicate: () => void;
+  onReplace: () => void;
+  onEditArtwork: () => void;
+  onSelectArtwork: () => void;
+  onSave: () => void;
+  onDelete: () => void;
   onOpenSheet: (sheet: RoomViewDockSheet) => void;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
+  const [scrollMetrics, setScrollMetrics] = useState({
+    contentWidth: 0,
+    viewportWidth: 0,
+    x: 0,
+  });
+  const dockActions: {
+    id: string;
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    active?: boolean;
+    disabled?: boolean;
+    tone?: "default" | "danger";
+    accessibilityLabel: string;
+    onPress: () => void;
+  }[] = [
+    ...ROOM_VIEW_DOCK_ITEMS.filter((item) => item.sheet !== "export").map((item) => ({
+      id: item.sheet,
+      label: item.label,
+      icon: item.icon,
+      active: activeSheet === item.sheet,
+      accessibilityLabel: `Open ${item.label}`,
+      onPress: () => onOpenSheet(item.sheet),
+    })),
+    {
+      id: "duplicate",
+      label: "Duplicate",
+      icon: "copy-outline",
+      disabled: !hasSelectedArtwork,
+      accessibilityLabel: "Duplicate selected artwork",
+      onPress: onDuplicate,
+    },
+    {
+      id: "replace",
+      label: "Replace",
+      icon: "image-outline",
+      disabled: !hasSelectedArtwork,
+      accessibilityLabel: "Replace selected artwork",
+      onPress: onReplace,
+    },
+    {
+      id: "edit",
+      label: "Edit",
+      icon: "create-outline",
+      disabled: !hasSelectedArtwork,
+      accessibilityLabel: "Edit selected artwork framing",
+      onPress: onEditArtwork,
+    },
+    {
+      id: "select",
+      label: "Select",
+      icon: "albums-outline",
+      active: isMultiSelectMode,
+      disabled: !canSelectArtwork,
+      accessibilityLabel:
+        selectedCount > 1 ? `Select artwork, ${selectedCount} selected` : "Select artwork",
+      onPress: onSelectArtwork,
+    },
+    {
+      id: "save",
+      label: "Save",
+      icon: "save-outline",
+      accessibilityLabel: hasSelectedArtwork ? "Save selected artwork" : "Save layout",
+      onPress: onSave,
+    },
+    {
+      id: "delete",
+      label: "Delete",
+      icon: "trash-outline",
+      disabled: !hasSelectedArtwork,
+      tone: "danger",
+      accessibilityLabel: "Delete selected artwork",
+      onPress: onDelete,
+    },
+    ...ROOM_VIEW_DOCK_ITEMS.filter((item) => item.sheet === "export").map((item) => ({
+      id: item.sheet,
+      label: item.label,
+      icon: item.icon,
+      active: activeSheet === item.sheet,
+      accessibilityLabel: `Open ${item.label}`,
+      onPress: () => onOpenSheet(item.sheet),
+    })),
+  ];
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const {
+      contentOffset,
+      contentSize,
+      layoutMeasurement,
+    } = event.nativeEvent;
+
+    setScrollMetrics({
+      contentWidth: contentSize.width,
+      viewportWidth: layoutMeasurement.width,
+      x: contentOffset.x,
+    });
+  }, []);
+  const hasHorizontalOverflow =
+    scrollable && scrollMetrics.contentWidth > scrollMetrics.viewportWidth + 4;
+  const canScrollLeft = hasHorizontalOverflow && scrollMetrics.x > 6;
+  const canScrollRight =
+    hasHorizontalOverflow &&
+    scrollMetrics.x < scrollMetrics.contentWidth - scrollMetrics.viewportWidth - 6;
+  const renderDockAction = (action: (typeof dockActions)[number]) => {
+    const disabled = action.disabled ?? false;
+    const selected = action.active ?? false;
+    const iconColor = disabled
+      ? colors.textSecondary
+      : action.tone === "danger"
+        ? colors.warning
+        : selected
+          ? colors.accent
+          : colors.textSecondary;
+    const labelColor = selected ? colors.accent : colors.textSecondary;
+
+    return (
+      <Pressable
+        key={action.id}
+        accessibilityRole="button"
+        accessibilityLabel={action.accessibilityLabel}
+        accessibilityState={{ selected, disabled }}
+        disabled={disabled}
+        onPress={action.onPress}
+        style={{
+          flex: 1,
+          minWidth: scrollable ? 70 : 0,
+          minHeight: 52,
+          borderRadius: radii.lg,
+          backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 3,
+          paddingHorizontal: 3,
+          opacity: disabled ? 0.42 : 1,
+        }}
+      >
+        <Ionicons name={action.icon} size={19} color={iconColor} />
+        <Text
+          style={{
+            ...typography.small,
+            color: labelColor,
+            fontSize: 10,
+            lineHeight: 12,
+            fontWeight: "700",
+            textAlign: "center",
+          }}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.68}
+        >
+          {action.label}
+        </Text>
+      </Pressable>
+    );
+  };
 
   return (
     <View
@@ -805,50 +721,78 @@ function RoomViewBottomDock({
         borderRadius: radii.xl,
         backgroundColor: colors.backgroundCard,
         padding: spacing.xs,
-        flexDirection: "row",
-        gap: spacing.xs,
+        position: "relative",
+        overflow: "hidden",
       }}
     >
-      {ROOM_VIEW_DOCK_ITEMS.map((item) => {
-        const selected = activeSheet === item.sheet;
+      {scrollable ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={handleScroll}
+          onLayout={(event) =>
+            setScrollMetrics((current) => ({
+              ...current,
+              viewportWidth: event.nativeEvent.layout.width,
+            }))
+          }
+          onContentSizeChange={(contentWidth) =>
+            setScrollMetrics((current) => ({
+              ...current,
+              contentWidth,
+            }))
+          }
+          contentContainerStyle={{
+            flexGrow: 1,
+            flexDirection: "row",
+            gap: spacing.xs,
+            justifyContent: "flex-start",
+          }}
+        >
+          {dockActions.map(renderDockAction)}
+        </ScrollView>
+      ) : (
+        <View style={{ flexDirection: "row", gap: spacing.xs }}>
+          {dockActions.map(renderDockAction)}
+        </View>
+      )}
 
-        return (
-          <Pressable
-            key={item.sheet}
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${item.label}`}
-            onPress={() => onOpenSheet(item.sheet)}
-            style={{
-              flex: 1,
-              minHeight: 58,
-              borderRadius: radii.lg,
-              backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              paddingHorizontal: 4,
-            }}
-          >
-            <Ionicons
-              name={item.icon}
-              size={20}
-              color={selected ? colors.accent : colors.textSecondary}
-            />
-            <Text
-              style={{
-                ...typography.small,
-                color: selected ? colors.accent : colors.textSecondary,
-                fontWeight: "700",
-                textAlign: "center",
-              }}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {item.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+      {canScrollLeft ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 4,
+            top: 0,
+            bottom: 0,
+            width: 28,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(0,0,0,0.42)",
+          }}
+        >
+          <Ionicons name="chevron-back" size={18} color={colors.white} />
+        </View>
+      ) : null}
+
+      {canScrollRight ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            right: 4,
+            top: 0,
+            bottom: 0,
+            width: 28,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(0,0,0,0.42)",
+          }}
+        >
+          <Ionicons name="chevron-forward" size={18} color={colors.white} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1194,6 +1138,52 @@ function snapArtworkCenterToGrid({
     artworkHeight,
     placementBounds,
   });
+}
+
+function getClampedArtworkGroupDelta({
+  items,
+  startCenters,
+  delta,
+  stageWidth,
+  stageHeight,
+  placementBounds,
+}: {
+  items: WallArtworkRenderItem[];
+  startCenters: Map<string, RoomViewPoint>;
+  delta: RoomViewPoint;
+  stageWidth: number;
+  stageHeight: number;
+  placementBounds: RoomViewRect;
+}) {
+  if (items.length === 0 || stageWidth <= 0 || stageHeight <= 0) {
+    return { x: 0, y: 0 };
+  }
+
+  let minDeltaX = Number.NEGATIVE_INFINITY;
+  let maxDeltaX = Number.POSITIVE_INFINITY;
+  let minDeltaY = Number.NEGATIVE_INFINITY;
+  let maxDeltaY = Number.POSITIVE_INFINITY;
+
+  items.forEach((item) => {
+    const startCenter = startCenters.get(item.placement.id) ?? item.placement.center;
+    const bounds = getArtworkCenterBounds({
+      stageWidth,
+      stageHeight,
+      artworkWidth: item.displaySize.width,
+      artworkHeight: item.displaySize.height,
+      placementBounds,
+    });
+
+    minDeltaX = Math.max(minDeltaX, bounds.minX - startCenter.x);
+    maxDeltaX = Math.min(maxDeltaX, bounds.maxX - startCenter.x);
+    minDeltaY = Math.max(minDeltaY, bounds.minY - startCenter.y);
+    maxDeltaY = Math.min(maxDeltaY, bounds.maxY - startCenter.y);
+  });
+
+  return {
+    x: Math.max(minDeltaX, Math.min(maxDeltaX, delta.x)),
+    y: Math.max(minDeltaY, Math.min(maxDeltaY, delta.y)),
+  };
 }
 
 function addRoomPoint(point: RoomViewPoint, delta: RoomViewPoint): RoomViewPoint {
@@ -1679,15 +1669,21 @@ function CalibrationRuler({
   );
 }
 
-function SavedFramedArtworkPickerRow({
+function SavedFramedArtworkPickerTile({
   artwork,
   selected,
+  width,
+  thumbnailHeight,
+  compact,
   unit,
   imperialPrecision,
   onPress,
 }: {
   artwork: SavedFramedArtwork;
   selected: boolean;
+  width: ViewStyle["width"];
+  thumbnailHeight: number;
+  compact: boolean;
   unit: MeasurementUnit;
   imperialPrecision: FractionDenominator;
   onPress: () => void;
@@ -1709,9 +1705,10 @@ function SavedFramedArtworkPickerRow({
 
     const finalWidth = inchesToMeasurementUnit(finalOuterSize.width, unit);
     const finalHeight = inchesToMeasurementUnit(finalOuterSize.height, unit);
+    const thumbnailWidth = typeof width === "number" ? width : compact ? 330 : 300;
     const physicalScale = Math.min(
-      (ARTWORK_THUMBNAIL_WIDTH - 12) / Math.max(finalWidth, 1),
-      (ARTWORK_THUMBNAIL_HEIGHT - 12) / Math.max(finalHeight, 1)
+      (thumbnailWidth - 42) / Math.max(finalWidth, 1),
+      (thumbnailHeight - 28) / Math.max(finalHeight, 1)
     );
 
     return {
@@ -1722,33 +1719,28 @@ function SavedFramedArtworkPickerRow({
       offsetY: convertMeasurementToUnit(preview.offsetY, artwork.unit, unit),
       physicalScale,
     };
-  }, [artwork, preview.offsetX, preview.offsetY, unit]);
+  }, [artwork, compact, preview.offsetX, preview.offsetY, thumbnailHeight, unit, width]);
   const sizeLabel = getSavedArtworkSizeLabel(artwork, unit, imperialPrecision);
   const summaryLabel = getSavedArtworkSummary(artwork);
 
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Add ${artwork.name || "framed artwork"}`}
       style={{
-        minHeight: 84,
+        width,
         borderWidth: 1,
         borderColor: selected ? colors.accent : colors.borderStrong,
         borderRadius: radii.md,
         backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: spacing.md,
+        overflow: "hidden",
       }}
     >
       <View
         style={{
-          width: ARTWORK_THUMBNAIL_WIDTH,
-          height: ARTWORK_THUMBNAIL_HEIGHT,
-          borderWidth: 1,
-          borderColor: colors.borderSubtle,
-          borderRadius: radii.sm,
+          height: thumbnailHeight,
+          width: "100%",
           backgroundColor: colors.backgroundCard,
           alignItems: "center",
           justifyContent: "center",
@@ -1779,22 +1771,52 @@ function SavedFramedArtworkPickerRow({
         )}
       </View>
 
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View
+        pointerEvents="none"
+        style={{
+          minHeight: compact ? 66 : 74,
+          backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+          justifyContent: "center",
+          paddingHorizontal: compact ? spacing.sm : spacing.md,
+          paddingVertical: compact ? 8 : spacing.sm,
+        }}
+      >
         <Text
-          style={{ fontSize: 15, fontWeight: "700", color: colors.textPrimary }}
-          numberOfLines={1}
+          style={{
+            ...typography.small,
+            color: colors.textPrimary,
+            fontSize: compact ? 12 : 13,
+            lineHeight: compact ? 15 : 16,
+            fontWeight: "800",
+          }}
+          numberOfLines={2}
+          ellipsizeMode="tail"
         >
           {artwork.name || "Untitled framed artwork"}
         </Text>
-        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+        <Text
+          style={{
+            ...typography.small,
+            color: colors.textSecondary,
+            fontSize: compact ? 11 : 12,
+            lineHeight: compact ? 14 : 15,
+          }}
+          numberOfLines={1}
+        >
           {sizeLabel}
         </Text>
-        <Text style={{ ...typography.small, color: colors.textSecondary }} numberOfLines={1}>
+        <Text
+          style={{
+            ...typography.small,
+            color: colors.textSecondary,
+            fontSize: compact ? 11 : 12,
+            lineHeight: compact ? 14 : 15,
+          }}
+          numberOfLines={1}
+        >
           {summaryLabel}
         </Text>
       </View>
-
-      <Ionicons name="add-circle-outline" size={21} color={colors.textSecondary} />
     </Pressable>
   );
 }
@@ -1802,33 +1824,43 @@ function SavedFramedArtworkPickerRow({
 function PlacedWallArtwork({
   placedArtwork,
   selected,
+  selectedGroupArtworks,
   stageSize,
   stageOffset,
   placementBounds,
   snapGridSizePixels,
+  groupDragOffset,
+  externalCommittedCenterOverride,
   sceneDefaultShadow,
   roomShadowOverride,
   materialRealism,
   environment,
+  sceneLightingZones,
   artworkBrightness,
   onSelect,
   onMoveEnd,
+  onGroupMoveEnd,
   onDragStart,
   onDragEnd,
 }: {
   placedArtwork: WallArtworkRenderItem;
   selected: boolean;
+  selectedGroupArtworks: WallArtworkRenderItem[];
   stageSize: { width: number; height: number };
   stageOffset: { x: number; y: number };
   placementBounds: RoomViewRect;
   snapGridSizePixels: number | null;
+  groupDragOffset: Animated.ValueXY;
+  externalCommittedCenterOverride?: RoomViewPoint;
   sceneDefaultShadow?: RegisteredRoomPresetScene["defaultShadow"] | null;
   roomShadowOverride?: RoomWallShadowDraft | null;
   materialRealism: ResolvedRoomMaterialRealism;
   environment: RoomEnvironmentLighting | null;
+  sceneLightingZones?: RoomSceneLightingZone[] | null;
   artworkBrightness: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
+  onGroupMoveEnd: (centersById: Map<string, RoomViewPoint>) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
@@ -1838,14 +1870,11 @@ function PlacedWallArtwork({
   const [committedCenterOverride, setCommittedCenterOverride] =
     useState<RoomViewPoint | null>(null);
   const dragStartCenterRef = useRef<RoomViewPoint>(placedArtwork.placement.center);
+  const groupDragStartCentersRef = useRef<Map<string, RoomViewPoint>>(new Map());
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
+  const isGroupDragMember = selected && selectedGroupArtworks.length > 1;
   const wallShadow = resolveWallShadow(sceneDefaultShadow, roomShadowOverride);
-  const brightnessOverlayOpacity =
-    artworkBrightness < 1
-      ? clampNumber(1 - artworkBrightness, 0, 0.5)
-      : clampNumber((artworkBrightness - 1) * 0.5, 0, 0.125);
-  const brightnessOverlayColor = artworkBrightness < 1 ? "#000000" : "#FFFFFF";
 
   useLayoutEffect(() => {
     const pendingCenter = pendingCenterRef.current;
@@ -1888,8 +1917,101 @@ function PlacedWallArtwork({
     ]
   );
 
+  const getGroupDragResult = useCallback(
+    (gestureState: PanResponderGestureState) => {
+      if (stageSize.width <= 0 || stageSize.height <= 0 || selectedGroupArtworks.length <= 1) {
+        return {
+          offsetPixels: { x: 0, y: 0 },
+          centersById: new Map<string, RoomViewPoint>(),
+        };
+      }
+
+      const startCenters = groupDragStartCentersRef.current;
+      const activeStartCenter =
+        startCenters.get(placedArtwork.placement.id) ?? placedArtwork.placement.center;
+      const rawDelta = {
+        x: gestureState.dx / stageSize.width,
+        y: gestureState.dy / stageSize.height,
+      };
+      let clampedDelta = getClampedArtworkGroupDelta({
+        items: selectedGroupArtworks,
+        startCenters,
+        delta: rawDelta,
+        stageWidth: stageSize.width,
+        stageHeight: stageSize.height,
+        placementBounds,
+      });
+
+      if (snapGridSizePixels !== null) {
+        const snappedActiveCenter = snapArtworkCenterToGrid({
+          point: {
+            x: activeStartCenter.x + clampedDelta.x,
+            y: activeStartCenter.y + clampedDelta.y,
+          },
+          stageWidth: stageSize.width,
+          stageHeight: stageSize.height,
+          artworkWidth: placedArtwork.displaySize.width,
+          artworkHeight: placedArtwork.displaySize.height,
+          placementBounds,
+          snapGridSizePixels,
+        });
+
+        clampedDelta = getClampedArtworkGroupDelta({
+          items: selectedGroupArtworks,
+          startCenters,
+          delta: {
+            x: snappedActiveCenter.x - activeStartCenter.x,
+            y: snappedActiveCenter.y - activeStartCenter.y,
+          },
+          stageWidth: stageSize.width,
+          stageHeight: stageSize.height,
+          placementBounds,
+        });
+      }
+
+      const centersById = new Map<string, RoomViewPoint>();
+
+      selectedGroupArtworks.forEach((item) => {
+        const startCenter = startCenters.get(item.placement.id) ?? item.placement.center;
+
+        centersById.set(item.placement.id, {
+          x: startCenter.x + clampedDelta.x,
+          y: startCenter.y + clampedDelta.y,
+        });
+      });
+
+      return {
+        offsetPixels: {
+          x: clampedDelta.x * stageSize.width,
+          y: clampedDelta.y * stageSize.height,
+        },
+        centersById,
+      };
+    },
+    [
+      placedArtwork,
+      placementBounds,
+      selectedGroupArtworks,
+      snapGridSizePixels,
+      stageSize.height,
+      stageSize.width,
+    ]
+  );
+
   const finishDrag = useCallback(
     (gestureState: PanResponderGestureState) => {
+      if (isGroupDragMember) {
+        const { centersById } = getGroupDragResult(gestureState);
+
+        isDraggingRef.current = false;
+        onGroupMoveEnd(centersById);
+        onDragEnd();
+        requestAnimationFrame(() => {
+          groupDragOffset.setValue({ x: 0, y: 0 });
+        });
+        return;
+      }
+
       const nextCenter = getRawDragCenter(gestureState);
 
       pendingCenterRef.current = nextCenter;
@@ -1901,8 +2023,12 @@ function PlacedWallArtwork({
     },
     [
       dragOffset,
+      getGroupDragResult,
       getRawDragCenter,
+      groupDragOffset,
+      isGroupDragMember,
       onDragEnd,
+      onGroupMoveEnd,
       onMoveEnd,
       placedArtwork.placement.id,
     ]
@@ -1922,8 +2048,16 @@ function PlacedWallArtwork({
           isDraggingRef.current = true;
           dragOffset.stopAnimation();
           dragOffset.setValue({ x: 0, y: 0 });
+          groupDragOffset.stopAnimation();
+          groupDragOffset.setValue({ x: 0, y: 0 });
           setCommittedCenterOverride(null);
           dragStartCenterRef.current = placedArtwork.placement.center;
+          groupDragStartCentersRef.current = new Map(
+            selectedGroupArtworks.map((item) => [
+              item.placement.id,
+              item.placement.center,
+            ])
+          );
           onSelect(placedArtwork.placement.id);
           onDragStart();
         },
@@ -1931,6 +2065,13 @@ function PlacedWallArtwork({
           _event: GestureResponderEvent,
           gestureState: PanResponderGestureState
         ) => {
+          if (isGroupDragMember) {
+            const { offsetPixels } = getGroupDragResult(gestureState);
+
+            groupDragOffset.setValue(offsetPixels);
+            return;
+          }
+
           const nextCenter = getRawDragCenter(gestureState);
 
           dragOffset.setValue({
@@ -1954,17 +2095,23 @@ function PlacedWallArtwork({
     [
       dragOffset,
       finishDrag,
+      getGroupDragResult,
       getRawDragCenter,
+      groupDragOffset,
+      isGroupDragMember,
       onDragStart,
       onSelect,
       placedArtwork.placement.center,
       placedArtwork.placement.id,
+      selectedGroupArtworks,
       stageSize.height,
       stageSize.width,
     ]
   );
 
-  const renderCenter = committedCenterOverride ?? placedArtwork.placement.center;
+  const renderCenter =
+    externalCommittedCenterOverride ?? committedCenterOverride ?? placedArtwork.placement.center;
+  const activeDragOffset = isGroupDragMember ? groupDragOffset : dragOffset;
   const left =
     stageOffset.x +
     renderCenter.x * stageSize.width -
@@ -1973,6 +2120,82 @@ function PlacedWallArtwork({
     stageOffset.y +
     renderCenter.y * stageSize.height -
     placedArtwork.displaySize.height / 2;
+  const normalizedArtworkRect = useMemo(
+    () => ({
+      x:
+        renderCenter.x -
+        placedArtwork.displaySize.width / Math.max(stageSize.width, 1) / 2,
+      y:
+        renderCenter.y -
+        placedArtwork.displaySize.height / Math.max(stageSize.height, 1) / 2,
+      width: placedArtwork.displaySize.width / Math.max(stageSize.width, 1),
+      height: placedArtwork.displaySize.height / Math.max(stageSize.height, 1),
+    }),
+    [
+      placedArtwork.displaySize.height,
+      placedArtwork.displaySize.width,
+      renderCenter.x,
+      renderCenter.y,
+      stageSize.height,
+      stageSize.width,
+    ]
+  );
+  const sceneLightingEffect = useMemo(
+    () => resolveSceneLightingEffect(sceneLightingZones, normalizedArtworkRect),
+    [normalizedArtworkRect, sceneLightingZones]
+  );
+  const effectiveArtworkBrightness = clampNumber(
+    artworkBrightness * sceneLightingEffect.brightnessMultiplier,
+    0.5,
+    1.32
+  );
+  const brightnessDelta = sceneLightingEffect.brightnessMultiplier - 1;
+  const effectiveEnvironment = useMemo<RoomEnvironmentLighting | null>(() => {
+    if (
+      Math.abs(brightnessDelta) <= 0.001 &&
+      Math.abs(sceneLightingEffect.warmthOffset) <= 0.001
+    ) {
+      return environment;
+    }
+
+    return {
+      ...(environment ?? {}),
+      wallBrightness: clampNumber(
+        (environment?.wallBrightness ?? 0.62) + brightnessDelta * 0.42,
+        0,
+        1
+      ),
+      ambientLight: clampNumber(
+        (environment?.ambientLight ?? 0.6) + brightnessDelta * 0.36,
+        0,
+        1
+      ),
+      warmth: clampNumber(
+        (environment?.warmth ?? 0) + sceneLightingEffect.warmthOffset,
+        -1,
+        1
+      ),
+    };
+  }, [brightnessDelta, environment, sceneLightingEffect.warmthOffset]);
+  const effectiveMaterialRealism = useMemo<ResolvedRoomMaterialRealism>(() => {
+    if (sceneLightingEffect.reflectionBoost <= 0.001) {
+      return materialRealism;
+    }
+
+    return {
+      ...materialRealism,
+      reflectionStrength: clampNumber(
+        materialRealism.reflectionStrength + sceneLightingEffect.reflectionBoost,
+        0,
+        1
+      ),
+    };
+  }, [materialRealism, sceneLightingEffect.reflectionBoost]);
+  const brightnessOverlayOpacity =
+    effectiveArtworkBrightness < 1
+      ? clampNumber(1 - effectiveArtworkBrightness, 0, 0.5)
+      : clampNumber((effectiveArtworkBrightness - 1) * 0.5, 0, 0.125);
+  const brightnessOverlayColor = effectiveArtworkBrightness < 1 ? "#000000" : "#FFFFFF";
   const cornerMarkers = [
     { left: -2, top: -2, borderLeftWidth: 2, borderTopWidth: 2 },
     { right: -2, top: -2, borderRightWidth: 2, borderTopWidth: 2 },
@@ -1994,7 +2217,7 @@ function PlacedWallArtwork({
         overflow: "visible",
         zIndex: 10 + placedArtwork.placement.zIndex,
         transform: [
-          ...dragOffset.getTranslateTransform(),
+          ...activeDragOffset.getTranslateTransform(),
           {
             rotate: `${placedArtwork.placement.rotationDegrees}deg`,
           },
@@ -2026,12 +2249,12 @@ function PlacedWallArtwork({
         showShadow={false}
         depthMode="roomMockup"
         shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
-        materialRealism={materialRealism}
-        environment={environment ?? undefined}
+        materialRealism={effectiveMaterialRealism}
+        environment={effectiveEnvironment ?? undefined}
         style={{ opacity: 0.992 }}
       />
 
-      {Math.abs(artworkBrightness - 1) > 0.005 ? (
+      {Math.abs(effectiveArtworkBrightness - 1) > 0.005 ? (
         <View
           pointerEvents="none"
           style={{
@@ -2868,28 +3091,48 @@ export default function RoomViewScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
+  const route = useRoute<RouteProp<FramingRootStackParamList, "RoomView">>();
   const canGoBack = navigation.canGoBack();
   const unit = useAppSettingsStore((state) => state.unit);
+  const setAppUnit = useAppSettingsStore((state) => state.setUnit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const draft = useFramingFlowStore((state) => state.draft);
   const setRoomView = useFramingFlowStore((state) => state.setRoomView);
+  const replaceDraft = useFramingFlowStore((state) => state.replaceDraft);
   const resetDraft = useFramingFlowStore((state) => state.resetDraft);
   const projectFolders = useSavedProjectsStore((state) => state.projectFolders);
   const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
+  const roomLayouts = useSavedProjectsStore((state) => state.roomLayouts);
+  const createProjectFolder = useSavedProjectsStore((state) => state.createProjectFolder);
+  const saveFramedArtwork = useSavedProjectsStore((state) => state.saveFramedArtwork);
+  const updateFramedArtwork = useSavedProjectsStore((state) => state.updateFramedArtwork);
+  const saveRoomLayout = useSavedProjectsStore((state) => state.saveRoomLayout);
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const exportSvgRef = useRef<SvgElementRef | null>(null);
   const shortcutInputRef = useRef<TextInput | null>(null);
+  const handledRoomViewLaunchIdRef = useRef<string | null>(null);
+  const pendingWallPhotoArtworkIdRef = useRef<string | null>(null);
+  const groupDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const backgroundTapStartRef = useRef<{ x: number; y: number } | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
   const [isExporting, setIsExporting] = useState(false);
   const [wallPhotoSourceSheetVisible, setWallPhotoSourceSheetVisible] = useState(false);
   const [framedArtworkSheetVisible, setFramedArtworkSheetVisible] = useState(false);
+  const [saveLayoutSheetVisible, setSaveLayoutSheetVisible] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
   const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
   const [selectedPlacementIds, setSelectedPlacementIds] = useState<string[]>([]);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [groupCommittedCenterOverrides, setGroupCommittedCenterOverrides] =
+    useState<Record<string, RoomViewPoint> | null>(null);
   const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
+  const [selectedLayoutProjectFolderId, setSelectedLayoutProjectFolderId] = useState<string | null>(null);
+  const [layoutName, setLayoutName] = useState("");
+  const [newLayoutProjectFolderName, setNewLayoutProjectFolderName] = useState("");
   const [artworkSortMode, setArtworkSortMode] = useState<ArtworkSortMode>("recent");
+  const [presetRoomOrientation, setPresetRoomOrientation] =
+    useState<RoomPresetSceneOrientation>("landscape");
   const [artworkSortMenuVisible, setArtworkSortMenuVisible] = useState(false);
   const [isArtworkDragging, setIsArtworkDragging] = useState(false);
   const [isCalibrationDragging, setIsCalibrationDragging] = useState(false);
@@ -2940,6 +3183,26 @@ export default function RoomViewScreen() {
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
   const isTabletWorkspace = !isPhoneWorkspace;
+  const presetRoomTileWidth: ViewStyle["width"] = isPhoneWorkspace
+    ? "100%"
+    : isTabletLandscape
+      ? "32.25%"
+      : "49%";
+  const presetRoomImageHeight = isPhoneWorkspace ? 190 : isTabletLandscape ? 240 : 284;
+  const presetRoomTitleLines = isPhoneWorkspace ? 2 : 2;
+  const visiblePresetRoomScenes = getPresetRoomScenesByOrientation(presetRoomOrientation);
+  const framedArtworkPickerColumns = isPhoneWorkspace ? 1 : isTabletLandscape ? 4 : 3;
+  const framedArtworkPickerMaxWidth = isPhoneWorkspace ? 430 : isTabletLandscape ? 1120 : 920;
+  const framedArtworkPickerTileWidth: ViewStyle["width"] = isPhoneWorkspace
+    ? "100%"
+    : isTabletLandscape
+      ? "24.25%"
+      : "32.25%";
+  const framedArtworkPickerThumbnailHeight = isPhoneWorkspace
+    ? 190
+    : isTabletLandscape
+      ? 210
+      : 230;
   const sceneImageWidth =
     roomView.sourceMode === "presetRoom"
       ? activePresetScene.sourceImageDimensions.width
@@ -2998,6 +3261,10 @@ export default function RoomViewScreen() {
     sortedProjectFolders.find((folder) => folder.id === selectedArtworkProjectFolderId) ??
     sortedProjectFolders[0] ??
     null;
+  const currentSavedRoomLayout =
+    roomLayouts.find((layout) => layout.id === roomView.savedRoomLayoutId) ?? null;
+  const activeRoomLayoutSourceLabel =
+    roomView.sourceMode === "presetRoom" ? activePresetScene.title : "My Wall Photo";
   const selectedFolderFramedArtworks = useMemo(
     () =>
       selectedArtworkProjectFolder
@@ -3105,18 +3372,10 @@ export default function RoomViewScreen() {
     () => placedArtworks.filter((item) => selectedPlacementIdSet.has(item.placement.id)),
     [placedArtworks, selectedPlacementIdSet]
   );
-  const selectedPlacedArtwork =
-    placedArtworks.find((item) => item.placement.id === roomView.activePlacementId) ?? null;
   const activeSelectionCount = Math.max(
     selectedPlacedArtworks.length,
-    selectedPlacedArtwork ? 1 : 0
+    activePlacement ? 1 : 0
   );
-  const selectedArtworkToolbarHeight = getSelectedArtworkToolbarHeight(activeSelectionCount);
-  const selectedArtworkToolbarPosition = getSelectedArtworkToolbarPosition({
-    selectedArtwork: selectedPlacedArtwork,
-    imageRect: displayedImageRect,
-    height: selectedArtworkToolbarHeight,
-  });
   const selectedSizeLabel = selectedFramedArtwork
     ? getSavedArtworkSizeLabel(selectedFramedArtwork, unit, imperialPrecision)
     : "Not selected";
@@ -3158,19 +3417,248 @@ export default function RoomViewScreen() {
             imperialPrecision
           )}.`;
 
-  useEffect(() => {
-    if (!selectedArtworkProjectFolderId && sortedProjectFolders[0]) {
-      setSelectedArtworkProjectFolderId(sortedProjectFolders[0].id);
+  const buildCurrentRoomLayoutSnapshot = useCallback(
+    (savedRoomLayoutId: string | null = null): RoomViewDraft =>
+      cloneRoomViewDraft({
+        ...roomView,
+        savedRoomLayoutId,
+        placements: activeSourcePlacements,
+        activePlacementId: activeSourcePlacements.some(
+          (placement) => placement.id === roomView.activePlacementId
+        )
+          ? roomView.activePlacementId
+          : null,
+        sourceWallShadows: pickRoomViewSourceRecord(roomView.sourceWallShadows, activeSourceId),
+        sourceArtworkBrightness: pickRoomViewSourceRecord(
+          roomView.sourceArtworkBrightness,
+          activeSourceId
+        ),
+        sourceMaterialRealism: pickRoomViewSourceRecord(
+          roomView.sourceMaterialRealism,
+          activeSourceId
+        ),
+      }),
+    [activeSourceId, activeSourcePlacements, roomView]
+  );
+
+  const openSaveLayoutSheet = useCallback(
+    (nameOverride?: string, folderIdOverride?: string | null) => {
+      if (!hasActiveScene) {
+        Alert.alert("Room needed", "Choose a preset room or add a wall photo before saving this layout.");
+        return;
+      }
+
+      setLayoutName(
+        nameOverride?.trim() ||
+          currentSavedRoomLayout?.name ||
+          `${activeRoomLayoutSourceLabel} Layout`
+      );
+      setSelectedLayoutProjectFolderId(
+        folderIdOverride ?? currentSavedRoomLayout?.projectFolderId ?? sortedProjectFolders[0]?.id ?? null
+      );
+      setNewLayoutProjectFolderName("");
+      setSaveLayoutSheetVisible(true);
+    },
+    [activeRoomLayoutSourceLabel, currentSavedRoomLayout, hasActiveScene, sortedProjectFolders]
+  );
+
+  const handleSaveLayoutPress = useCallback(() => {
+    if (!hasActiveScene) {
+      Alert.alert("Room needed", "Choose a preset room or add a wall photo before saving this layout.");
       return;
     }
 
     if (
+      currentSavedRoomLayout &&
+      roomLayoutSnapshotsMatch(
+        currentSavedRoomLayout.roomView,
+        buildCurrentRoomLayoutSnapshot(currentSavedRoomLayout.id)
+      )
+    ) {
+      Alert.alert("This layout is already saved.", undefined, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Save Copy",
+          onPress: () =>
+            openSaveLayoutSheet(
+              `${currentSavedRoomLayout.name} Copy`,
+              currentSavedRoomLayout.projectFolderId
+            ),
+        },
+      ]);
+      return;
+    }
+
+    openSaveLayoutSheet();
+  }, [buildCurrentRoomLayoutSnapshot, currentSavedRoomLayout, hasActiveScene, openSaveLayoutSheet]);
+
+  const handleCreateLayoutProjectFolder = useCallback(() => {
+    const folderName = newLayoutProjectFolderName.trim();
+
+    if (!folderName) {
+      Alert.alert("Folder name needed", "Enter a project folder name first.");
+      return;
+    }
+
+    const folder = createProjectFolder(folderName);
+    setSelectedLayoutProjectFolderId(folder.id);
+    setNewLayoutProjectFolderName("");
+  }, [createProjectFolder, newLayoutProjectFolderName]);
+
+  const handleSaveRoomLayout = useCallback(() => {
+    const trimmedLayoutName = layoutName.trim();
+
+    if (!trimmedLayoutName) {
+      Alert.alert("Layout name needed", "Enter a name for this room layout.");
+      return;
+    }
+
+    if (!selectedLayoutProjectFolderId) {
+      Alert.alert("Project folder needed", "Select or create a project folder.");
+      return;
+    }
+
+    const savedLayout = saveRoomLayout({
+      projectFolderId: selectedLayoutProjectFolderId,
+      name: trimmedLayoutName,
+      notes: "",
+      unit,
+      roomView: buildCurrentRoomLayoutSnapshot(null),
+      sourceMode: roomView.sourceMode,
+      sourceId: activeSourceId,
+      presetSceneId: roomView.sourceMode === "presetRoom" ? activePresetScene.id : null,
+      wallPhoto: roomView.sourceMode === "myWall" ? roomView.wallPhoto : null,
+    });
+
+    setRoomView({
+      savedRoomLayoutId: savedLayout.id,
+    });
+    setSaveLayoutSheetVisible(false);
+    Alert.alert("Layout Saved", `"${savedLayout.name}" is saved in your project folder.`);
+  }, [
+    activePresetScene.id,
+    activeSourceId,
+    buildCurrentRoomLayoutSnapshot,
+    layoutName,
+    roomView.sourceMode,
+    roomView.wallPhoto,
+    saveRoomLayout,
+    selectedLayoutProjectFolderId,
+    setRoomView,
+    unit,
+  ]);
+
+  const handleSaveSelectedArtwork = useCallback(() => {
+    if (!activePlacement || !selectedFramedArtwork) {
+      handleSaveLayoutPress();
+      return;
+    }
+
+    const draftForSave = cloneFramingProjectDraft(selectedFramedArtwork.draft);
+    const hasImageOverride = hasArtworkImageOverride(activePlacement);
+
+    if (hasImageOverride) {
+      draftForSave.preview = {
+        ...draftForSave.preview,
+        artworkSourceMode:
+          activePlacement.artworkSourceModeOverride ?? draftForSave.preview.artworkSourceMode,
+        artworkImageUri:
+          activePlacement.artworkImageUriOverride ?? draftForSave.preview.artworkImageUri,
+        artworkCrop: activePlacement.artworkCropOverride ?? draftForSave.preview.artworkCrop,
+      };
+    }
+
+    const savedArtwork = hasImageOverride
+      ? saveFramedArtwork({
+          projectFolderId: selectedFramedArtwork.projectFolderId,
+          name: `${selectedFramedArtwork.name} Copy`,
+          notes: selectedFramedArtwork.notes ?? "",
+          draft: draftForSave,
+          unit: selectedFramedArtwork.unit,
+          finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
+        })
+      : updateFramedArtwork(selectedFramedArtwork.id, {
+          projectFolderId: selectedFramedArtwork.projectFolderId,
+          name: selectedFramedArtwork.name,
+          notes: selectedFramedArtwork.notes ?? "",
+          draft: draftForSave,
+          unit: selectedFramedArtwork.unit,
+          finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
+        });
+
+    if (!savedArtwork) {
+      Alert.alert("Unable to save", "This framed artwork is no longer available in your saved library.");
+      return;
+    }
+
+    if (hasImageOverride) {
+      setRoomView({
+        savedRoomLayoutId: null,
+        placements: roomView.placements.map((placement) =>
+          placement.id === activePlacement.id
+            ? {
+                ...placement,
+                framedArtworkId: savedArtwork.id,
+                artworkSourceModeOverride: undefined,
+                artworkImageUriOverride: undefined,
+                artworkCropOverride: undefined,
+              }
+            : placement
+        ),
+        activePlacementId: activePlacement.id,
+      });
+    }
+
+    Alert.alert(
+      "Artwork Saved",
+      hasImageOverride
+        ? `"${savedArtwork.name}" is saved as a new artwork.`
+        : `"${savedArtwork.name}" has been updated.`
+    );
+  }, [
+    activePlacement,
+    handleSaveLayoutPress,
+    roomView.placements,
+    saveFramedArtwork,
+    selectedFramedArtwork,
+    setRoomView,
+    updateFramedArtwork,
+  ]);
+
+  const handleToolbarSavePress = useCallback(() => {
+    if (activePlacement && selectedFramedArtwork) {
+      handleSaveSelectedArtwork();
+      return;
+    }
+
+    handleSaveLayoutPress();
+  }, [activePlacement, handleSaveLayoutPress, handleSaveSelectedArtwork, selectedFramedArtwork]);
+
+  useEffect(() => {
+    if (!selectedArtworkProjectFolderId && sortedProjectFolders[0]) {
+      setSelectedArtworkProjectFolderId(sortedProjectFolders[0].id);
+    } else if (
       selectedArtworkProjectFolderId &&
       !sortedProjectFolders.some((folder) => folder.id === selectedArtworkProjectFolderId)
     ) {
       setSelectedArtworkProjectFolderId(sortedProjectFolders[0]?.id ?? null);
     }
-  }, [selectedArtworkProjectFolderId, sortedProjectFolders]);
+
+    if (!selectedLayoutProjectFolderId && sortedProjectFolders[0]) {
+      setSelectedLayoutProjectFolderId(sortedProjectFolders[0].id);
+    } else if (
+      selectedLayoutProjectFolderId &&
+      !sortedProjectFolders.some((folder) => folder.id === selectedLayoutProjectFolderId)
+    ) {
+      setSelectedLayoutProjectFolderId(sortedProjectFolders[0]?.id ?? null);
+    }
+  }, [selectedArtworkProjectFolderId, selectedLayoutProjectFolderId, sortedProjectFolders]);
+
+  useEffect(() => {
+    if (activeSheet === "interiors" && roomView.sourceMode === "presetRoom") {
+      setPresetRoomOrientation(activePresetScene.orientation);
+    }
+  }, [activePresetScene.orientation, activeSheet, roomView.sourceMode]);
 
   useEffect(() => {
     const currentSourcePlacementIds = new Set(
@@ -3202,6 +3690,24 @@ export default function RoomViewScreen() {
       return filteredIds;
     });
   }, [activeSourcePlacements, roomView.activePlacementId]);
+
+  useEffect(() => {
+    if (!groupCommittedCenterOverrides) {
+      return;
+    }
+
+    const allCommittedCentersApplied = Object.entries(groupCommittedCenterOverrides).every(
+      ([placementId, committedCenter]) => {
+        const placement = activeSourcePlacements.find((item) => item.id === placementId);
+
+        return placement ? roomPointsAreClose(placement.center, committedCenter) : true;
+      }
+    );
+
+    if (allCommittedCentersApplied) {
+      setGroupCommittedCenterOverrides(null);
+    }
+  }, [activeSourcePlacements, groupCommittedCenterOverrides]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -3355,6 +3861,7 @@ export default function RoomViewScreen() {
   const handleSourceModeChange = useCallback(
     (sourceMode: RoomViewSourceMode) => {
       setRoomView({
+        savedRoomLayoutId: null,
         sourceMode,
         presetSceneId:
           sourceMode === "presetRoom"
@@ -3371,6 +3878,7 @@ export default function RoomViewScreen() {
   const handleSelectPresetScene = useCallback(
     (sceneId: string) => {
       setRoomView({
+        savedRoomLayoutId: null,
         sourceMode: "presetRoom",
         presetSceneId: sceneId,
         activePlacementId: null,
@@ -3381,11 +3889,127 @@ export default function RoomViewScreen() {
     [setRoomView]
   );
 
+  const placeFramedArtworkInSource = useCallback(
+    (
+      framedArtwork: SavedFramedArtwork,
+      targetSourceMode: RoomViewSourceMode = roomView.sourceMode,
+      targetSourceId: string = activeSourceId,
+      options: { clearTargetSourcePlacements?: boolean } = {}
+    ) => {
+      const clearTargetSourcePlacements = options.clearTargetSourcePlacements ?? false;
+      const targetPresetScene =
+        targetSourceMode === "presetRoom" ? getPresetRoomSceneById(targetSourceId) : null;
+      const resolvedSourceId =
+        targetSourceMode === "presetRoom"
+          ? targetPresetScene?.id ?? DEFAULT_PRESET_ROOM_SCENE_ID
+          : MY_WALL_SCENE_SOURCE_ID;
+      const targetPlacementBounds =
+        targetSourceMode === "presetRoom" && targetPresetScene
+          ? targetPresetScene.wallRegion
+          : { x: 0, y: 0, width: 1, height: 1 };
+      const targetSourcePlacements = roomView.placements.filter(
+        (placement) =>
+          placement.sourceMode === targetSourceMode &&
+          placement.sourceId === resolvedSourceId
+      );
+      const existingPlacement = clearTargetSourcePlacements
+        ? null
+        : targetSourcePlacements.find(
+            (placement) => placement.framedArtworkId === framedArtwork.id
+          );
+      const nextZIndex = clearTargetSourcePlacements
+        ? 0
+        : targetSourcePlacements.reduce(
+            (maxZIndex, placement) => Math.max(maxZIndex, placement.zIndex ?? 0),
+            -1
+          ) + 1;
+      const defaultCenter =
+        targetSourceMode === "presetRoom"
+          ? {
+              x: targetPlacementBounds.x + targetPlacementBounds.width / 2,
+              y: targetPlacementBounds.y + targetPlacementBounds.height / 2,
+            }
+          : { x: 0.5, y: 0.48 };
+      const placement =
+        existingPlacement ??
+        createRoomArtworkPlacement(
+          framedArtwork.id,
+          defaultCenter,
+          nextZIndex,
+          targetSourceMode,
+          resolvedSourceId
+        );
+      const placements = clearTargetSourcePlacements
+        ? [
+            ...roomView.placements.filter(
+              (currentPlacement) =>
+                currentPlacement.sourceMode !== targetSourceMode ||
+                currentPlacement.sourceId !== resolvedSourceId
+            ),
+            placement,
+          ]
+        : existingPlacement
+          ? roomView.placements.map((currentPlacement) =>
+              currentPlacement.id === existingPlacement.id
+                ? {
+                    ...currentPlacement,
+                    framedArtworkId: framedArtwork.id,
+                    sourceMode: targetSourceMode,
+                    sourceId: resolvedSourceId,
+                  }
+                : currentPlacement
+            )
+          : [...roomView.placements, placement];
+
+      setRoomView({
+        savedRoomLayoutId: clearTargetSourcePlacements ? null : roomView.savedRoomLayoutId,
+        sourceMode: targetSourceMode,
+        presetSceneId:
+          targetSourceMode === "presetRoom"
+            ? resolvedSourceId
+            : roomView.presetSceneId,
+        placements,
+        activePlacementId: placement.id,
+      });
+      setSelectedPlacementIds([placement.id]);
+      setIsMultiSelectMode(false);
+      setArtworkSortMenuVisible(false);
+      setFramedArtworkSheetVisible(false);
+
+      return placement;
+    },
+    [
+      activeSourceId,
+      roomView.placements,
+      roomView.presetSceneId,
+      roomView.savedRoomLayoutId,
+      roomView.sourceMode,
+      setRoomView,
+    ]
+  );
+
   const selectWallPhoto = useCallback(
     (selection: { imageUri: string; imageWidth: number | null; imageHeight: number | null }) => {
       const initialRoomView = createInitialRoomViewDraft(unit);
+      const pendingWallPhotoArtworkId = pendingWallPhotoArtworkIdRef.current;
+      const pendingArtwork = pendingWallPhotoArtworkId
+        ? framedArtworks.find((artwork) => artwork.id === pendingWallPhotoArtworkId)
+        : null;
+      const placement = pendingArtwork
+        ? createRoomArtworkPlacement(
+            pendingArtwork.id,
+            { x: 0.5, y: 0.48 },
+            0,
+            "myWall",
+            MY_WALL_SCENE_SOURCE_ID
+          )
+        : null;
+      const retainedPlacements = roomView.placements.filter(
+        (currentPlacement) => currentPlacement.sourceMode !== "myWall"
+      );
 
       setRoomView({
+        savedRoomLayoutId: null,
         sourceMode: "myWall",
         wallPhoto: {
           imageUri: selection.imageUri,
@@ -3397,13 +4021,14 @@ export default function RoomViewScreen() {
         snapToGridEnabled: initialRoomView.snapToGridEnabled,
         gridSize: initialRoomView.gridSize,
         gridSizeUnit: initialRoomView.gridSizeUnit,
-        placements: roomView.placements.filter((placement) => placement.sourceMode !== "myWall"),
-        activePlacementId: null,
+        placements: placement ? [...retainedPlacements, placement] : retainedPlacements,
+        activePlacementId: placement?.id ?? null,
       });
-      setSelectedPlacementIds([]);
+      setSelectedPlacementIds(placement ? [placement.id] : []);
       setIsMultiSelectMode(false);
+      pendingWallPhotoArtworkIdRef.current = null;
     },
-    [roomView.placements, setRoomView, unit]
+    [framedArtworks, roomView.placements, setRoomView, unit]
   );
 
   const handlePickWallPhotoFromLibrary = useCallback(async () => {
@@ -3417,7 +4042,7 @@ export default function RoomViewScreen() {
   const openWallPhotoSourceChooser = useCallback(() => {
     setActiveSheet(null);
 
-    if (Platform.OS === "ios") {
+    if (Platform.OS === "ios" && isPhoneWorkspace) {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ["Cancel", "Take Photo", "Choose from Photo Library"],
@@ -3438,7 +4063,72 @@ export default function RoomViewScreen() {
     }
 
     setWallPhotoSourceSheetVisible(true);
-  }, [handlePickWallPhotoFromLibrary, handleTakeWallPhoto, isDark]);
+  }, [handlePickWallPhotoFromLibrary, handleTakeWallPhoto, isDark, isPhoneWorkspace]);
+
+  useEffect(() => {
+    const launchParams = route.params;
+
+    if (!launchParams?.autoPlaceArtworkId || !launchParams.launchId) {
+      return;
+    }
+
+    if (handledRoomViewLaunchIdRef.current === launchParams.launchId) {
+      return;
+    }
+
+    handledRoomViewLaunchIdRef.current = launchParams.launchId;
+    navigation.setParams({
+      autoPlaceArtworkId: undefined,
+      sourceMode: undefined,
+      presetSceneId: undefined,
+      startWallPhotoFlow: undefined,
+      launchId: undefined,
+    });
+
+    const artwork = framedArtworks.find(
+      (savedArtwork) => savedArtwork.id === launchParams.autoPlaceArtworkId
+    );
+
+    if (!artwork) {
+      Alert.alert(
+        "Artwork not found",
+        "This framed artwork is no longer available in your saved library."
+      );
+      return;
+    }
+
+    setActiveSheet(null);
+    setFramedArtworkSheetVisible(false);
+    setSelectedPlacementIds([]);
+    setIsMultiSelectMode(false);
+
+    if (launchParams.sourceMode === "presetRoom") {
+      placeFramedArtworkInSource(
+        artwork,
+        "presetRoom",
+        launchParams.presetSceneId ?? DEFAULT_PRESET_ROOM_SCENE_ID,
+        { clearTargetSourcePlacements: true }
+      );
+      return;
+    }
+
+    pendingWallPhotoArtworkIdRef.current = artwork.id;
+    setRoomView({
+      sourceMode: "myWall",
+      activePlacementId: null,
+    });
+
+    setTimeout(() => {
+      void handlePickWallPhotoFromLibrary();
+    }, 420);
+  }, [
+    framedArtworks,
+    handlePickWallPhotoFromLibrary,
+    navigation,
+    placeFramedArtworkInSource,
+    route.params,
+    setRoomView,
+  ]);
 
   const openFramedArtworkChooser = useCallback(() => {
     if (roomView.sourceMode === "presetRoom") {
@@ -3480,43 +4170,9 @@ export default function RoomViewScreen() {
 
   const handleSelectFramedArtwork = useCallback(
     (framedArtwork: SavedFramedArtwork) => {
-      const nextZIndex =
-        activeSourcePlacements.reduce(
-          (maxZIndex, placement) => Math.max(maxZIndex, placement.zIndex ?? 0),
-          -1
-        ) + 1;
-      const defaultCenter =
-        roomView.sourceMode === "presetRoom"
-          ? {
-              x: placementBounds.x + placementBounds.width / 2,
-              y: placementBounds.y + placementBounds.height / 2,
-            }
-          : { x: 0.5, y: 0.48 };
-      const placement = createRoomArtworkPlacement(
-        framedArtwork.id,
-        defaultCenter,
-        nextZIndex,
-        roomView.sourceMode,
-        activeSourceId
-      );
-
-      setRoomView({
-        placements: [...roomView.placements, placement],
-        activePlacementId: placement.id,
-      });
-      setSelectedPlacementIds([placement.id]);
-      setIsMultiSelectMode(false);
-      setArtworkSortMenuVisible(false);
-      setFramedArtworkSheetVisible(false);
+      placeFramedArtworkInSource(framedArtwork);
     },
-    [
-      activeSourceId,
-      activeSourcePlacements,
-      placementBounds,
-      roomView.placements,
-      roomView.sourceMode,
-      setRoomView,
-    ]
+    [placeFramedArtworkInSource]
   );
 
   const handleSelectPlacement = useCallback(
@@ -3548,7 +4204,11 @@ export default function RoomViewScreen() {
   );
 
   const handleClearPlacementSelection = useCallback(() => {
-    if (!roomView.activePlacementId) {
+    if (
+      !roomView.activePlacementId &&
+      selectedPlacementIds.length === 0 &&
+      !isMultiSelectMode
+    ) {
       return;
     }
 
@@ -3557,13 +4217,67 @@ export default function RoomViewScreen() {
     });
     setSelectedPlacementIds([]);
     setIsMultiSelectMode(false);
-  }, [roomView.activePlacementId, setRoomView]);
+  }, [isMultiSelectMode, roomView.activePlacementId, selectedPlacementIds.length, setRoomView]);
+
+  const handleBackgroundResponderGrant = useCallback(
+    (event: GestureResponderEvent) => {
+      if (isArtworkDragging || isCalibrationDragging) {
+        backgroundTapStartRef.current = null;
+        return;
+      }
+
+      backgroundTapStartRef.current = {
+        x: event.nativeEvent.pageX,
+        y: event.nativeEvent.pageY,
+      };
+    },
+    [isArtworkDragging, isCalibrationDragging]
+  );
+
+  const handleBackgroundResponderRelease = useCallback(
+    (event: GestureResponderEvent) => {
+      const start = backgroundTapStartRef.current;
+
+      backgroundTapStartRef.current = null;
+
+      if (!start || isArtworkDragging || isCalibrationDragging) {
+        return;
+      }
+
+      const deltaX = event.nativeEvent.pageX - start.x;
+      const deltaY = event.nativeEvent.pageY - start.y;
+      const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
+
+      if (distance <= 8) {
+        handleClearPlacementSelection();
+      }
+    },
+    [handleClearPlacementSelection, isArtworkDragging, isCalibrationDragging]
+  );
 
   const handleMovePlacement = useCallback(
     (placementId: string, center: RoomViewPoint) => {
       setRoomView({
         placements: roomView.placements.map((placement) =>
           placement.id === placementId ? { ...placement, center } : placement
+        ),
+      });
+    },
+    [roomView.placements, setRoomView]
+  );
+
+  const handleMovePlacementGroup = useCallback(
+    (centersById: Map<string, RoomViewPoint>) => {
+      if (centersById.size === 0) {
+        return;
+      }
+
+      setGroupCommittedCenterOverrides(Object.fromEntries(centersById));
+      setRoomView({
+        placements: roomView.placements.map((placement) =>
+          centersById.has(placement.id)
+            ? { ...placement, center: centersById.get(placement.id)! }
+            : placement
         ),
       });
     },
@@ -3813,13 +4527,32 @@ export default function RoomViewScreen() {
   }, [activePlacement, handleSelectedArtworkReplacement, isDark]);
 
   const handleEditSelectedArtwork = useCallback(() => {
-    if (!activePlacement) {
+    if (!activePlacement || !selectedFramedArtwork) {
       return;
     }
 
-    setActiveSheet("settings");
-    setActiveRealismTab("frame");
-  }, [activePlacement]);
+    const draftForEdit = cloneFramingProjectDraft(selectedFramedArtwork.draft);
+
+    draftForEdit.meta = {
+      ...draftForEdit.meta,
+      projectName: selectedFramedArtwork.name,
+      savedFramedArtworkId: selectedFramedArtwork.id,
+    };
+    draftForEdit.preview = getPlacementPreview(selectedFramedArtwork, activePlacement);
+    draftForEdit.roomView = cloneRoomViewDraft(roomView);
+
+    setAppUnit(selectedFramedArtwork.unit);
+    replaceDraft(draftForEdit);
+    setActiveSheet(null);
+    navigation.navigate("PreviewAdjust");
+  }, [
+    activePlacement,
+    navigation,
+    replaceDraft,
+    roomView,
+    selectedFramedArtwork,
+    setAppUnit,
+  ]);
 
   const handleToggleMultiSelectMode = useCallback(() => {
     setIsMultiSelectMode((currentMode) => {
@@ -3831,161 +4564,33 @@ export default function RoomViewScreen() {
         );
       }
 
+      if (!nextMode && activePlacement) {
+        setSelectedPlacementIds([activePlacement.id]);
+      }
+
       return nextMode;
     });
   }, [activePlacement]);
 
-  const handleAlignSelectedPlacements = useCallback(
-    (action: RoomAlignmentAction) => {
-      if (selectedPlacedArtworks.length < 2 || displayedImageRect.width <= 0 || displayedImageRect.height <= 0) {
-        return;
-      }
+  const handleToolbarSelectPress = useCallback(() => {
+    if (activePlacement || selectedPlacementIds.length > 0 || isMultiSelectMode) {
+      handleToggleMultiSelectMode();
+      return;
+    }
 
-      const selectedBounds = selectedPlacedArtworks.map((item) =>
-        getArtworkNormalizedBounds(item, displayedImageRect.width, displayedImageRect.height)
-      );
-      const selectionLeft = Math.min(...selectedBounds.map((bounds) => bounds.left));
-      const selectionRight = Math.max(...selectedBounds.map((bounds) => bounds.right));
-      const selectionTop = Math.min(...selectedBounds.map((bounds) => bounds.top));
-      const selectionBottom = Math.max(...selectedBounds.map((bounds) => bounds.bottom));
-      const selectionCenterX = (selectionLeft + selectionRight) / 2;
-      const selectionCenterY = (selectionTop + selectionBottom) / 2;
-      const nextCentersById = new Map<string, RoomViewPoint>();
+    const topmostPlacement = placedArtworks[placedArtworks.length - 1]?.placement;
 
-      selectedBounds.forEach((bounds) => {
-        const nextPoint = { ...bounds.item.placement.center };
-
-        if (action === "left") {
-          nextPoint.x = selectionLeft + bounds.width / 2;
-        } else if (action === "center") {
-          nextPoint.x = selectionCenterX;
-        } else if (action === "right") {
-          nextPoint.x = selectionRight - bounds.width / 2;
-        } else if (action === "top") {
-          nextPoint.y = selectionTop + bounds.height / 2;
-        } else if (action === "middle") {
-          nextPoint.y = selectionCenterY;
-        } else if (action === "bottom") {
-          nextPoint.y = selectionBottom - bounds.height / 2;
-        }
-
-        nextCentersById.set(
-          bounds.id,
-          clampArtworkCenter({
-            point: nextPoint,
-            stageWidth: displayedImageRect.width,
-            stageHeight: displayedImageRect.height,
-            artworkWidth: bounds.item.displaySize.width,
-            artworkHeight: bounds.item.displaySize.height,
-            placementBounds,
-          })
-        );
-      });
-
-      setRoomView({
-        placements: roomView.placements.map((placement) =>
-          nextCentersById.has(placement.id)
-            ? { ...placement, center: nextCentersById.get(placement.id)! }
-            : placement
-        ),
-      });
-      void Haptics.selectionAsync();
-    },
-    [
-      displayedImageRect.height,
-      displayedImageRect.width,
-      placementBounds,
-      roomView.placements,
-      selectedPlacedArtworks,
-      setRoomView,
-    ]
-  );
-
-  const handleDistributeSelectedPlacements = useCallback(
-    (action: RoomDistributionAction) => {
-      if (selectedPlacedArtworks.length < 3 || displayedImageRect.width <= 0 || displayedImageRect.height <= 0) {
-        return;
-      }
-
-      const selectedBounds = selectedPlacedArtworks.map((item) =>
-        getArtworkNormalizedBounds(item, displayedImageRect.width, displayedImageRect.height)
-      );
-      const nextCentersById = new Map<string, RoomViewPoint>();
-
-      if (action === "horizontal") {
-        const sortedBounds = [...selectedBounds].sort((first, second) => first.left - second.left);
-        const firstLeft = sortedBounds[0].left;
-        const lastRight = sortedBounds[sortedBounds.length - 1].right;
-        const totalWidth = sortedBounds.reduce((sum, bounds) => sum + bounds.width, 0);
-        const gap = (lastRight - firstLeft - totalWidth) / (sortedBounds.length - 1);
-        let cursor = firstLeft;
-
-        sortedBounds.forEach((bounds) => {
-          const nextPoint = {
-            ...bounds.item.placement.center,
-            x: cursor + bounds.width / 2,
-          };
-
-          nextCentersById.set(
-            bounds.id,
-            clampArtworkCenter({
-              point: nextPoint,
-              stageWidth: displayedImageRect.width,
-              stageHeight: displayedImageRect.height,
-              artworkWidth: bounds.item.displaySize.width,
-              artworkHeight: bounds.item.displaySize.height,
-              placementBounds,
-            })
-          );
-          cursor += bounds.width + gap;
-        });
-      } else {
-        const sortedBounds = [...selectedBounds].sort((first, second) => first.top - second.top);
-        const firstTop = sortedBounds[0].top;
-        const lastBottom = sortedBounds[sortedBounds.length - 1].bottom;
-        const totalHeight = sortedBounds.reduce((sum, bounds) => sum + bounds.height, 0);
-        const gap = (lastBottom - firstTop - totalHeight) / (sortedBounds.length - 1);
-        let cursor = firstTop;
-
-        sortedBounds.forEach((bounds) => {
-          const nextPoint = {
-            ...bounds.item.placement.center,
-            y: cursor + bounds.height / 2,
-          };
-
-          nextCentersById.set(
-            bounds.id,
-            clampArtworkCenter({
-              point: nextPoint,
-              stageWidth: displayedImageRect.width,
-              stageHeight: displayedImageRect.height,
-              artworkWidth: bounds.item.displaySize.width,
-              artworkHeight: bounds.item.displaySize.height,
-              placementBounds,
-            })
-          );
-          cursor += bounds.height + gap;
-        });
-      }
-
-      setRoomView({
-        placements: roomView.placements.map((placement) =>
-          nextCentersById.has(placement.id)
-            ? { ...placement, center: nextCentersById.get(placement.id)! }
-            : placement
-        ),
-      });
-      void Haptics.selectionAsync();
-    },
-    [
-      displayedImageRect.height,
-      displayedImageRect.width,
-      placementBounds,
-      roomView.placements,
-      selectedPlacedArtworks,
-      setRoomView,
-    ]
-  );
+    if (topmostPlacement) {
+      handleSelectPlacement(topmostPlacement.id);
+    }
+  }, [
+    activePlacement,
+    handleSelectPlacement,
+    handleToggleMultiSelectMode,
+    isMultiSelectMode,
+    placedArtworks,
+    selectedPlacementIds.length,
+  ]);
 
   useEffect(() => {
     if (!activePlacement || !isTabletWorkspace || framedArtworkSheetVisible || wallPhotoSourceSheetVisible) {
@@ -4309,11 +4914,15 @@ export default function RoomViewScreen() {
             />
           ) : null}
 
-          <Pressable
+          <View
             accessibilityRole="button"
             accessibilityLabel="Deselect framed artwork"
-            disabled={isArtworkDragging || isCalibrationDragging}
-            onPress={handleClearPlacementSelection}
+            onStartShouldSetResponder={() => !isArtworkDragging && !isCalibrationDragging}
+            onResponderGrant={handleBackgroundResponderGrant}
+            onResponderRelease={handleBackgroundResponderRelease}
+            onResponderTerminate={() => {
+              backgroundTapStartRef.current = null;
+            }}
             style={{
               position: "absolute",
               left: displayedImageRect.left,
@@ -4329,6 +4938,7 @@ export default function RoomViewScreen() {
               key={placedArtwork.placement.id}
               placedArtwork={placedArtwork}
               selected={selectedPlacementIdSet.has(placedArtwork.placement.id)}
+              selectedGroupArtworks={selectedPlacedArtworks}
               stageSize={{
                 width: displayedImageRect.width,
                 height: displayedImageRect.height,
@@ -4339,6 +4949,10 @@ export default function RoomViewScreen() {
               }}
               placementBounds={placementBounds}
               snapGridSizePixels={snapGridSizePixels}
+              groupDragOffset={groupDragOffset}
+              externalCommittedCenterOverride={
+                groupCommittedCenterOverrides?.[placedArtwork.placement.id]
+              }
               sceneDefaultShadow={
                 roomView.sourceMode === "presetRoom"
                   ? activePresetScene.defaultShadow
@@ -4347,9 +4961,15 @@ export default function RoomViewScreen() {
               roomShadowOverride={activeSourceWallShadowOverride}
               materialRealism={activeSourceMaterialRealism}
               environment={activeSourceEnvironment}
+              sceneLightingZones={
+                roomView.sourceMode === "presetRoom"
+                  ? activePresetScene.sceneLightingZones
+                  : null
+              }
               artworkBrightness={activeSourceArtworkBrightness}
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
+              onGroupMoveEnd={handleMovePlacementGroup}
               onDragStart={() => setIsArtworkDragging(true)}
               onDragEnd={() => setIsArtworkDragging(false)}
             />
@@ -4368,20 +4988,6 @@ export default function RoomViewScreen() {
             />
           ) : null}
 
-          {selectedArtworkToolbarPosition ? (
-            <SelectedArtworkToolbar
-              position={selectedArtworkToolbarPosition}
-              selectedCount={activeSelectionCount}
-              isMultiSelectMode={isMultiSelectMode}
-              onDuplicate={handleDuplicateSelectedPlacement}
-              onReplace={handleReplaceSelectedArtwork}
-              onEdit={handleEditSelectedArtwork}
-              onDelete={deleteSelectedPlacement}
-              onToggleMultiSelect={handleToggleMultiSelectMode}
-              onAlign={handleAlignSelectedPlacements}
-              onDistribute={handleDistributeSelectedPlacements}
-            />
-          ) : null}
         </>
       ) : (
         <View
@@ -4433,32 +5039,28 @@ export default function RoomViewScreen() {
           >
             Add a photo of the wall where you want to preview your framed artwork.
           </Text>
-          {!isTabletLandscape ? (
-            <>
-              <AppButton
-                label="Add Photo"
-                onPress={openWallPhotoSourceChooser}
-                style={{
-                  width: useCompactWallPhotoEmptyState ? "70%" : "64%",
-                  maxWidth: useCompactWallPhotoEmptyState ? 190 : 220,
-                  marginTop: useCompactWallPhotoEmptyState ? spacing.md : spacing.lg,
-                }}
-              />
-              {showWallPhotoEmptyHelper ? (
-                <Text
-                  style={{
-                    ...typography.small,
-                    color: colors.textSecondary,
-                    textAlign: "center",
-                    maxWidth: useCompactWallPhotoEmptyState ? 280 : 360,
-                    marginTop: useCompactWallPhotoEmptyState ? spacing.sm : spacing.md,
-                  }}
-                  numberOfLines={useCompactWallPhotoEmptyState ? 2 : undefined}
-                >
-                  {paperPhotoHelperText}
-                </Text>
-              ) : null}
-            </>
+          <AppButton
+            label="Add Photo"
+            onPress={openWallPhotoSourceChooser}
+            style={{
+              width: useCompactWallPhotoEmptyState ? "70%" : "64%",
+              maxWidth: useCompactWallPhotoEmptyState ? 190 : 220,
+              marginTop: useCompactWallPhotoEmptyState ? spacing.md : spacing.lg,
+            }}
+          />
+          {showWallPhotoEmptyHelper ? (
+            <Text
+              style={{
+                ...typography.small,
+                color: colors.textSecondary,
+                textAlign: "center",
+                maxWidth: useCompactWallPhotoEmptyState ? 280 : 360,
+                marginTop: useCompactWallPhotoEmptyState ? spacing.sm : spacing.md,
+              }}
+              numberOfLines={useCompactWallPhotoEmptyState ? 2 : undefined}
+            >
+              {paperPhotoHelperText}
+            </Text>
           ) : null}
         </View>
       )}
@@ -4554,47 +5156,37 @@ export default function RoomViewScreen() {
   );
 
   const presetRoomControlsSection = (
-    <AppCard
-      title="Preset Rooms"
-      subtitle="Choose a built-in mockup scene for saved framed artworks."
-    >
-      <ScrollView
-        style={{ maxHeight: isTabletLandscape ? 280 : 360 }}
-        contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
-        showsVerticalScrollIndicator={PRESET_ROOM_SCENES.length > 3}
+    <View style={{ gap: spacing.md }}>
+      <AppSegmentedControl<RoomPresetSceneOrientation>
+        options={[
+          { label: "Landscape Rooms", value: "landscape" },
+          { label: "Portrait Rooms", value: "portrait" },
+        ]}
+        value={presetRoomOrientation}
+        onChange={setPresetRoomOrientation}
+      />
+      <View
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: spacing.md,
+          paddingBottom: spacing.xs,
+        }}
       >
-        {(["landscape", "portrait"] as const).map((orientation) => {
-          const scenes = getPresetRoomScenesByOrientation(orientation);
-
-          if (scenes.length === 0) {
-            return null;
-          }
-
-          return (
-            <View key={orientation} style={{ gap: spacing.sm }}>
-              <Text
-                style={{
-                  ...typography.small,
-                  color: colors.textSecondary,
-                  textTransform: "uppercase",
-                  fontWeight: "700",
-                }}
-              >
-                {ROOM_SCENE_ORIENTATION_LABELS[orientation]}
-              </Text>
-              {scenes.map((scene) => (
-                <PresetRoomSceneOption
-                  key={scene.id}
-                  scene={scene}
-                  selected={scene.id === activePresetScene.id}
-                  onPress={() => handleSelectPresetScene(scene.id)}
-                />
-              ))}
-            </View>
-          );
-        })}
-      </ScrollView>
-    </AppCard>
+        {visiblePresetRoomScenes.map((scene) => (
+          <PresetRoomSceneTile
+            key={scene.id}
+            scene={scene}
+            selected={scene.id === activePresetScene.id}
+            width={presetRoomTileWidth}
+            imageHeight={presetRoomImageHeight}
+            titleLines={presetRoomTitleLines}
+            compact={isPhoneWorkspace}
+            onPress={() => handleSelectPresetScene(scene.id)}
+          />
+        ))}
+      </View>
+    </View>
   );
 
   const calibrationCardSection = (
@@ -4833,7 +5425,25 @@ export default function RoomViewScreen() {
   const roomViewDockSection = (
     <RoomViewBottomDock
       activeSheet={activeSheet}
-      onOpenSheet={(sheet) => setActiveSheet(sheet)}
+      scrollable={!isTabletLandscape}
+      selectedCount={activeSelectionCount}
+      isMultiSelectMode={isMultiSelectMode}
+      hasSelectedArtwork={Boolean(activePlacement)}
+      canSelectArtwork={placedArtworks.length > 0}
+      onDuplicate={handleDuplicateSelectedPlacement}
+      onReplace={handleReplaceSelectedArtwork}
+      onEditArtwork={handleEditSelectedArtwork}
+      onSelectArtwork={handleToolbarSelectPress}
+      onSave={handleToolbarSavePress}
+      onDelete={deleteSelectedPlacement}
+      onOpenSheet={(sheet) => {
+        if (sheet === "artwork") {
+          openFramedArtworkChooser();
+          return;
+        }
+
+        setActiveSheet(sheet);
+      }}
     />
   );
 
@@ -4867,6 +5477,10 @@ export default function RoomViewScreen() {
     ) : activeSheet === "export" ? (
       exportCardSection
     ) : null;
+  const activeBottomSheetMaxHeight =
+    activeSheet === "interiors"
+      ? Math.min(windowHeight * 0.86, isTabletLandscape ? 860 : 700)
+      : Math.min(windowHeight * 0.78, isTabletLandscape ? 720 : 620);
 
   const closeFramedArtworkSheet = () => {
     setArtworkSortMenuVisible(false);
@@ -5053,47 +5667,47 @@ export default function RoomViewScreen() {
               alignSelf: "center",
             }}
           >
-            <View
-              style={{
-                width: "100%",
-                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
-                alignSelf: "center",
-                minHeight: 44,
-                justifyContent: "center",
-                position: "relative",
-              }}
-            >
-              {canGoBack ? (
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    navigation.goBack();
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Go back"
-                  hitSlop={10}
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    width: 44,
-                    height: 44,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
-                </Pressable>
-              ) : null}
-
-              <AppButton
-                label="Start New Draft"
-                onPress={() => {
-                  resetDraft();
-                  navigation.navigate("Setup");
+              <View
+                style={{
+                  width: "100%",
+                  maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                  alignSelf: "center",
+                  minHeight: 44,
+                  justifyContent: "center",
+                  position: "relative",
                 }}
-                style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
-              />
+              >
+                {canGoBack ? (
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      navigation.goBack();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go back"
+                    hitSlop={10}
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      width: 44,
+                      height: 44,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
+                  </Pressable>
+                ) : null}
+
+                <AppButton
+                  label="Start New Draft"
+                  onPress={() => {
+                    resetDraft();
+                    navigation.navigate("Setup");
+                  }}
+                  style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
+                />
             </View>
           </View>
         </View>
@@ -5128,11 +5742,104 @@ export default function RoomViewScreen() {
       <RoomViewBottomSheet
         visible={activeSheet !== null && activeSheet !== "settings"}
         title={activeSheetTitle}
-        maxHeight={Math.min(windowHeight * 0.78, isTabletLandscape ? 720 : 620)}
+        maxHeight={activeBottomSheetMaxHeight}
         onClose={() => setActiveSheet(null)}
       >
         {activeSheetContent}
       </RoomViewBottomSheet>
+
+      <AppSheetModal
+        visible={saveLayoutSheetVisible}
+        title="Save Layout"
+        onClose={() => setSaveLayoutSheetVisible(false)}
+      >
+        <AppTextField
+          label="Layout name"
+          placeholder="Room mockup name"
+          value={layoutName}
+          onChangeText={setLayoutName}
+        />
+
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
+            Project folder
+          </Text>
+          <ScrollView
+            style={{ maxHeight: 150 }}
+            contentContainerStyle={{ gap: spacing.sm }}
+            showsVerticalScrollIndicator={sortedProjectFolders.length > 3}
+          >
+            {sortedProjectFolders.length === 0 ? (
+              <Text style={{ ...typography.small, color: colors.textSecondary }}>
+                Create a project folder to save this room layout.
+              </Text>
+            ) : (
+              sortedProjectFolders.map((folder) => {
+                const selected = selectedLayoutProjectFolderId === folder.id;
+
+                return (
+                  <Pressable
+                    key={folder.id}
+                    onPress={() => setSelectedLayoutProjectFolderId(folder.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Save layout in ${folder.name}`}
+                    style={{
+                      minHeight: 44,
+                      borderWidth: 1,
+                      borderColor: selected ? colors.accent : colors.borderStrong,
+                      borderRadius: radii.md,
+                      backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+                      paddingHorizontal: spacing.md,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: spacing.sm,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        ...typography.sectionTitle,
+                        color: colors.textPrimary,
+                        flex: 1,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {folder.name}
+                    </Text>
+                    {selected ? (
+                      <Text style={{ ...typography.small, color: colors.accent, fontWeight: "700" }}>
+                        Selected
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+
+        <View style={{ gap: spacing.sm }}>
+          <AppTextField
+            label="Create new project folder"
+            placeholder="Client or project name"
+            value={newLayoutProjectFolderName}
+            onChangeText={setNewLayoutProjectFolderName}
+          />
+          <AppButton
+            variant="secondary"
+            label="Create Folder"
+            onPress={handleCreateLayoutProjectFolder}
+            style={{ width: "56%", alignSelf: "center" }}
+          />
+        </View>
+
+        <AppButton
+          label="Save Layout"
+          onPress={handleSaveRoomLayout}
+          disabled={!selectedLayoutProjectFolderId || !layoutName.trim()}
+          style={{ width: "60%", alignSelf: "center" }}
+        />
+      </AppSheetModal>
 
       <AppSheetModal
         visible={wallPhotoSourceSheetVisible}
@@ -5166,6 +5873,7 @@ export default function RoomViewScreen() {
         title="Add Framed Artwork"
         onClose={closeFramedArtworkSheet}
         headerActions={framedArtworkSheetHeaderActions}
+        maxWidth={framedArtworkPickerMaxWidth}
       >
         {framedArtworks.length === 0 ? (
           <Text style={{ ...typography.small, color: colors.textSecondary }}>
@@ -5222,9 +5930,16 @@ export default function RoomViewScreen() {
             </View>
 
             <ScrollView
-              style={{ maxHeight: Math.min(windowHeight * 0.55, 520) }}
-              contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.xs }}
-              showsVerticalScrollIndicator
+              style={{ maxHeight: Math.min(windowHeight * 0.64, isTabletLandscape ? 620 : 560) }}
+              contentContainerStyle={{
+                flexDirection: "row",
+                flexWrap: "wrap",
+                gap: spacing.md,
+                paddingBottom: spacing.xs,
+              }}
+              showsVerticalScrollIndicator={
+                sortedFramedArtworks.length > framedArtworkPickerColumns * 2
+              }
             >
               {sortedFramedArtworks.length === 0 ? (
                 <Text style={{ ...typography.small, color: colors.textSecondary }}>
@@ -5232,10 +5947,13 @@ export default function RoomViewScreen() {
                 </Text>
               ) : (
                 sortedFramedArtworks.map((artwork) => (
-                  <SavedFramedArtworkPickerRow
+                  <SavedFramedArtworkPickerTile
                     key={artwork.id}
                     artwork={artwork}
                     selected={artwork.id === selectedFramedArtwork?.id}
+                    width={framedArtworkPickerTileWidth}
+                    thumbnailHeight={framedArtworkPickerThumbnailHeight}
+                    compact={isPhoneWorkspace}
                     unit={unit}
                     imperialPrecision={imperialPrecision}
                     onPress={() => handleSelectFramedArtwork(artwork)}

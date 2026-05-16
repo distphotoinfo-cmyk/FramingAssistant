@@ -1,19 +1,48 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import FlowStepLayout from "../components/FlowStepLayout";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AppHeader from "../components/AppHeader";
+import ScreenContainer from "../components/ScreenContainer";
+import StepProgress from "../components/StepProgress";
+import {
+  TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH,
+  TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH,
+  TabletWorkspaceContent,
+  getTabletWorkspaceMode,
+  getTabletWorkspacePreviewCanvasHeight,
+} from "../components/layout/TabletWorkspaceLayout";
+import CanvasBackgroundColorPicker from "../components/preview/CanvasBackgroundColorPicker";
 import { FinishedFramedArtwork } from "../components/preview/MatPreviewCanvas";
-import AppCard from "../components/ui/AppCard";
+import PresetRoomSceneImage from "../components/room/PresetRoomSceneImage";
 import AppButton from "../components/ui/AppButton";
+import AppSegmentedControl from "../components/ui/AppSegmentedControl";
 import AppTextField from "../components/ui/AppTextField";
 import AppSheetModal from "../components/ui/AppSheetModal";
+import { useStepNavigation } from "../hooks/useStepNavigation";
 import Svg, { Line, Polygon } from "react-native-svg";
+import { getPresetRoomScenesByOrientation } from "../data/presetRoomScenes";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import { useFramingFlowStore } from "../state/framingFlowStore";
 import { useSavedProjectsStore } from "../state/savedProjectsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
-import type { FractionDenominator, FramingProjectDraft, MeasurementUnit } from "../types/framing";
+import type {
+  FractionDenominator,
+  FramingProjectDraft,
+  MeasurementUnit,
+  RoomPresetSceneOrientation,
+  RoomViewSourceMode,
+} from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import {
   buildDerivedGeometry,
@@ -25,12 +54,67 @@ import {
 } from "../utils/framingGeometry";
 import { formatMeasurement, formatSize } from "../utils/formatters";
 import { getFrameProfile } from "../utils/frameProfiles";
+import { normalizeHex } from "../utils/color";
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+type SaveArtworkIntent = "manual" | "viewOnWall";
+
 function DiagramLabel({
+  label,
+  left,
+  top,
+  width,
+}: {
+  label: string;
+  left: number;
+  top: number;
+  width: number;
+}) {
+  const { colors, radii } = useAppTheme();
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left,
+        top,
+        width,
+        alignItems: "center",
+      }}
+    >
+      <View
+        style={{
+          maxWidth: width,
+          borderRadius: radii.pill,
+          backgroundColor: colors.backgroundCard,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          paddingHorizontal: 7,
+          paddingVertical: 3,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 10,
+            lineHeight: 13,
+            fontWeight: "700",
+            color: colors.textPrimary,
+            textAlign: "center",
+          }}
+          numberOfLines={2}
+        >
+          {label}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function SideDiagramLabel({
   label,
   left,
   top,
@@ -113,15 +197,19 @@ function FinalCutDiagram({
   finalOuterSizeInches,
   unit,
   imperialPrecision,
+  canvasHeight,
 }: {
   draft: FramingProjectDraft;
   derived: DerivedFramingGeometry;
   finalOuterSizeInches: NumericSize | null;
   unit: MeasurementUnit;
   imperialPrecision: FractionDenominator;
+  canvasHeight: number;
 }) {
-  const { colors, radii, spacing, typography, isDark } = useAppTheme();
+  const { colors, radii, spacing, typography } = useAppTheme();
+  const canvasBackgroundColorHex = useAppSettingsStore((state) => state.canvasBackgroundColorHex);
   const [canvasWidth, setCanvasWidth] = useState(0);
+  const canvasBackgroundColor = normalizeHex(canvasBackgroundColorHex, "#111111");
 
   const finalOuterSize = finalOuterSizeInches
     ? {
@@ -142,19 +230,32 @@ function FinalCutDiagram({
     return (
       <View
         style={{
-          minHeight: 260,
-          borderRadius: radii.md,
+          borderRadius: radii.xl,
           borderWidth: 1,
           borderColor: colors.borderStrong,
-          backgroundColor: colors.backgroundInput,
-          alignItems: "center",
-          justifyContent: "center",
-          padding: spacing.lg,
+          backgroundColor: canvasBackgroundColor,
+          paddingHorizontal: spacing.xl,
+          paddingTop: spacing.lg,
+          paddingBottom: spacing.xl,
+          position: "relative",
         }}
       >
-        <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
-          Finish valid artwork, mat, and frame dimensions to see the final cut diagram.
+        <CanvasBackgroundColorPicker />
+        <Text style={{ ...typography.eyebrow, color: colors.textSecondary, marginBottom: spacing.xs }}>
+          Final cut diagram
         </Text>
+        <View
+          style={{
+            height: canvasHeight,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: spacing.lg,
+          }}
+        >
+          <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
+            Finish valid artwork, mat, and frame dimensions to see the final cut diagram.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -173,19 +274,24 @@ function FinalCutDiagram({
   const leftGutter = isCompact ? 10 : 28;
   const rightGutter = isCompact ? 66 : 92;
   const availableWidth = Math.max(220, canvasWidth - leftGutter - rightGutter);
-  const maxPreviewHeight = isCompact ? 310 : 430;
+  const availablePreviewHeight = Math.max(
+    isCompact ? 150 : 180,
+    canvasHeight - topGutter - bottomGutter
+  );
   const physicalScale = Math.max(
     1,
     Math.min(
       availableWidth / finalOuterSize.width,
-      maxPreviewHeight / finalOuterSize.height
+      availablePreviewHeight / finalOuterSize.height
     )
   );
   const previewWidth = finalOuterSize.width * physicalScale;
   const previewHeight = finalOuterSize.height * physicalScale;
-  const diagramHeight = topGutter + previewHeight + bottomGutter;
+  const diagramContentHeight = topGutter + previewHeight + bottomGutter;
+  const diagramHeight = Math.max(canvasHeight, diagramContentHeight);
+  const diagramTopOffset = Math.max(0, (canvasHeight - diagramContentHeight) / 2);
   const previewLeft = leftGutter + Math.max(0, (availableWidth - previewWidth) / 2);
-  const previewTop = topGutter;
+  const previewTop = diagramTopOffset + topGutter;
   const framePx = frameFaceWidth * physicalScale;
   const matLeft = previewLeft + framePx;
   const matTop = previewTop + framePx;
@@ -236,21 +342,40 @@ function FinalCutDiagram({
   };
   const labelLeft = (centerX: number, width = labelWidth) =>
     clampNumber(centerX - width / 2, 0, Math.max(0, canvasWidth - width));
+  const labelHeight = 21;
+  const labelGap = 8;
+  const labelTop = (centerY: number) =>
+    clampNumber(centerY - labelHeight / 2, 0, Math.max(0, diagramHeight - labelHeight));
+  const horizontalLabelTop = (lineY: number) =>
+    clampNumber(lineY - labelHeight - labelGap, 0, Math.max(0, diagramHeight - labelHeight));
+  const verticalLabelLeft = (lineX: number, width = labelWidth) =>
+    clampNumber(lineX + labelGap, 0, Math.max(0, canvasWidth - width));
   const frameWidthLabel = formatMeasurement(finalOuterSize.width, unit, imperialPrecision);
   const frameHeightLabel = formatMeasurement(finalOuterSize.height, unit, imperialPrecision);
-  const formatMarginLabel = (shortLabel: string, value: MatMargins[keyof MatMargins]) =>
-    `${shortLabel} ${formatMeasurement(value, unit, imperialPrecision)}`;
+  const formatMarginLabel = (value: MatMargins[keyof MatMargins]) =>
+    formatMeasurement(value, unit, imperialPrecision);
 
   return (
-    <View style={{ gap: spacing.md }}>
+    <View
+      style={{
+        borderRadius: radii.xl,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        backgroundColor: canvasBackgroundColor,
+        paddingHorizontal: spacing.xl,
+        paddingTop: spacing.lg,
+        paddingBottom: spacing.xl,
+        position: "relative",
+      }}
+    >
+      <CanvasBackgroundColorPicker />
+      <Text style={{ ...typography.eyebrow, color: colors.textSecondary, marginBottom: spacing.xs }}>
+        Final cut diagram
+      </Text>
       <View
         onLayout={(event) => setCanvasWidth(event.nativeEvent.layout.width)}
         style={{
-          minHeight: 280,
-          borderRadius: radii.md,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          backgroundColor: isDark ? "#111111" : colors.backgroundInput,
+          height: canvasHeight,
           overflow: "hidden",
         }}
       >
@@ -299,72 +424,102 @@ function FinalCutDiagram({
             </Svg>
 
             <DiagramLabel
-              label={`Frame width ${frameWidthLabel}`}
+              label={frameWidthLabel}
               left={labelLeft(previewLeft + previewWidth / 2, isCompact ? 96 : 132)}
-              top={Math.max(2, widthLineY - 27)}
-              maxWidth={isCompact ? 96 : 132}
+              top={horizontalLabelTop(widthLineY)}
+              width={isCompact ? 96 : 132}
             />
-            <DiagramLabel
-              label={`Frame height ${frameHeightLabel}`}
-              left={clampNumber(heightLineX + 8, 0, Math.max(0, canvasWidth - labelWidth))}
-              top={clampNumber(previewTop + previewHeight / 2 - 16, 0, diagramHeight - 36)}
+            <SideDiagramLabel
+              label={frameHeightLabel}
+              left={verticalLabelLeft(heightLineX)}
+              top={labelTop(previewTop + previewHeight / 2)}
               maxWidth={labelWidth}
             />
             <DiagramLabel
-              label={formatMarginLabel("Left", margins.left)}
+              label={formatMarginLabel(margins.left)}
               left={labelLeft(matLeft + (openingLeft - matLeft) / 2)}
-              top={clampNumber(openingCenterY - 25, previewTop + 2, previewTop + previewHeight - 28)}
-              maxWidth={labelWidth}
+              top={horizontalLabelTop(openingCenterY)}
+              width={labelWidth}
             />
             <DiagramLabel
-              label={formatMarginLabel("Right", margins.right)}
+              label={formatMarginLabel(margins.right)}
               left={labelLeft(openingRight + (matRight - openingRight) / 2)}
-              top={clampNumber(openingCenterY - 25, previewTop + 2, previewTop + previewHeight - 28)}
+              top={horizontalLabelTop(openingCenterY)}
+              width={labelWidth}
+            />
+            <SideDiagramLabel
+              label={formatMarginLabel(margins.top)}
+              left={verticalLabelLeft(openingCenterX)}
+              top={labelTop(matTop + (openingTop - matTop) / 2)}
               maxWidth={labelWidth}
             />
-            <DiagramLabel
-              label={formatMarginLabel("Top", margins.top)}
-              left={labelLeft(openingCenterX)}
-              top={clampNumber(matTop + (openingTop - matTop) / 2 - 15, previewTop + 2, previewTop + previewHeight - 28)}
-              maxWidth={labelWidth}
-            />
-            <DiagramLabel
-              label={formatMarginLabel("Bottom", margins.bottom)}
-              left={labelLeft(openingCenterX)}
-              top={clampNumber(openingBottom + (matBottom - openingBottom) / 2 - 15, previewTop + 2, previewTop + previewHeight - 28)}
+            <SideDiagramLabel
+              label={formatMarginLabel(margins.bottom)}
+              left={verticalLabelLeft(openingCenterX)}
+              top={labelTop(openingBottom + (matBottom - openingBottom) / 2)}
               maxWidth={labelWidth}
             />
           </View>
         ) : null}
       </View>
 
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-        <SummaryPill
-          label="Opening"
-          value={`${formatMeasurement(derived.openingSize.width, unit, imperialPrecision).replace(` ${unit}`, "")} × ${formatMeasurement(derived.openingSize.height, unit, imperialPrecision)}`}
-        />
-        <SummaryPill
-          label="Outer mat"
-          value={formatSize(draft.outerMat.outerMatSize, unit, imperialPrecision)}
-        />
-      </View>
     </View>
   );
 }
 
 export default function FinalSpecsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<FramingRootStackParamList>>();
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { currentStep, totalSteps, previousStep, goBack } = useStepNavigation("FinalSpecs");
   const unit = useAppSettingsStore((state) => state.unit);
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const draft = useFramingFlowStore((state) => state.draft);
+  const setMeta = useFramingFlowStore((state) => state.setMeta);
   const projectFolders = useSavedProjectsStore((state) => state.projectFolders);
+  const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
   const createProjectFolder = useSavedProjectsStore((state) => state.createProjectFolder);
   const saveFramedArtwork = useSavedProjectsStore((state) => state.saveFramedArtwork);
-  const { colors, radii, typography, spacing } = useAppTheme();
+  const updateFramedArtwork = useSavedProjectsStore((state) => state.updateFramedArtwork);
+  const { colors, layout, radii, typography, spacing } = useAppTheme();
   const [saveSheetVisible, setSaveSheetVisible] = useState(false);
   const [artworkName, setArtworkName] = useState("");
   const [selectedProjectFolderId, setSelectedProjectFolderId] = useState<string | null>(null);
   const [newProjectFolderName, setNewProjectFolderName] = useState("");
+  const [saveArtworkIntent, setSaveArtworkIntent] = useState<SaveArtworkIntent>("manual");
+  const [roomChoiceSheetVisible, setRoomChoiceSheetVisible] = useState(false);
+  const [presetRoomPickerVisible, setPresetRoomPickerVisible] = useState(false);
+  const [presetRoomOrientation, setPresetRoomOrientation] =
+    useState<RoomPresetSceneOrientation>("landscape");
+  const [viewOnWallArtworkId, setViewOnWallArtworkId] = useState<string | null>(null);
+  const [previewAreaSize, setPreviewAreaSize] = useState({ width: 0, height: 0 });
+  const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
+  const isPhoneWorkspace = tabletWorkspaceMode === "phone";
+  const isTabletPortrait = tabletWorkspaceMode === "tabletPortrait";
+  const isTabletLandscape = tabletWorkspaceMode === "tabletLandscape";
+  const isShortViewport = windowHeight < 620;
+  const measuredPreviewHeight = previewAreaSize.height > 0 ? previewAreaSize.height : windowHeight * 0.42;
+  const previewCanvasHeight = getTabletWorkspacePreviewCanvasHeight({
+    mode: tabletWorkspaceMode,
+    measuredPreviewHeight,
+    isShortViewport,
+  });
+  const workspaceVerticalPadding = isTabletPortrait ? spacing.sm : spacing.md;
+  const workspaceGap = isTabletPortrait ? spacing.sm : spacing.md;
+  const progressBottomSpacing = isTabletPortrait ? spacing.md : undefined;
+  const presetRoomPickerColumns = isPhoneWorkspace ? 1 : isTabletLandscape ? 3 : 2;
+  const presetRoomPickerMaxWidth = isPhoneWorkspace ? 430 : isTabletLandscape ? 1120 : 920;
+  const presetRoomPickerMaxHeight = isPhoneWorkspace
+    ? Math.min(windowHeight * 0.74, 620)
+    : Math.min(windowHeight * 0.84, 820);
+  const presetRoomTileWidth = isPhoneWorkspace
+    ? "100%"
+    : isTabletLandscape
+      ? "32.25%"
+      : "49%";
+  const presetRoomImageHeight = isPhoneWorkspace ? 190 : isTabletLandscape ? 240 : 284;
+  const presetRoomTitleLines = isPhoneWorkspace ? 2 : 2;
+  const visiblePresetRoomScenes = getPresetRoomScenesByOrientation(presetRoomOrientation);
 
   const derived = buildDerivedGeometry(draft);
   const finalOuterSizeInches = getFinishedFrameOuterSizeInches(
@@ -372,6 +527,8 @@ export default function FinalSpecsScreen() {
     draft.preview.frameProfileId,
     unit
   );
+  const currentSavedArtwork =
+    framedArtworks.find((artwork) => artwork.id === draft.meta.savedFramedArtworkId) ?? null;
   const sortedProjectFolders = useMemo(
     () =>
       [...projectFolders].sort(
@@ -387,7 +544,124 @@ export default function FinalSpecsScreen() {
     }
   }, [selectedProjectFolderId, sortedProjectFolders]);
 
-  const openSaveArtworkSheet = () => {
+  const handlePreviewAreaLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+
+    setPreviewAreaSize((currentSize) =>
+      Math.abs(currentSize.width - width) < 1 && Math.abs(currentSize.height - height) < 1
+        ? currentSize
+        : { width, height }
+    );
+  }, []);
+
+  const createRoomViewLaunchId = () =>
+    `room-view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const openRoomChoiceForArtwork = useCallback((artworkId: string) => {
+    setViewOnWallArtworkId(artworkId);
+    setRoomChoiceSheetVisible(true);
+  }, []);
+
+  const navigateToRoomView = useCallback(
+    (sourceMode: RoomViewSourceMode, presetSceneId?: string) => {
+      if (!viewOnWallArtworkId) {
+        return;
+      }
+
+      setRoomChoiceSheetVisible(false);
+      setPresetRoomPickerVisible(false);
+      navigation.navigate("RoomView", {
+        autoPlaceArtworkId: viewOnWallArtworkId,
+        sourceMode,
+        presetSceneId,
+        startWallPhotoFlow: sourceMode === "myWall",
+        launchId: createRoomViewLaunchId(),
+      });
+    },
+    [navigation, viewOnWallArtworkId]
+  );
+
+  const saveOrUpdateCurrentArtwork = useCallback(
+    ({
+      artworkName: nextArtworkName,
+      projectFolderId,
+    }: {
+      artworkName?: string;
+      projectFolderId?: string | null;
+    } = {}) => {
+      if (!derived.isValidGeometry || !finalOuterSizeInches) {
+        Alert.alert(
+          "Specs not ready",
+          "Finish valid artwork and mat dimensions before saving this artwork."
+        );
+        return null;
+      }
+
+      const trimmedArtworkName =
+        nextArtworkName?.trim() ||
+        currentSavedArtwork?.name ||
+        draft.meta.projectName.trim() ||
+        "Untitled artwork";
+      const nextProjectFolderId =
+        projectFolderId ?? currentSavedArtwork?.projectFolderId ?? sortedProjectFolders[0]?.id ?? null;
+
+      if (!nextProjectFolderId) {
+        return null;
+      }
+
+      const existingSavedArtworkId = currentSavedArtwork?.id ?? null;
+      const draftForSave: FramingProjectDraft = JSON.parse(
+        JSON.stringify({
+          ...draft,
+          meta: {
+            ...draft.meta,
+            projectName: trimmedArtworkName,
+            savedFramedArtworkId: existingSavedArtworkId,
+          },
+        })
+      );
+
+      const savedArtwork = existingSavedArtworkId
+        ? updateFramedArtwork(existingSavedArtworkId, {
+            projectFolderId: nextProjectFolderId,
+            name: trimmedArtworkName,
+            draft: draftForSave,
+            unit,
+            finalOuterSizeInches,
+          })
+        : saveFramedArtwork({
+            projectFolderId: nextProjectFolderId,
+            name: trimmedArtworkName,
+            draft: draftForSave,
+            unit,
+            finalOuterSizeInches,
+          });
+
+      if (!savedArtwork) {
+        return null;
+      }
+
+      setMeta({
+        projectName: savedArtwork.name,
+        savedFramedArtworkId: savedArtwork.id,
+      });
+
+      return savedArtwork;
+    },
+    [
+      currentSavedArtwork,
+      derived.isValidGeometry,
+      draft,
+      finalOuterSizeInches,
+      saveFramedArtwork,
+      setMeta,
+      sortedProjectFolders,
+      unit,
+      updateFramedArtwork,
+    ]
+  );
+
+  const openSaveArtworkSheet = (intent: SaveArtworkIntent = "manual") => {
     if (!derived.isValidGeometry || !finalOuterSizeInches) {
       Alert.alert(
         "Specs not ready",
@@ -396,8 +670,11 @@ export default function FinalSpecsScreen() {
       return;
     }
 
-    setArtworkName(draft.meta.projectName.trim() || "Untitled artwork");
-    setSelectedProjectFolderId((current) => current ?? sortedProjectFolders[0]?.id ?? null);
+    setSaveArtworkIntent(intent);
+    setArtworkName(currentSavedArtwork?.name ?? (draft.meta.projectName.trim() || "Untitled artwork"));
+    setSelectedProjectFolderId(
+      currentSavedArtwork?.projectFolderId ?? sortedProjectFolders[0]?.id ?? null
+    );
     setNewProjectFolderName("");
     setSaveSheetVisible(true);
   };
@@ -413,6 +690,19 @@ export default function FinalSpecsScreen() {
     const folder = createProjectFolder(folderName);
     setSelectedProjectFolderId(folder.id);
     setNewProjectFolderName("");
+  };
+
+  const handleViewOnWall = () => {
+    if (currentSavedArtwork) {
+      const savedArtwork = saveOrUpdateCurrentArtwork();
+
+      if (savedArtwork) {
+        openRoomChoiceForArtwork(savedArtwork.id);
+      }
+      return;
+    }
+
+    openSaveArtworkSheet("viewOnWall");
   };
 
   const handleSaveArtwork = () => {
@@ -436,57 +726,196 @@ export default function FinalSpecsScreen() {
       return;
     }
 
-    const savedArtwork = saveFramedArtwork({
+    const savedArtwork = saveOrUpdateCurrentArtwork({
+      artworkName: trimmedArtworkName,
       projectFolderId: selectedProjectFolderId,
-      name: trimmedArtworkName,
-      draft: JSON.parse(JSON.stringify(draft)),
-      unit,
-      finalOuterSizeInches,
     });
+
+    if (!savedArtwork) {
+      Alert.alert("Unable to save", "Choose or create a project folder before saving.");
+      return;
+    }
+
     setSaveSheetVisible(false);
-    Alert.alert(
-      "Artwork Saved",
-      `"${savedArtwork.name}" is now available in Room View.`
-    );
+
+    if (saveArtworkIntent === "viewOnWall") {
+      openRoomChoiceForArtwork(savedArtwork.id);
+      return;
+    }
+
+    Alert.alert("Artwork Saved", `"${savedArtwork.name}" is now available in Room View.`);
   };
 
+  const formatNumericSize = (size: NumericSize | null) =>
+    size
+      ? `${formatMeasurement(size.width, unit, imperialPrecision).replace(` ${unit}`, "")} × ${formatMeasurement(
+          size.height,
+          unit,
+          imperialPrecision
+        )}`
+      : "Not set";
+
   return (
-    <FlowStepLayout
-      route="FinalSpecs"
-      title="Final Specs"
-      intro="Review the final cut diagram and save this framed artwork into a project folder."
-      nextLabel="View on Wall"
-      footerVariant="compactBackArrow"
-      onNext={() => {
-        navigation.navigate("RoomView");
-      }}
-    >
-      <AppCard title="Final cut diagram">
-        <FinalCutDiagram
-          draft={draft}
-          derived={derived}
-          finalOuterSizeInches={finalOuterSizeInches}
-          unit={unit}
-          imperialPrecision={imperialPrecision}
-        />
-      </AppCard>
+    <ScreenContainer>
+      <AppHeader
+        onOpenProjects={() => navigation.navigate("SavedProjects")}
+        onOpenSettings={() => navigation.navigate("Settings")}
+      />
 
-      <AppCard title="Save Artwork">
-        <Text style={{ ...typography.small, color: colors.textSecondary }}>
-          Save this framed artwork into a project folder so it can be placed in Room View.
-        </Text>
-        <AppButton
-          label="Save Artwork"
-          onPress={openSaveArtworkSheet}
-          style={{ width: "60%", alignSelf: "center" }}
-        />
-      </AppCard>
+      <View
+        style={{
+          flex: 1,
+          minHeight: 0,
+          paddingHorizontal: spacing.lg,
+          paddingTop: workspaceVerticalPadding,
+          paddingBottom: workspaceVerticalPadding,
+        }}
+      >
+        <TabletWorkspaceContent
+          mode={tabletWorkspaceMode}
+          phoneContentMaxWidth={layout.contentMaxWidth}
+        >
+          <StepProgress
+            currentStep={currentStep.stepNumber}
+            totalSteps={totalSteps}
+            label={currentStep.shortLabel}
+            bottomSpacing={progressBottomSpacing}
+          />
 
-      {!derived.isValidGeometry ? (
-        <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
-          These specs need a larger outer mat size before they can be cut accurately.
-        </Text>
-      ) : null}
+          <View style={{ flex: 1, minHeight: 0, gap: workspaceGap }}>
+            <View
+              onLayout={handlePreviewAreaLayout}
+              style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
+            >
+              <FinalCutDiagram
+                draft={draft}
+                derived={derived}
+                finalOuterSizeInches={finalOuterSizeInches}
+                unit={unit}
+                imperialPrecision={imperialPrecision}
+                canvasHeight={previewCanvasHeight}
+              />
+            </View>
+
+            {!derived.isValidGeometry ? (
+              <Text style={{ ...typography.small, color: colors.warning, textAlign: "center" }}>
+                These specs need a larger outer mat size before they can be cut accurately.
+              </Text>
+            ) : null}
+
+            <View
+              style={{
+                minHeight: 58,
+                borderWidth: 1,
+                borderColor: colors.borderStrong,
+                borderRadius: radii.xl,
+                backgroundColor: colors.backgroundCard,
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.sm,
+                flexDirection: isPhoneWorkspace ? "column" : "row",
+                alignItems: isPhoneWorkspace ? "stretch" : "center",
+                gap: spacing.md,
+              }}
+            >
+              <View
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 17,
+                  backgroundColor: colors.accentSoft,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="resize-outline" size={18} color={colors.accent} />
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  flexDirection: isPhoneWorkspace ? "column" : "row",
+                  gap: spacing.sm,
+                }}
+              >
+                <SummaryPill label="Inner mat" value={formatNumericSize(derived.openingSize)} />
+                <SummaryPill
+                  label="Outer mat"
+                  value={
+                    derived.outerMatSize
+                      ? formatNumericSize(derived.outerMatSize)
+                      : formatSize(draft.outerMat.outerMatSize, unit, imperialPrecision)
+                  }
+                />
+              </View>
+              <AppButton
+                label="Save Artwork"
+                onPress={() => openSaveArtworkSheet("manual")}
+                style={{ width: isPhoneWorkspace ? "100%" : 164 }}
+              />
+            </View>
+          </View>
+        </TabletWorkspaceContent>
+      </View>
+
+      <View
+        style={{
+          borderTopWidth: 1,
+          borderTopColor: "rgba(255,255,255,0.08)",
+          backgroundColor: colors.headerBackground,
+          paddingHorizontal: spacing.lg,
+          paddingTop: spacing.md,
+          paddingBottom: Math.max(insets.bottom, spacing.md),
+        }}
+      >
+        <View
+          style={{
+            width: "100%",
+            maxWidth: isTabletLandscape
+              ? TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+              : layout.contentMaxWidth,
+            alignSelf: "center",
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: isTabletLandscape
+                ? TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH
+                : undefined,
+              alignSelf: "center",
+              minHeight: 44,
+              justifyContent: "center",
+              position: "relative",
+            }}
+          >
+            {previousStep ? (
+              <Pressable
+                onPress={goBack}
+                accessibilityRole="button"
+                accessibilityLabel="Go back"
+                hitSlop={10}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: 44,
+                  height: 44,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="arrow-back" size={22} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
+
+            <AppButton
+              label="View on Wall"
+              onPress={handleViewOnWall}
+              style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
+            />
+          </View>
+        </View>
+      </View>
 
       <AppSheetModal
         visible={saveSheetVisible}
@@ -578,6 +1007,143 @@ export default function FinalSpecsScreen() {
           style={{ width: "60%", alignSelf: "center" }}
         />
       </AppSheetModal>
-    </FlowStepLayout>
+
+      <AppSheetModal
+        visible={roomChoiceSheetVisible}
+        title="View on Wall"
+        onClose={() => setRoomChoiceSheetVisible(false)}
+      >
+        <Pressable
+          onPress={() => {
+            setRoomChoiceSheetVisible(false);
+            setPresetRoomPickerVisible(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Choose Preset Room"
+          style={{
+            minHeight: 46,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.md,
+            backgroundColor: colors.backgroundInput,
+            paddingHorizontal: spacing.md,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="home-outline" size={18} color={colors.textPrimary} />
+            <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+              Choose Preset Room
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+        </Pressable>
+
+        <Pressable
+          onPress={() => navigateToRoomView("myWall")}
+          accessibilityRole="button"
+          accessibilityLabel="Use My Wall Photo"
+          style={{
+            minHeight: 46,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.md,
+            backgroundColor: colors.backgroundInput,
+            paddingHorizontal: spacing.md,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: spacing.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Ionicons name="image-outline" size={18} color={colors.textPrimary} />
+            <Text style={{ ...typography.sectionTitle, color: colors.textPrimary }}>
+              Use My Wall Photo
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+        </Pressable>
+      </AppSheetModal>
+
+      <AppSheetModal
+        visible={presetRoomPickerVisible}
+        title="Choose Preset Room"
+        maxWidth={presetRoomPickerMaxWidth}
+        onClose={() => setPresetRoomPickerVisible(false)}
+      >
+        <AppSegmentedControl<RoomPresetSceneOrientation>
+          options={[
+            { label: "Landscape Rooms", value: "landscape" },
+            { label: "Portrait Rooms", value: "portrait" },
+          ]}
+          value={presetRoomOrientation}
+          onChange={setPresetRoomOrientation}
+        />
+        <ScrollView
+          style={{ maxHeight: presetRoomPickerMaxHeight }}
+          contentContainerStyle={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: isPhoneWorkspace ? spacing.md : spacing.md,
+            paddingBottom: spacing.xs,
+          }}
+          showsVerticalScrollIndicator={visiblePresetRoomScenes.length > presetRoomPickerColumns * 2}
+        >
+          {visiblePresetRoomScenes.map((scene) => (
+            <Pressable
+              key={scene.id}
+              onPress={() => navigateToRoomView("presetRoom", scene.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`Choose ${scene.title}`}
+              style={{
+                width: presetRoomTileWidth,
+                borderWidth: 1,
+                borderColor: colors.borderStrong,
+                borderRadius: radii.md,
+                backgroundColor: colors.backgroundInput,
+                overflow: "hidden",
+              }}
+            >
+              <PresetRoomSceneImage
+                scene={scene}
+                resizeMode="cover"
+                style={{
+                  height: presetRoomImageHeight,
+                  width: "100%",
+                }}
+              />
+              <View
+                pointerEvents="none"
+                style={{
+                  minHeight: isPhoneWorkspace ? 44 : 52,
+                  justifyContent: "center",
+                  backgroundColor: colors.backgroundInput,
+                  paddingHorizontal: isPhoneWorkspace ? spacing.sm : spacing.md,
+                  paddingVertical: isPhoneWorkspace ? 7 : 8,
+                }}
+              >
+                <Text
+                  style={{
+                    ...typography.small,
+                    color: colors.textPrimary,
+                    fontSize: isPhoneWorkspace ? 12 : 13,
+                    lineHeight: isPhoneWorkspace ? 15 : 16,
+                    fontWeight: "800",
+                  }}
+                  numberOfLines={presetRoomTitleLines}
+                  ellipsizeMode="tail"
+                >
+                  {scene.title}
+                </Text>
+              </View>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </AppSheetModal>
+    </ScreenContainer>
   );
 }

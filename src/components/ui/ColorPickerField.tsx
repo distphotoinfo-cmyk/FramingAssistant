@@ -5,6 +5,7 @@ import {
   Text,
   View,
   type GestureResponderEvent,
+  type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, {
@@ -209,6 +210,9 @@ interface ColorPickerFieldProps {
   customPresets: string[];
   onChange: (hex: string) => void;
   onSavePreset: (hex: string) => void;
+  variant?: "field" | "swatch";
+  accessibilityLabel?: string;
+  style?: ViewStyle;
 }
 
 export default function ColorPickerField({
@@ -219,6 +223,9 @@ export default function ColorPickerField({
   customPresets,
   onChange,
   onSavePreset,
+  variant = "field",
+  accessibilityLabel,
+  style,
 }: ColorPickerFieldProps) {
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const [visible, setVisible] = useState(false);
@@ -326,8 +333,178 @@ export default function ColorPickerField({
     paddedCustomPresets.push("");
   }
 
+  const pickerModal = (
+    <AppSheetModal visible={visible} title={title} onClose={() => setVisible(false)}>
+      <View style={{ alignItems: "center", gap: spacing.md }}>
+        <View
+          {...hueWheelResponder.panHandlers}
+          style={{
+            width: WHEEL_SIZE,
+            height: WHEEL_SIZE,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Svg width={WHEEL_SIZE} height={WHEEL_SIZE}>
+            {wheelSegments.map((segment, index) => (
+              <Path key={`wheel-${index}`} d={segment.path} fill={segment.color} />
+            ))}
+            <Circle cx={WHEEL_CENTER} cy={WHEEL_CENTER} r={WHEEL_INNER_RADIUS - 4} fill={currentHex} />
+            <Circle
+              cx={hueHandlePosition.x}
+              cy={hueHandlePosition.y}
+              r={9}
+              fill="#FFFFFF"
+              stroke="rgba(0,0,0,0.18)"
+              strokeWidth={2}
+            />
+            <Circle cx={hueHandlePosition.x} cy={hueHandlePosition.y} r={5} fill={currentHex} />
+          </Svg>
+        </View>
+
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 999,
+            backgroundColor: currentHex,
+            borderWidth: 1,
+            borderColor: getSwatchBorderColor(currentHex, isDark),
+          }}
+        />
+
+        <Text style={{ ...typography.small, color: colors.textSecondary }}>
+          {currentHex}
+        </Text>
+      </View>
+
+      <ColorSlider
+        label="Saturation"
+        value={saturation}
+        onChange={updateSaturation}
+        gradientColors={[
+          { offset: "0%", color: hslToHex(hue, 0, lightness) },
+          { offset: "100%", color: hslToHex(hue, 1, lightness) },
+        ]}
+      />
+
+      <ColorSlider
+        label="Lightness"
+        value={lightness}
+        onChange={updateLightness}
+        gradientColors={[
+          { offset: "0%", color: "#000000" },
+          { offset: "50%", color: hslToHex(hue, saturation, 0.5) },
+          { offset: "100%", color: "#FFFFFF" },
+        ]}
+      />
+
+      <View style={{ gap: spacing.xs }}>
+        <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
+          Default Colors
+        </Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+          {defaultColors.map((preset) => {
+            const normalizedPreset = normalizeHex(preset);
+
+            return (
+              <SwatchButton
+                key={normalizedPreset}
+                color={normalizedPreset}
+                selected={normalizedPreset === normalizedValue}
+                onPress={() => {
+                  const parsed = hexToHsl(normalizedPreset);
+                  setHue(parsed.h);
+                  setSaturation(parsed.s);
+                  setLightness(parsed.l);
+                  onChange(normalizedPreset);
+                }}
+              />
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={{ gap: spacing.xs }}>
+        <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
+          Saved Colors
+        </Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+          {paddedCustomPresets.map((preset, index) =>
+            preset ? (
+              <SwatchButton
+                key={`${preset}-${index}`}
+                color={preset}
+                selected={normalizeHex(preset) === normalizedValue}
+                onPress={() => {
+                  const parsed = hexToHsl(preset);
+                  setHue(parsed.h);
+                  setSaturation(parsed.s);
+                  setLightness(parsed.l);
+                  onChange(normalizeHex(preset));
+                }}
+              />
+            ) : (
+              <EmptyPresetSlot key={`empty-${index}`} />
+            )
+          )}
+        </View>
+      </View>
+
+      <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <AppButton
+          variant="secondary"
+          label="Save Current"
+          onPress={() => onSavePreset(currentHex)}
+          style={{ flex: 1 }}
+        />
+        <AppButton
+          label="Done"
+          onPress={() => setVisible(false)}
+          style={{ flex: 1 }}
+        />
+      </View>
+    </AppSheetModal>
+  );
+
+  if (variant === "swatch") {
+    return (
+      <>
+        <Pressable
+          onPress={() => setVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel ?? label}
+          hitSlop={8}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            backgroundColor: colors.backgroundCard,
+            alignItems: "center",
+            justifyContent: "center",
+            ...style,
+          }}
+        >
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 999,
+              backgroundColor: normalizedValue,
+              borderWidth: 1,
+              borderColor: getSwatchBorderColor(normalizedValue, isDark),
+            }}
+          />
+        </Pressable>
+        {pickerModal}
+      </>
+    );
+  }
+
   return (
-    <View style={{ width: "100%", gap: spacing.xs }}>
+    <View style={{ width: "100%", gap: spacing.xs, ...style }}>
       <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
         {label}
       </Text>
@@ -366,137 +543,7 @@ export default function ColorPickerField({
         <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
       </Pressable>
 
-      <AppSheetModal visible={visible} title={title} onClose={() => setVisible(false)}>
-        <View style={{ alignItems: "center", gap: spacing.md }}>
-          <View
-            {...hueWheelResponder.panHandlers}
-            style={{
-              width: WHEEL_SIZE,
-              height: WHEEL_SIZE,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Svg width={WHEEL_SIZE} height={WHEEL_SIZE}>
-              {wheelSegments.map((segment, index) => (
-                <Path key={`wheel-${index}`} d={segment.path} fill={segment.color} />
-              ))}
-              <Circle cx={WHEEL_CENTER} cy={WHEEL_CENTER} r={WHEEL_INNER_RADIUS - 4} fill={currentHex} />
-              <Circle
-                cx={hueHandlePosition.x}
-                cy={hueHandlePosition.y}
-                r={9}
-                fill="#FFFFFF"
-                stroke="rgba(0,0,0,0.18)"
-                strokeWidth={2}
-              />
-              <Circle cx={hueHandlePosition.x} cy={hueHandlePosition.y} r={5} fill={currentHex} />
-            </Svg>
-          </View>
-
-          <View
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 999,
-              backgroundColor: currentHex,
-              borderWidth: 1,
-              borderColor: getSwatchBorderColor(currentHex, isDark),
-            }}
-          />
-
-          <Text style={{ ...typography.small, color: colors.textSecondary }}>
-            {currentHex}
-          </Text>
-        </View>
-
-        <ColorSlider
-          label="Saturation"
-          value={saturation}
-          onChange={updateSaturation}
-          gradientColors={[
-            { offset: "0%", color: hslToHex(hue, 0, lightness) },
-            { offset: "100%", color: hslToHex(hue, 1, lightness) },
-          ]}
-        />
-
-        <ColorSlider
-          label="Lightness"
-          value={lightness}
-          onChange={updateLightness}
-          gradientColors={[
-            { offset: "0%", color: "#000000" },
-            { offset: "50%", color: hslToHex(hue, saturation, 0.5) },
-            { offset: "100%", color: "#FFFFFF" },
-          ]}
-        />
-
-        <View style={{ gap: spacing.xs }}>
-          <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
-            Default Colors
-          </Text>
-          <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-            {defaultColors.map((preset) => {
-              const normalizedPreset = normalizeHex(preset);
-
-              return (
-                <SwatchButton
-                  key={normalizedPreset}
-                  color={normalizedPreset}
-                  selected={normalizedPreset === normalizedValue}
-                  onPress={() => {
-                    const parsed = hexToHsl(normalizedPreset);
-                    setHue(parsed.h);
-                    setSaturation(parsed.s);
-                    setLightness(parsed.l);
-                    onChange(normalizedPreset);
-                  }}
-                />
-              );
-            })}
-          </View>
-        </View>
-
-        <View style={{ gap: spacing.xs }}>
-          <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
-            Saved Colors
-          </Text>
-          <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-            {paddedCustomPresets.map((preset, index) =>
-              preset ? (
-                <SwatchButton
-                  key={`${preset}-${index}`}
-                  color={preset}
-                  selected={normalizeHex(preset) === normalizedValue}
-                  onPress={() => {
-                    const parsed = hexToHsl(preset);
-                    setHue(parsed.h);
-                    setSaturation(parsed.s);
-                    setLightness(parsed.l);
-                    onChange(normalizeHex(preset));
-                  }}
-                />
-              ) : (
-                <EmptyPresetSlot key={`empty-${index}`} />
-              )
-            )}
-          </View>
-        </View>
-
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <AppButton
-            variant="secondary"
-            label="Save Current"
-            onPress={() => onSavePreset(currentHex)}
-            style={{ flex: 1 }}
-          />
-          <AppButton
-            label="Done"
-            onPress={() => setVisible(false)}
-            style={{ flex: 1 }}
-          />
-        </View>
-      </AppSheetModal>
+      {pickerModal}
     </View>
   );
 }

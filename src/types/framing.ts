@@ -31,6 +31,7 @@ export type RoomSceneLightingDirection =
   | "center"
   | "upperLeft"
   | "upperRight";
+export type RoomSceneLightingZoneType = "spotlight" | "window" | "shadowBand";
 
 export interface ArtworkCropState {
   sourceWidth: number;
@@ -56,6 +57,7 @@ export interface EdgeMeasurements {
 export interface ProjectMeta {
   projectName: string;
   notes: string;
+  savedFramedArtworkId?: string | null;
 }
 
 export interface ArtworkSetupDraft {
@@ -130,6 +132,7 @@ export interface RoomPresetScene {
   artworkScaleMultiplier?: number;
   floorLine?: RoomViewLine;
   lightingDirection?: RoomSceneLightingDirection;
+  sceneLightingZones?: RoomSceneLightingZone[];
   environment?: RoomEnvironmentLighting;
   defaultShadow?: {
     opacity: number;
@@ -138,6 +141,20 @@ export interface RoomPresetScene {
     blurRadius: number;
   };
   pixelsPerInch: number;
+}
+
+export interface RoomSceneLightingZone {
+  id: string;
+  type: RoomSceneLightingZoneType;
+  bounds?: RoomViewRect;
+  center?: RoomViewPoint;
+  radius?: number;
+  radiusX?: number;
+  radiusY?: number;
+  intensity?: number;
+  warmth?: number;
+  softness?: number;
+  direction?: RoomSceneLightingDirection | RoomViewPoint;
 }
 
 export interface RoomEnvironmentLighting {
@@ -195,6 +212,7 @@ export interface RoomArtworkPlacementDraft {
 }
 
 export interface RoomViewDraft {
+  savedRoomLayoutId?: string | null;
   sourceMode: RoomViewSourceMode;
   wallPhoto: RoomWallPhotoDraft | null;
   presetSceneId: string | null;

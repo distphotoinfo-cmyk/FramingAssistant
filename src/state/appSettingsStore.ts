@@ -20,6 +20,7 @@ type DismissedGuideTips = Partial<Record<GuideTipKey, boolean>>;
 
 const MAX_CUSTOM_COLOR_PRESETS = 5;
 const DEFAULT_IMPERIAL_PRECISION: FractionDenominator = 8;
+export const DEFAULT_CANVAS_BACKGROUND_COLOR_HEX = "#111111";
 
 function normalizeImperialPrecision(
   imperialPrecision: FractionDenominator | number | null | undefined
@@ -73,8 +74,10 @@ interface AppSettingsState {
   unit: MeasurementUnit;
   imperialPrecision: FractionDenominator;
   previewSnapIncrementInches: number;
+  canvasBackgroundColorHex: string;
   matColorPresets: string[];
   frameColorPresets: string[];
+  canvasBackgroundColorPresets: string[];
   guidanceTestingEnabled: boolean;
   alwaysShowGuidanceOnLaunch: boolean;
   hasSeenSetupIntro: boolean;
@@ -88,8 +91,10 @@ interface AppSettingsState {
   setUnit: (unit: MeasurementUnit) => void;
   setImperialPrecision: (imperialPrecision: FractionDenominator) => void;
   setPreviewSnapIncrementInches: (previewSnapIncrementInches: number | string) => void;
+  setCanvasBackgroundColorHex: (hex: string) => void;
   saveMatColorPreset: (hex: string) => void;
   saveFrameColorPreset: (hex: string) => void;
+  saveCanvasBackgroundColorPreset: (hex: string) => void;
   setGuidanceTestingEnabled: (guidanceTestingEnabled: boolean) => void;
   setAlwaysShowGuidanceOnLaunch: (alwaysShowGuidanceOnLaunch: boolean) => void;
   markSetupIntroSeen: () => void;
@@ -104,8 +109,10 @@ type PersistedAppSettingsState = Pick<
   | "unit"
   | "imperialPrecision"
   | "previewSnapIncrementInches"
+  | "canvasBackgroundColorHex"
   | "matColorPresets"
   | "frameColorPresets"
+  | "canvasBackgroundColorPresets"
   | "guidanceTestingEnabled"
   | "alwaysShowGuidanceOnLaunch"
   | "hasSeenSetupIntro"
@@ -120,8 +127,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
       unit: "in",
       imperialPrecision: DEFAULT_IMPERIAL_PRECISION,
       previewSnapIncrementInches: DEFAULT_PREVIEW_SNAP_INCREMENT_INCHES,
+      canvasBackgroundColorHex: DEFAULT_CANVAS_BACKGROUND_COLOR_HEX,
       matColorPresets: [],
       frameColorPresets: [],
+      canvasBackgroundColorPresets: [],
       guidanceTestingEnabled: false,
       alwaysShowGuidanceOnLaunch: false,
       hasSeenSetupIntro: false,
@@ -139,6 +148,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         set({
           previewSnapIncrementInches: sanitizePreviewSnapIncrementInches(previewSnapIncrementInches),
         }),
+      setCanvasBackgroundColorHex: (hex) =>
+        set({
+          canvasBackgroundColorHex: normalizeHex(hex, DEFAULT_CANVAS_BACKGROUND_COLOR_HEX),
+        }),
       saveMatColorPreset: (hex) =>
         set((state) => ({
           matColorPresets: savePresetValue(state.matColorPresets, hex),
@@ -146,6 +159,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
       saveFrameColorPreset: (hex) =>
         set((state) => ({
           frameColorPresets: savePresetValue(state.frameColorPresets, hex),
+        })),
+      saveCanvasBackgroundColorPreset: (hex) =>
+        set((state) => ({
+          canvasBackgroundColorPresets: savePresetValue(state.canvasBackgroundColorPresets, hex),
         })),
       setGuidanceTestingEnabled: (guidanceTestingEnabled) =>
         set((state) => {
@@ -217,8 +234,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         unit: state.unit,
         imperialPrecision: state.imperialPrecision,
         previewSnapIncrementInches: state.previewSnapIncrementInches,
+        canvasBackgroundColorHex: state.canvasBackgroundColorHex,
         matColorPresets: state.matColorPresets,
         frameColorPresets: state.frameColorPresets,
+        canvasBackgroundColorPresets: state.canvasBackgroundColorPresets,
         guidanceTestingEnabled: state.guidanceTestingEnabled,
         alwaysShowGuidanceOnLaunch: state.alwaysShowGuidanceOnLaunch,
         hasSeenSetupIntro: state.hasSeenSetupIntro,
@@ -242,6 +261,11 @@ export const useAppSettingsStore = create<AppSettingsState>()(
             typedState.previewSnapIncrementInches ??
               (legacyPreviewSnapDenominator ? 1 / legacyPreviewSnapDenominator : undefined)
           ),
+          canvasBackgroundColorHex: normalizeHex(
+            typedState.canvasBackgroundColorHex,
+            DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
+          ),
+          canvasBackgroundColorPresets: typedState.canvasBackgroundColorPresets ?? [],
         };
       },
       onRehydrateStorage: () => (state) => {

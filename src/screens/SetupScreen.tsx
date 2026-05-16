@@ -20,6 +20,16 @@ import StepProgress from "../components/StepProgress";
 import GuidanceAnchor from "../components/guidance/GuidanceAnchor";
 import GuidanceOverlay, { type GuidanceItem } from "../components/guidance/GuidanceOverlay";
 import { GuidanceProvider } from "../components/guidance/GuidanceProvider";
+import {
+  TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH,
+  TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH,
+  TABLET_WORKSPACE_BREAKPOINT,
+  TabletWorkspaceContent,
+  getTabletWorkspaceMode,
+  getTabletWorkspacePreviewCanvasHeight,
+} from "../components/layout/TabletWorkspaceLayout";
+import ArtworkCanvasActionOverlay from "../components/preview/ArtworkCanvasActionOverlay";
+import CanvasBackgroundColorPicker from "../components/preview/CanvasBackgroundColorPicker";
 import MatPreviewCanvas from "../components/preview/MatPreviewCanvas";
 import AppButton from "../components/ui/AppButton";
 import AppCard from "../components/ui/AppCard";
@@ -42,9 +52,6 @@ import {
   toStoredSize,
 } from "../utils/framingGeometry";
 
-const TABLET_WIDTH_BREAKPOINT = 768;
-const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
-const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 const STEP_ONE_PREVIEW_ARTWORK_FALLBACKS: Record<MeasurementUnit, NumericSize> = {
   in: { width: 8, height: 10 },
   cm: { width: 20.3, height: 25.4 },
@@ -85,10 +92,11 @@ function buildStepOnePreviewOuterMatSize(
 type SetupOptionRowProps = {
   label: string;
   selected: boolean;
+  compact?: boolean;
   onPress: () => void;
 };
 
-function SetupOptionRow({ label, selected, onPress }: SetupOptionRowProps) {
+function SetupOptionRow({ label, selected, compact = false, onPress }: SetupOptionRowProps) {
   const { colors, radii, spacing } = useAppTheme();
 
   return (
@@ -99,10 +107,11 @@ function SetupOptionRow({ label, selected, onPress }: SetupOptionRowProps) {
         borderColor: selected ? colors.accent : colors.borderStrong,
         backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
         borderRadius: radii.md,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
+        paddingHorizontal: compact ? spacing.sm : spacing.md,
+        paddingVertical: compact ? spacing.sm : spacing.md,
         flexDirection: "row",
         alignItems: "center",
+        minHeight: compact ? 44 : undefined,
       }}
     >
       <Ionicons
@@ -114,7 +123,7 @@ function SetupOptionRow({ label, selected, onPress }: SetupOptionRowProps) {
         style={{
           flex: 1,
           marginLeft: spacing.sm,
-          fontSize: 15,
+          fontSize: compact ? 14 : 15,
           fontWeight: selected ? "600" : "500",
           color: colors.textPrimary,
         }}
@@ -129,17 +138,22 @@ function SetupBottomSheet({
   visible,
   title,
   maxHeight,
+  compact = false,
+  contentMaxWidth,
   onClose,
   children,
 }: {
   visible: boolean;
   title: string;
   maxHeight: number;
+  compact?: boolean;
+  contentMaxWidth?: number;
   onClose: () => void;
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radii, spacing, typography } = useAppTheme();
+  const shouldConstrainContent = Boolean(contentMaxWidth || compact);
 
   if (!visible) {
     return null;
@@ -186,9 +200,9 @@ function SetupBottomSheet({
           borderBottomWidth: 0,
           borderColor: colors.borderStrong,
           paddingTop: spacing.sm,
-          paddingHorizontal: spacing.lg,
-          paddingBottom: Math.max(insets.bottom, spacing.lg),
-          gap: spacing.md,
+          paddingHorizontal: compact ? spacing.md : spacing.lg,
+          paddingBottom: Math.max(insets.bottom, compact ? spacing.md : spacing.lg),
+          gap: compact ? spacing.sm : spacing.md,
         }}
       >
         <View
@@ -207,6 +221,13 @@ function SetupBottomSheet({
             alignItems: "center",
             justifyContent: "space-between",
             gap: spacing.md,
+            ...(contentMaxWidth
+              ? {
+                  width: "100%",
+                  maxWidth: contentMaxWidth,
+                  alignSelf: "center",
+                }
+              : {}),
           }}
         >
           <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
@@ -233,10 +254,26 @@ function SetupBottomSheet({
         </View>
 
         <ScrollView
-          contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+          contentContainerStyle={{
+            alignItems: shouldConstrainContent ? "center" : undefined,
+            gap: shouldConstrainContent ? undefined : spacing.md,
+            paddingBottom: spacing.xs,
+          }}
           showsVerticalScrollIndicator
         >
-          {children}
+          {shouldConstrainContent ? (
+            <View
+              style={{
+                width: "100%",
+                maxWidth: contentMaxWidth,
+                gap: compact ? spacing.sm : spacing.md,
+              }}
+            >
+              {children}
+            </View>
+          ) : (
+            children
+          )}
         </ScrollView>
       </View>
     </View>
@@ -268,18 +305,20 @@ export default function SetupScreen() {
   const fractionStep = unit === "in" ? imperialPrecision : undefined;
   const artworkSize = parseSizeInput(draft.artwork.artworkSize);
   const openingAmount = draft.reveal.openingAmount || getDefaultOpeningAmount(unit);
-  const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT;
-  const isPortrait = windowHeight > windowWidth;
-  const isTabletLandscape = isTabletScreen && !isPortrait;
+  const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
+  const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WORKSPACE_BREAKPOINT;
+  const isTabletPortrait = tabletWorkspaceMode === "tabletPortrait";
+  const isTabletLandscape = tabletWorkspaceMode === "tabletLandscape";
   const isShortViewport = windowHeight < 620;
   const measuredPreviewHeight = previewAreaSize.height > 0 ? previewAreaSize.height : windowHeight * 0.42;
-  const previewCanvasHeight = Math.max(
-    isShortViewport ? 100 : 180,
-    Math.min(
-      isTabletLandscape ? 620 : isTabletScreen ? 520 : 360,
-      measuredPreviewHeight - (isTabletLandscape ? 66 : 58)
-    )
-  );
+  const previewCanvasHeight = getTabletWorkspacePreviewCanvasHeight({
+    mode: tabletWorkspaceMode,
+    measuredPreviewHeight,
+    isShortViewport,
+  });
+  const workspaceVerticalPadding = isTabletPortrait ? spacing.sm : spacing.md;
+  const workspaceGap = isTabletPortrait ? spacing.sm : spacing.md;
+  const progressBottomSpacing = isTabletPortrait ? spacing.md : undefined;
   const preview = draft.preview ?? createInitialPreviewDraft();
   const resolvedFrameColorHex = useMemo(
     () => resolveFrameColorHex(preview.frameProfileId, preview.frameFinishId, preview.frameColorHex),
@@ -357,7 +396,8 @@ export default function SetupScreen() {
   const artworkAspectRatio = useMemo(() => getArtworkAspectRatio(artworkSize), [artworkSize]);
   const hasImportedArtwork =
     preview.artworkSourceMode === "import" && Boolean(preview.artworkImageUri);
-  const showStepOneArtworkOverlay = Platform.OS === "ios" && isTabletScreen && !hasImportedArtwork;
+  const showStepOneArtworkOverlay = Platform.OS === "ios";
+  const stepOneArtworkActionLabel = hasImportedArtwork ? "Change Artwork" : "Upload Artwork";
   const previewArtworkSize = useMemo(
     () => resolvePreviewSize(draft.artwork.artworkSize, STEP_ONE_PREVIEW_ARTWORK_FALLBACKS[unit]),
     [draft.artwork.artworkSize, unit]
@@ -541,37 +581,21 @@ export default function SetupScreen() {
           />
         </View>
 
+        <CanvasBackgroundColorPicker />
+
         {showStepOneArtworkOverlay ? (
-          <Pressable
+          <ArtworkCanvasActionOverlay
+            label={stepOneArtworkActionLabel}
+            compact={isTabletPortrait}
+            cornerInset={isTabletPortrait ? spacing.sm : undefined}
             onPress={openArtworkSourceChooser}
-            accessibilityRole="button"
-            accessibilityLabel="Add artwork"
-            style={({ pressed }) => ({
-              position: "absolute",
-              right: spacing.xl,
-              bottom: spacing.xl,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: spacing.sm,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.18)",
-              backgroundColor: pressed ? "rgba(0,0,0,0.78)" : "rgba(0,0,0,0.66)",
-              paddingHorizontal: spacing.md,
-              paddingVertical: spacing.sm,
-            })}
-          >
-            <Ionicons name="image-outline" size={16} color={colors.white} />
-            <Text style={{ fontSize: 14, fontWeight: "600", color: colors.white }}>
-              Add Artwork
-            </Text>
-          </Pressable>
+          />
         ) : null}
       </View>
     ),
     [
-      colors.white,
       hasImportedArtwork,
+      isTabletPortrait,
       openArtworkSourceChooser,
       preview.artworkCrop,
       preview.artworkImageUri,
@@ -585,16 +609,23 @@ export default function SetupScreen() {
       previewArtworkSize,
       resolvedFrameColorHex,
       showStepOneArtworkOverlay,
-      spacing.md,
       spacing.sm,
-      spacing.xl,
+      stepOneArtworkActionLabel,
     ]
   );
 
-  const renderSetupCards = () => (
-    <>
-      <GuidanceAnchor id="setup-artwork-size">
-        <AppCard title="Artwork size">
+  const setupSheetCompact = isTabletScreen;
+  const setupFieldVariant = setupSheetCompact ? "compact" : "field";
+  const setupSheetContentMaxWidth = setupSheetCompact
+    ? isTabletLandscape
+      ? 720
+      : 680
+    : undefined;
+
+  const renderSetupCards = () => {
+    const artworkSizeCard = (
+      <GuidanceAnchor id="setup-artwork-size" style={{ width: "100%" }}>
+        <AppCard title="Artwork size" compact={setupSheetCompact}>
           <View style={{ flexDirection: "row", gap: 12 }}>
             <View style={{ flex: 1 }}>
               <MeasurementWheelField
@@ -611,6 +642,7 @@ export default function SetupScreen() {
                   })
                 }
                 fractionStep={fractionStep}
+                variant={setupFieldVariant}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -628,50 +660,67 @@ export default function SetupScreen() {
                   })
                 }
                 fractionStep={fractionStep}
+                variant={setupFieldVariant}
               />
             </View>
           </View>
         </AppCard>
       </GuidanceAnchor>
+    );
 
-      <GuidanceAnchor id="setup-mat-window-opening">
-        <AppCard title="Mat window opening">
-          <View style={{ gap: spacing.sm }}>
-            <SetupOptionRow
-              label="Cover the edge slightly"
-              selected={draft.reveal.openingBehavior === "overlap"}
-              onPress={() =>
-                setReveal({
-                  openingBehavior: "overlap",
-                  openingAmount:
-                    draft.reveal.openingBehavior === "overlap"
-                      ? openingAmount
-                      : getDefaultOpeningAmount(unit),
-                })
-              }
-            />
-            <SetupOptionRow
-              label="Show a border around the artwork"
-              selected={draft.reveal.openingBehavior === "border"}
-              onPress={() => {
-                const isSwitchingModes = draft.reveal.openingBehavior !== "border";
-
-                setReveal({
-                  openingBehavior: "border",
-                  openingAmount:
-                    draft.reveal.openingBehavior === "border"
-                      ? openingAmount
-                      : getDefaultOpeningAmount(unit),
-                });
-
-                if (isSwitchingModes) {
-                  setBorderPickerOpenSignal((current) => current + 1);
+    const matWindowCard = (
+      <GuidanceAnchor id="setup-mat-window-opening" style={{ width: "100%" }}>
+        <AppCard title="Mat window opening" compact={setupSheetCompact}>
+          <View
+            style={{
+              flexDirection: setupSheetCompact ? "row" : "column",
+              gap: spacing.sm,
+            }}
+          >
+            <View style={setupSheetCompact ? { flex: 1 } : undefined}>
+              <SetupOptionRow
+                label="Cover the edge slightly"
+                selected={draft.reveal.openingBehavior === "overlap"}
+                compact={setupSheetCompact}
+                onPress={() =>
+                  setReveal({
+                    openingBehavior: "overlap",
+                    openingAmount:
+                      draft.reveal.openingBehavior === "overlap"
+                        ? openingAmount
+                        : getDefaultOpeningAmount(unit),
+                  })
                 }
-              }}
-            />
+              />
+            </View>
+            <View style={setupSheetCompact ? { flex: 1 } : undefined}>
+              <SetupOptionRow
+                label="Show a border around the artwork"
+                selected={draft.reveal.openingBehavior === "border"}
+                compact={setupSheetCompact}
+                onPress={() => {
+                  const isSwitchingModes = draft.reveal.openingBehavior !== "border";
+
+                  setReveal({
+                    openingBehavior: "border",
+                    openingAmount:
+                      draft.reveal.openingBehavior === "border"
+                        ? openingAmount
+                        : getDefaultOpeningAmount(unit),
+                  });
+
+                  if (isSwitchingModes) {
+                    setBorderPickerOpenSignal((current) => current + 1);
+                  }
+                }}
+              />
+            </View>
           </View>
 
-          <GuidanceAnchor id="setup-visible-border">
+          <GuidanceAnchor
+            id="setup-visible-border"
+            style={setupSheetCompact ? { width: "100%", maxWidth: 360 } : undefined}
+          >
             {draft.reveal.openingBehavior === "overlap" ? (
               <MeasurementWheelField
                 label="Overlap"
@@ -699,9 +748,11 @@ export default function SetupScreen() {
           </GuidanceAnchor>
         </AppCard>
       </GuidanceAnchor>
+    );
 
-      <GuidanceAnchor id="setup-outer-mat-size">
-        <AppCard title="Outer mat size">
+    const outerMatCard = (
+      <GuidanceAnchor id="setup-outer-mat-size" style={{ width: "100%" }}>
+        <AppCard title="Outer mat size" compact={setupSheetCompact}>
           <View style={{ flexDirection: "row", gap: 12 }}>
             <View style={{ flex: 1 }}>
               <MeasurementWheelField
@@ -719,6 +770,7 @@ export default function SetupScreen() {
                 }
                 maxWhole={80}
                 fractionStep={fractionStep}
+                variant={setupFieldVariant}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -737,13 +789,28 @@ export default function SetupScreen() {
                 }
                 maxWhole={80}
                 fractionStep={fractionStep}
+                variant={setupFieldVariant}
               />
             </View>
           </View>
         </AppCard>
       </GuidanceAnchor>
-    </>
-  );
+    );
+
+    return setupSheetCompact ? (
+      <>
+        {artworkSizeCard}
+        {outerMatCard}
+        {matWindowCard}
+      </>
+    ) : (
+      <>
+        {artworkSizeCard}
+        {matWindowCard}
+        {outerMatCard}
+      </>
+    );
+  };
 
   const setupSheetMaxHeight = Math.min(windowHeight * 0.74, isTabletLandscape ? 680 : 620);
 
@@ -762,28 +829,22 @@ export default function SetupScreen() {
             flex: 1,
             minHeight: 0,
             paddingHorizontal: spacing.lg,
-            paddingTop: spacing.md,
-            paddingBottom: spacing.md,
+            paddingTop: workspaceVerticalPadding,
+            paddingBottom: workspaceVerticalPadding,
           }}
         >
-          <View
-            style={{
-              flex: 1,
-              minHeight: 0,
-              width: "100%",
-              maxWidth: isTabletLandscape
-                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
-                : layout.contentMaxWidth,
-              alignSelf: "center",
-            }}
+          <TabletWorkspaceContent
+            mode={tabletWorkspaceMode}
+            phoneContentMaxWidth={layout.contentMaxWidth}
           >
             <StepProgress
               currentStep={currentStep.stepNumber}
               totalSteps={totalSteps}
               label={currentStep.shortLabel}
+              bottomSpacing={progressBottomSpacing}
             />
 
-            <View style={{ flex: 1, minHeight: 0, gap: spacing.md }}>
+            <View style={{ flex: 1, minHeight: 0, gap: workspaceGap }}>
               <GuidanceAnchor
                 id="setup-preview"
                 style={{ flex: 1, minHeight: 0, justifyContent: "center" }}
@@ -835,7 +896,7 @@ export default function SetupScreen() {
                 <Ionicons name="chevron-up" size={18} color={colors.textSecondary} />
               </Pressable>
             </View>
-          </View>
+          </TabletWorkspaceContent>
         </View>
 
         <View
@@ -852,7 +913,7 @@ export default function SetupScreen() {
             style={{
               width: "100%",
               maxWidth: isTabletLandscape
-                ? LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
+                ? TABLET_LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH
                 : layout.contentMaxWidth,
               alignSelf: "center",
             }}
@@ -860,7 +921,9 @@ export default function SetupScreen() {
             <View
               style={{
                 width: "100%",
-                maxWidth: isTabletLandscape ? LANDSCAPE_CONTROLS_COLUMN_WIDTH : undefined,
+                maxWidth: isTabletLandscape
+                  ? TABLET_LANDSCAPE_CONTROLS_COLUMN_WIDTH
+                  : undefined,
                 alignSelf: "center",
                 minHeight: 44,
                 justifyContent: "center",
@@ -909,6 +972,8 @@ export default function SetupScreen() {
           visible={setupSheetVisible}
           title="Artwork Setup"
           maxHeight={setupSheetMaxHeight}
+          compact={setupSheetCompact}
+          contentMaxWidth={setupSheetContentMaxWidth}
           onClose={() => setSetupSheetVisible(false)}
         >
           {renderSetupCards()}

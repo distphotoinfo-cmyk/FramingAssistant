@@ -3,6 +3,8 @@ import type { RoomPresetScene, RoomPresetSceneOrientation } from "../types/frami
 
 const landscapeLivingRoomMetadata = require("../../assets/mockups/landscape/Calm and cozy modern living room.json") as RoomPresetScene;
 const landscapeMinimalistInteriorMetadata = require("../../assets/mockups/landscape/Serene minimalist interior landscape.json") as RoomPresetScene;
+const landscapeStillLifeSoftLightingMetadata = require("../../assets/mockups/landscape/Minimalist still life with soft lighting.json") as RoomPresetScene;
+const landscapeIndustrialGalleryMetadata = require("../../assets/mockups/landscape/Minimalist industrial gallery interior.json") as RoomPresetScene;
 const portraitLivingRoomMetadata = require("../../assets/mockups/portrait/Serene minimalist living room interior.json") as RoomPresetScene;
 const portraitSideboardMetadata = require("../../assets/mockups/portrait/Serene minimalist living room.json") as RoomPresetScene;
 const portraitModernSlateMetadata = require("../../assets/mockups/portrait/Modern Slate Interior.json") as RoomPresetScene;
@@ -21,6 +23,14 @@ export const PRESET_ROOM_SCENES: RegisteredRoomPresetScene[] = [
   {
     ...landscapeMinimalistInteriorMetadata,
     imageSource: require("../../assets/mockups/landscape/Serene minimalist interior landscape.png"),
+  },
+  {
+    ...landscapeStillLifeSoftLightingMetadata,
+    imageSource: require("../../assets/mockups/landscape/Minimalist still life with soft lighting.png"),
+  },
+  {
+    ...landscapeIndustrialGalleryMetadata,
+    imageSource: require("../../assets/mockups/landscape/Minimalist industrial gallery interior.png"),
   },
   {
     ...portraitLivingRoomMetadata,

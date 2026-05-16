@@ -1,0 +1,50 @@
+{
+  "id": "minimalist-still-life-soft-lighting-landscape",
+  "title": "Minimalist Still Life with Soft Lighting",
+  "description": "Landscape still life room scene with a dark open wall and warm lamp light from the right.",
+  "orientation": "landscape",
+  "imagePath": "assets/mockups/landscape/Minimalist still life with soft lighting.png",
+  "sourceImageDimensions": {
+    "width": 1448,
+    "height": 1086
+  },
+  "wallRegion": {
+    "x": 0.28,
+    "y": 0.08,
+    "width": 0.49,
+    "height": 0.62
+  },
+  "safePlacementRegion": {
+    "x": 0.36,
+    "y": 0.14,
+    "width": 0.34,
+    "height": 0.46
+  },
+  "wallPhysicalWidthInches": 92,
+  "artworkScaleMultiplier": 2.86,
+  "floorLine": {
+    "start": {
+      "x": 0,
+      "y": 0.83
+    },
+    "end": {
+      "x": 1,
+      "y": 0.83
+    }
+  },
+  "lightingDirection": "right",
+  "environment": {
+    "wallBrightness": 0.38,
+    "warmth": 0.34,
+    "ambientLight": 0.46,
+    "contrast": 0.66,
+    "edgeBlend": 0.68
+  },
+  "defaultShadow": {
+    "opacity": 0.4,
+    "offsetX": -18,
+    "offsetY": 18,
+    "blurRadius": 38
+  },
+  "pixelsPerInch": 17
+}
