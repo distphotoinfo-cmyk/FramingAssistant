@@ -135,6 +135,7 @@ const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 const WALL_SHADOW_MAX_SOFTNESS = 160;
 const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
+const ROOM_ALIGNMENT_GUIDE_THRESHOLD_PIXELS = 8;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
@@ -168,7 +169,7 @@ const ROOM_VIEW_DOCK_ITEMS: {
   { label: "Settings", sheet: "settings", icon: "options-outline" },
   { label: "Export", sheet: "export", icon: "share-outline" },
 ];
-const ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET = 18;
+const ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET = 0;
 
 const ROOM_REALISM_TABS: {
   label: string;
@@ -356,6 +357,34 @@ interface DisplayedImageRect {
   width: number;
   height: number;
 }
+
+interface RoomArtworkPixelBounds {
+  id: string;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  centerX: number;
+  centerY: number;
+}
+
+interface RoomAlignmentGuideLine {
+  id: string;
+  axis: "vertical" | "horizontal";
+  position: number;
+  start: number;
+  end: number;
+}
+
+interface RoomAlignmentGuideState {
+  lines: RoomAlignmentGuideLine[];
+  signature: string;
+}
+
+const EMPTY_ROOM_ALIGNMENT_GUIDES: RoomAlignmentGuideState = {
+  lines: [],
+  signature: "",
+};
 
 function getFittedStageSize({
   containerWidth,
@@ -1270,6 +1299,190 @@ function roomPointToDisplayPoint(point: RoomViewPoint, imageRect: DisplayedImage
   };
 }
 
+function getPlacementPixelBounds(
+  imageRect: DisplayedImageRect,
+  placementBounds: RoomViewRect
+) {
+  return {
+    left: imageRect.left + placementBounds.x * imageRect.width,
+    top: imageRect.top + placementBounds.y * imageRect.height,
+    right: imageRect.left + (placementBounds.x + placementBounds.width) * imageRect.width,
+    bottom: imageRect.top + (placementBounds.y + placementBounds.height) * imageRect.height,
+    centerX: imageRect.left + (placementBounds.x + placementBounds.width / 2) * imageRect.width,
+    centerY: imageRect.top + (placementBounds.y + placementBounds.height / 2) * imageRect.height,
+  };
+}
+
+function getArtworkPixelBounds({
+  item,
+  center,
+  imageRect,
+}: {
+  item: WallArtworkRenderItem;
+  center: RoomViewPoint;
+  imageRect: DisplayedImageRect;
+}): RoomArtworkPixelBounds {
+  const centerPoint = roomPointToDisplayPoint(center, imageRect);
+  const halfWidth = item.displaySize.width / 2;
+  const halfHeight = item.displaySize.height / 2;
+
+  return {
+    id: item.placement.id,
+    left: centerPoint.x - halfWidth,
+    right: centerPoint.x + halfWidth,
+    top: centerPoint.y - halfHeight,
+    bottom: centerPoint.y + halfHeight,
+    centerX: centerPoint.x,
+    centerY: centerPoint.y,
+  };
+}
+
+function getUnionArtworkPixelBounds(bounds: RoomArtworkPixelBounds[]) {
+  if (bounds.length === 0) {
+    return null;
+  }
+
+  const left = Math.min(...bounds.map((item) => item.left));
+  const right = Math.max(...bounds.map((item) => item.right));
+  const top = Math.min(...bounds.map((item) => item.top));
+  const bottom = Math.max(...bounds.map((item) => item.bottom));
+
+  return {
+    id: bounds.map((item) => item.id).sort().join("+"),
+    left,
+    right,
+    top,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
+}
+
+function findClosestAlignmentLine({
+  axis,
+  draggedAnchors,
+  targets,
+  lineStart,
+  lineEnd,
+  thresholdPixels,
+}: {
+  axis: RoomAlignmentGuideLine["axis"];
+  draggedAnchors: { id: string; position: number }[];
+  targets: { id: string; position: number }[];
+  lineStart: number;
+  lineEnd: number;
+  thresholdPixels: number;
+}): RoomAlignmentGuideLine | null {
+  let best:
+    | {
+        target: { id: string; position: number };
+        anchor: { id: string; position: number };
+        distance: number;
+      }
+    | null = null;
+
+  for (const target of targets) {
+    for (const anchor of draggedAnchors) {
+      const distance = Math.abs(anchor.position - target.position);
+
+      if (distance > thresholdPixels) {
+        continue;
+      }
+
+      if (!best || distance < best.distance) {
+        best = { target, anchor, distance };
+      }
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return {
+    id: `${axis}-${best.target.id}-${best.anchor.id}`,
+    axis,
+    position: best.target.position,
+    start: lineStart,
+    end: lineEnd,
+  };
+}
+
+function calculateRoomAlignmentGuides({
+  draggedBounds,
+  otherBounds,
+  imageRect,
+  placementBounds,
+  thresholdPixels,
+}: {
+  draggedBounds: RoomArtworkPixelBounds;
+  otherBounds: RoomArtworkPixelBounds[];
+  imageRect: DisplayedImageRect;
+  placementBounds: RoomViewRect;
+  thresholdPixels: number;
+}): RoomAlignmentGuideState {
+  if (imageRect.width <= 0 || imageRect.height <= 0) {
+    return EMPTY_ROOM_ALIGNMENT_GUIDES;
+  }
+
+  const placementPixelBounds = getPlacementPixelBounds(imageRect, placementBounds);
+  const verticalTargets = [
+    { id: "room-center", position: placementPixelBounds.centerX },
+    ...otherBounds.flatMap((bounds) => [
+      { id: `${bounds.id}-left`, position: bounds.left },
+      { id: `${bounds.id}-center`, position: bounds.centerX },
+      { id: `${bounds.id}-right`, position: bounds.right },
+    ]),
+  ];
+  const horizontalTargets = [
+    { id: "room-center", position: placementPixelBounds.centerY },
+    ...otherBounds.flatMap((bounds) => [
+      { id: `${bounds.id}-top`, position: bounds.top },
+      { id: `${bounds.id}-center`, position: bounds.centerY },
+      { id: `${bounds.id}-bottom`, position: bounds.bottom },
+    ]),
+  ];
+  const verticalGuide = findClosestAlignmentLine({
+    axis: "vertical",
+    draggedAnchors: [
+      { id: "left", position: draggedBounds.left },
+      { id: "center", position: draggedBounds.centerX },
+      { id: "right", position: draggedBounds.right },
+    ],
+    targets: verticalTargets,
+    lineStart: placementPixelBounds.top,
+    lineEnd: placementPixelBounds.bottom,
+    thresholdPixels,
+  });
+  const horizontalGuide = findClosestAlignmentLine({
+    axis: "horizontal",
+    draggedAnchors: [
+      { id: "top", position: draggedBounds.top },
+      { id: "center", position: draggedBounds.centerY },
+      { id: "bottom", position: draggedBounds.bottom },
+    ],
+    targets: horizontalTargets,
+    lineStart: placementPixelBounds.left,
+    lineEnd: placementPixelBounds.right,
+    thresholdPixels,
+  });
+  const lines = [verticalGuide, horizontalGuide].filter(
+    (line): line is RoomAlignmentGuideLine => line !== null
+  );
+
+  if (lines.length === 0) {
+    return EMPTY_ROOM_ALIGNMENT_GUIDES;
+  }
+
+  return {
+    lines,
+    signature: lines
+      .map((line) => `${line.id}:${Math.round(line.position)}`)
+      .sort()
+      .join("|"),
+  };
+}
+
 function gestureTranslationToRoomDelta(
   gestureState: PanResponderGestureState,
   imageRect: DisplayedImageRect
@@ -1827,6 +2040,42 @@ function SavedFramedArtworkPickerTile({
   );
 }
 
+function RoomAlignmentGuideOverlay({ guides }: { guides: RoomAlignmentGuideState }) {
+  if (guides.lines.length === 0) {
+    return null;
+  }
+
+  const lineColor = "rgba(20,82,255,0.72)";
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9,
+      }}
+    >
+      {guides.lines.map((line) => (
+        <View
+          key={line.id}
+          style={{
+            position: "absolute",
+            left: line.axis === "vertical" ? line.position : line.start,
+            top: line.axis === "vertical" ? line.start : line.position,
+            width: line.axis === "vertical" ? 1 : Math.max(1, line.end - line.start),
+            height: line.axis === "vertical" ? Math.max(1, line.end - line.start) : 1,
+            backgroundColor: lineColor,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 function PlacedWallArtwork({
   placedArtwork,
   selected,
@@ -1848,6 +2097,7 @@ function PlacedWallArtwork({
   onMoveEnd,
   onGroupMoveEnd,
   onDragStart,
+  onDragMove,
   onDragEnd,
 }: {
   placedArtwork: WallArtworkRenderItem;
@@ -1870,6 +2120,7 @@ function PlacedWallArtwork({
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
   onGroupMoveEnd: (centersById: Map<string, RoomViewPoint>) => void;
   onDragStart: () => void;
+  onDragMove: (centersById: Map<string, RoomViewPoint>) => void;
   onDragEnd: () => void;
 }) {
   const { colors } = useAppTheme();
@@ -2075,9 +2326,10 @@ function PlacedWallArtwork({
           gestureState: PanResponderGestureState
         ) => {
           if (isGroupDragMember) {
-            const { offsetPixels } = getGroupDragResult(gestureState);
+            const { offsetPixels, centersById } = getGroupDragResult(gestureState);
 
             groupDragOffset.setValue(offsetPixels);
+            onDragMove(centersById);
             return;
           }
 
@@ -2087,6 +2339,7 @@ function PlacedWallArtwork({
             x: (nextCenter.x - dragStartCenterRef.current.x) * stageSize.width,
             y: (nextCenter.y - dragStartCenterRef.current.y) * stageSize.height,
           });
+          onDragMove(new Map([[placedArtwork.placement.id, nextCenter]]));
         },
         onPanResponderRelease: (
           _event: GestureResponderEvent,
@@ -2108,6 +2361,7 @@ function PlacedWallArtwork({
       getRawDragCenter,
       groupDragOffset,
       isGroupDragMember,
+      onDragMove,
       onDragStart,
       onSelect,
       placedArtwork.placement.center,
@@ -3140,9 +3394,20 @@ export default function RoomViewScreen() {
   const { colors, radii, spacing, typography, isDark } = useAppTheme();
   const exportSvgRef = useRef<SvgElementRef | null>(null);
   const shortcutInputRef = useRef<TextInput | null>(null);
+  const roomStageRef = useRef<React.ElementRef<typeof View> | null>(null);
+  const roomStageWindowRectRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const handledRoomViewLaunchIdRef = useRef<string | null>(null);
   const pendingWallPhotoArtworkIdRef = useRef<string | null>(null);
   const groupDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const stageTapStartRef = useRef<{
+    pageX: number;
+    pageY: number;
+  } | null>(null);
   const backgroundTapStartRef = useRef<{
     pageX: number;
     pageY: number;
@@ -3162,6 +3427,19 @@ export default function RoomViewScreen() {
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [groupCommittedCenterOverrides, setGroupCommittedCenterOverrides] =
     useState<Record<string, RoomViewPoint> | null>(null);
+  const [stageDragCenterOverrides, setStageDragCenterOverrides] =
+    useState<Record<string, RoomViewPoint> | null>(null);
+  const alignmentGuideSignatureRef = useRef(EMPTY_ROOM_ALIGNMENT_GUIDES.signature);
+  const [alignmentGuides, setAlignmentGuides] = useState<RoomAlignmentGuideState>(
+    EMPTY_ROOM_ALIGNMENT_GUIDES
+  );
+  const stageArtworkDragRef = useRef<{
+    placementId: string;
+    activeItem: WallArtworkRenderItem;
+    dragItems: WallArtworkRenderItem[];
+    startCenters: Map<string, RoomViewPoint>;
+    isGroupDrag: boolean;
+  } | null>(null);
   const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
   const [selectedLayoutProjectFolderId, setSelectedLayoutProjectFolderId] = useState<string | null>(null);
   const [layoutName, setLayoutName] = useState("");
@@ -3420,6 +3698,76 @@ export default function RoomViewScreen() {
     () => placedArtworks.filter((item) => selectedPlacementIdSet.has(item.placement.id)),
     [placedArtworks, selectedPlacementIdSet]
   );
+  const clearAlignmentGuides = useCallback(() => {
+    if (alignmentGuideSignatureRef.current === EMPTY_ROOM_ALIGNMENT_GUIDES.signature) {
+      return;
+    }
+
+    alignmentGuideSignatureRef.current = EMPTY_ROOM_ALIGNMENT_GUIDES.signature;
+    setAlignmentGuides(EMPTY_ROOM_ALIGNMENT_GUIDES);
+  }, []);
+  const handlePlacementDragGuideChange = useCallback(
+    (centersById: Map<string, RoomViewPoint>) => {
+      if (
+        centersById.size === 0 ||
+        displayedImageRect.width <= 0 ||
+        displayedImageRect.height <= 0
+      ) {
+        clearAlignmentGuides();
+        return;
+      }
+
+      const movedPlacementIds = new Set(centersById.keys());
+      const movedBounds = placedArtworks
+        .filter((item) => movedPlacementIds.has(item.placement.id))
+        .map((item) =>
+          getArtworkPixelBounds({
+            item,
+            center: centersById.get(item.placement.id) ?? item.placement.center,
+            imageRect: displayedImageRect,
+          })
+        );
+      const draggedBounds = getUnionArtworkPixelBounds(movedBounds);
+
+      if (!draggedBounds) {
+        clearAlignmentGuides();
+        return;
+      }
+
+      const otherBounds = placedArtworks
+        .filter((item) => !movedPlacementIds.has(item.placement.id))
+        .map((item) =>
+          getArtworkPixelBounds({
+            item,
+            center: item.placement.center,
+            imageRect: displayedImageRect,
+          })
+        );
+      const nextGuides = calculateRoomAlignmentGuides({
+        draggedBounds,
+        otherBounds,
+        imageRect: displayedImageRect,
+        placementBounds,
+        thresholdPixels: ROOM_ALIGNMENT_GUIDE_THRESHOLD_PIXELS,
+      });
+
+      if (nextGuides.signature === alignmentGuideSignatureRef.current) {
+        return;
+      }
+
+      alignmentGuideSignatureRef.current = nextGuides.signature;
+      setAlignmentGuides(nextGuides);
+    },
+    [clearAlignmentGuides, displayedImageRect, placedArtworks, placementBounds]
+  );
+  const handleArtworkDragStart = useCallback(() => {
+    clearAlignmentGuides();
+    setIsArtworkDragging(true);
+  }, [clearAlignmentGuides]);
+  const handleArtworkDragEnd = useCallback(() => {
+    setIsArtworkDragging(false);
+    clearAlignmentGuides();
+  }, [clearAlignmentGuides]);
   const activeSelectionCount = Math.max(
     selectedPlacedArtworks.length,
     activePlacement ? 1 : 0
@@ -3824,6 +4172,24 @@ export default function RoomViewScreen() {
       setGroupCommittedCenterOverrides(null);
     }
   }, [activeSourcePlacements, groupCommittedCenterOverrides, groupDragOffset]);
+
+  useEffect(() => {
+    if (!stageDragCenterOverrides) {
+      return;
+    }
+
+    const allDragCentersApplied = Object.entries(stageDragCenterOverrides).every(
+      ([placementId, dragCenter]) => {
+        const placement = activeSourcePlacements.find((item) => item.id === placementId);
+
+        return placement ? roomPointsAreClose(placement.center, dragCenter) : true;
+      }
+    );
+
+    if (allDragCentersApplied) {
+      setStageDragCenterOverrides(null);
+    }
+  }, [activeSourcePlacements, stageDragCenterOverrides]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -4417,32 +4783,34 @@ export default function RoomViewScreen() {
     setIsMultiSelectMode(false);
   }, [isMultiSelectMode, roomView.activePlacementId, selectedPlacementIds.length, setRoomView]);
 
-  const getPhonePlacementHitAtStagePoint = useCallback(
+  const getPlacementHitAtStagePoint = useCallback(
     (stagePoint: RoomViewPoint) => {
       if (
-        !isPhoneWorkspace ||
         displayedImageRect.width <= 0 ||
         displayedImageRect.height <= 0
       ) {
         return null;
       }
 
+      const touchInset = isPhoneWorkspace ? ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET : 0;
+      let closestHit: { placementId: string; distance: number; zIndex: number } | null = null;
+
       for (let index = placedArtworks.length - 1; index >= 0; index -= 1) {
         const placedArtwork = placedArtworks[index];
-        const left =
+        const centerX =
           displayedImageRect.left +
-          placedArtwork.placement.center.x * displayedImageRect.width -
-          placedArtwork.displaySize.width / 2 -
-          ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET;
-        const top =
+          placedArtwork.placement.center.x * displayedImageRect.width;
+        const centerY =
           displayedImageRect.top +
-          placedArtwork.placement.center.y * displayedImageRect.height -
-          placedArtwork.displaySize.height / 2 -
-          ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET;
+          placedArtwork.placement.center.y * displayedImageRect.height;
+        const left =
+          centerX - placedArtwork.displaySize.width / 2 - touchInset;
+        const top =
+          centerY - placedArtwork.displaySize.height / 2 - touchInset;
         const right =
-          left + placedArtwork.displaySize.width + ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET * 2;
+          left + placedArtwork.displaySize.width + touchInset * 2;
         const bottom =
-          top + placedArtwork.displaySize.height + ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET * 2;
+          top + placedArtwork.displaySize.height + touchInset * 2;
 
         if (
           stagePoint.x >= left &&
@@ -4450,11 +4818,24 @@ export default function RoomViewScreen() {
           stagePoint.y >= top &&
           stagePoint.y <= bottom
         ) {
-          return placedArtwork.placement.id;
+          const distance = Math.hypot(stagePoint.x - centerX, stagePoint.y - centerY);
+          const zIndex = placedArtwork.placement.zIndex ?? index;
+
+          if (
+            !closestHit ||
+            distance < closestHit.distance ||
+            (Math.abs(distance - closestHit.distance) < 0.5 && zIndex > closestHit.zIndex)
+          ) {
+            closestHit = {
+              placementId: placedArtwork.placement.id,
+              distance,
+              zIndex,
+            };
+          }
         }
       }
 
-      return null;
+      return closestHit?.placementId ?? null;
     },
     [
       displayedImageRect.height,
@@ -4465,7 +4846,6 @@ export default function RoomViewScreen() {
       placedArtworks,
     ]
   );
-
   const handleBackgroundResponderGrant = useCallback(
     (event: GestureResponderEvent) => {
       if (isArtworkDragging || isCalibrationDragging) {
@@ -4476,11 +4856,21 @@ export default function RoomViewScreen() {
       backgroundTapStartRef.current = {
         pageX: event.nativeEvent.pageX,
         pageY: event.nativeEvent.pageY,
-        stageX: event.nativeEvent.locationX,
-        stageY: event.nativeEvent.locationY,
+        stageX:
+          event.nativeEvent.locationX +
+          (isPhoneWorkspace ? 0 : displayedImageRect.left),
+        stageY:
+          event.nativeEvent.locationY +
+          (isPhoneWorkspace ? 0 : displayedImageRect.top),
       };
     },
-    [isArtworkDragging, isCalibrationDragging]
+    [
+      displayedImageRect.left,
+      displayedImageRect.top,
+      isArtworkDragging,
+      isCalibrationDragging,
+      isPhoneWorkspace,
+    ]
   );
 
   const handleBackgroundResponderRelease = useCallback(
@@ -4498,13 +4888,13 @@ export default function RoomViewScreen() {
       const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
 
       if (distance <= 8) {
-        const phoneFallbackPlacementId = getPhonePlacementHitAtStagePoint({
+        const fallbackPlacementId = getPlacementHitAtStagePoint({
           x: start.stageX,
           y: start.stageY,
         });
 
-        if (phoneFallbackPlacementId) {
-          handleSelectPlacement(phoneFallbackPlacementId);
+        if (fallbackPlacementId) {
+          handleSelectPlacement(fallbackPlacementId);
           return;
         }
 
@@ -4512,11 +4902,85 @@ export default function RoomViewScreen() {
       }
     },
     [
-      getPhonePlacementHitAtStagePoint,
+      getPlacementHitAtStagePoint,
       handleClearPlacementSelection,
       handleSelectPlacement,
       isArtworkDragging,
       isCalibrationDragging,
+    ]
+  );
+
+  const measureRoomStageInWindow = useCallback(() => {
+    roomStageRef.current?.measureInWindow((x, y, width, height) => {
+      roomStageWindowRectRef.current = { x, y, width, height };
+    });
+  }, []);
+
+  const getStagePointFromPagePoint = useCallback((pageX: number, pageY: number) => {
+    const rect = roomStageWindowRectRef.current;
+
+    if (!rect) {
+      return null;
+    }
+
+    return {
+      x: pageX - rect.x,
+      y: pageY - rect.y,
+    };
+  }, []);
+
+  const handleStageTouchStart = useCallback((event: GestureResponderEvent) => {
+    measureRoomStageInWindow();
+    stageTapStartRef.current = {
+      pageX: event.nativeEvent.pageX,
+      pageY: event.nativeEvent.pageY,
+    };
+  }, [measureRoomStageInWindow]);
+
+  const handleStageTouchEnd = useCallback(
+    (event: GestureResponderEvent) => {
+      const start = stageTapStartRef.current;
+
+      stageTapStartRef.current = null;
+
+      if (!start) {
+        return;
+      }
+
+      const deltaX = event.nativeEvent.pageX - start.pageX;
+      const deltaY = event.nativeEvent.pageY - start.pageY;
+      const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
+
+      if (distance > 8) {
+        return;
+      }
+
+      const startStagePoint = getStagePointFromPagePoint(start.pageX, start.pageY);
+      const endStagePoint = getStagePointFromPagePoint(
+        event.nativeEvent.pageX,
+        event.nativeEvent.pageY
+      );
+
+      if (!startStagePoint || !endStagePoint) {
+        return;
+      }
+
+      const startHitPlacementId = getPlacementHitAtStagePoint(startStagePoint);
+      const endHitPlacementId = getPlacementHitAtStagePoint(endStagePoint);
+      const hitPlacementId = endHitPlacementId ?? startHitPlacementId;
+
+      if (hitPlacementId) {
+        handleSelectPlacement(hitPlacementId);
+        return;
+      }
+
+      handleClearPlacementSelection();
+    },
+    [
+      getPlacementHitAtStagePoint,
+      getStagePointFromPagePoint,
+      handleClearPlacementSelection,
+      handleSelectPlacement,
     ]
   );
 
@@ -4547,6 +5011,261 @@ export default function RoomViewScreen() {
       });
     },
     [roomView.placements, setRoomView]
+  );
+
+  const getStageArtworkDragCenters = useCallback(
+    (
+      dragState: NonNullable<typeof stageArtworkDragRef.current>,
+      gestureState: PanResponderGestureState
+    ) => {
+      if (displayedImageRect.width <= 0 || displayedImageRect.height <= 0) {
+        return new Map<string, RoomViewPoint>();
+      }
+
+      const stageWidth = displayedImageRect.width;
+      const stageHeight = displayedImageRect.height;
+
+      if (dragState.isGroupDrag && dragState.dragItems.length > 1) {
+        const activeStartCenter =
+          dragState.startCenters.get(dragState.placementId) ??
+          dragState.activeItem.placement.center;
+        const rawDelta = {
+          x: gestureState.dx / stageWidth,
+          y: gestureState.dy / stageHeight,
+        };
+        let clampedDelta = getClampedArtworkGroupDelta({
+          items: dragState.dragItems,
+          startCenters: dragState.startCenters,
+          delta: rawDelta,
+          stageWidth,
+          stageHeight,
+          placementBounds,
+        });
+
+        if (snapGridSizePixels !== null) {
+          const snappedActiveCenter = snapArtworkCenterToGrid({
+            point: {
+              x: activeStartCenter.x + clampedDelta.x,
+              y: activeStartCenter.y + clampedDelta.y,
+            },
+            stageWidth,
+            stageHeight,
+            artworkWidth: dragState.activeItem.displaySize.width,
+            artworkHeight: dragState.activeItem.displaySize.height,
+            placementBounds,
+            snapGridSizePixels,
+          });
+
+          clampedDelta = getClampedArtworkGroupDelta({
+            items: dragState.dragItems,
+            startCenters: dragState.startCenters,
+            delta: {
+              x: snappedActiveCenter.x - activeStartCenter.x,
+              y: snappedActiveCenter.y - activeStartCenter.y,
+            },
+            stageWidth,
+            stageHeight,
+            placementBounds,
+          });
+        }
+
+        const centersById = new Map<string, RoomViewPoint>();
+
+        dragState.dragItems.forEach((item) => {
+          const startCenter =
+            dragState.startCenters.get(item.placement.id) ?? item.placement.center;
+
+          centersById.set(item.placement.id, {
+            x: startCenter.x + clampedDelta.x,
+            y: startCenter.y + clampedDelta.y,
+          });
+        });
+
+        return centersById;
+      }
+
+      const startCenter =
+        dragState.startCenters.get(dragState.placementId) ??
+        dragState.activeItem.placement.center;
+      const nextCenter = snapArtworkCenterToGrid({
+        point: {
+          x: startCenter.x + gestureState.dx / stageWidth,
+          y: startCenter.y + gestureState.dy / stageHeight,
+        },
+        stageWidth,
+        stageHeight,
+        artworkWidth: dragState.activeItem.displaySize.width,
+        artworkHeight: dragState.activeItem.displaySize.height,
+        placementBounds,
+        snapGridSizePixels,
+      });
+
+      return new Map([[dragState.placementId, nextCenter]]);
+    },
+    [
+      displayedImageRect.height,
+      displayedImageRect.width,
+      placementBounds,
+      snapGridSizePixels,
+    ]
+  );
+
+  const finishStageArtworkGesture = useCallback(
+    (gestureState: PanResponderGestureState) => {
+      const dragState = stageArtworkDragRef.current;
+
+      stageArtworkDragRef.current = null;
+
+      if (!dragState) {
+        setStageDragCenterOverrides(null);
+        return;
+      }
+
+      const dragDistance = Math.hypot(gestureState.dx, gestureState.dy);
+
+      if (dragDistance <= 8) {
+        setStageDragCenterOverrides(null);
+        handleSelectPlacement(dragState.placementId);
+        handleArtworkDragEnd();
+        return;
+      }
+
+      const centersById = getStageArtworkDragCenters(dragState, gestureState);
+
+      if (centersById.size === 0) {
+        setStageDragCenterOverrides(null);
+        handleArtworkDragEnd();
+        return;
+      }
+
+      setStageDragCenterOverrides(Object.fromEntries(centersById));
+
+      if (dragState.isGroupDrag) {
+        handleMovePlacementGroup(centersById);
+      } else {
+        const nextCenter = centersById.get(dragState.placementId);
+
+        if (nextCenter) {
+          handleMovePlacement(dragState.placementId, nextCenter);
+        }
+      }
+
+      handleArtworkDragEnd();
+    },
+    [
+      getStageArtworkDragCenters,
+      handleArtworkDragEnd,
+      handleMovePlacement,
+      handleMovePlacementGroup,
+      handleSelectPlacement,
+    ]
+  );
+
+  const stageArtworkPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !isCalibrationDragging,
+        onMoveShouldSetPanResponder: () => !isCalibrationDragging,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponderCapture: () => false,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: (event) => {
+          if (isCalibrationDragging) {
+            stageArtworkDragRef.current = null;
+            return;
+          }
+
+          const placementId = getPlacementHitAtStagePoint({
+            x: event.nativeEvent.locationX,
+            y: event.nativeEvent.locationY,
+          });
+
+          if (!placementId) {
+            stageArtworkDragRef.current = null;
+            return;
+          }
+
+          const activeItem = placedArtworks.find(
+            (item) => item.placement.id === placementId
+          );
+
+          if (!activeItem) {
+            stageArtworkDragRef.current = null;
+            return;
+          }
+
+          const isGroupDrag =
+            selectedPlacementIdSet.has(placementId) && selectedPlacedArtworks.length > 1;
+          const dragItems = isGroupDrag ? selectedPlacedArtworks : [activeItem];
+
+          stageArtworkDragRef.current = {
+            placementId,
+            activeItem,
+            dragItems,
+            startCenters: new Map(
+              dragItems.map((item) => [item.placement.id, item.placement.center])
+            ),
+            isGroupDrag,
+          };
+          setStageDragCenterOverrides(null);
+          handleSelectPlacement(placementId);
+          handleArtworkDragStart();
+        },
+        onPanResponderMove: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          const dragState = stageArtworkDragRef.current;
+
+          if (!dragState) {
+            return;
+          }
+
+          const centersById = getStageArtworkDragCenters(dragState, gestureState);
+
+          if (centersById.size === 0) {
+            return;
+          }
+
+          setStageDragCenterOverrides(Object.fromEntries(centersById));
+          handlePlacementDragGuideChange(centersById);
+        },
+        onPanResponderRelease: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          if (!stageArtworkDragRef.current) {
+            const tapDistance = Math.hypot(gestureState.dx, gestureState.dy);
+
+            if (tapDistance <= 8) {
+              handleClearPlacementSelection();
+            }
+            return;
+          }
+
+          finishStageArtworkGesture(gestureState);
+        },
+        onPanResponderTerminate: (
+          _event: GestureResponderEvent,
+          gestureState: PanResponderGestureState
+        ) => {
+          finishStageArtworkGesture(gestureState);
+        },
+      }),
+    [
+      finishStageArtworkGesture,
+      getPlacementHitAtStagePoint,
+      getStageArtworkDragCenters,
+      handleArtworkDragStart,
+      handleClearPlacementSelection,
+      handlePlacementDragGuideChange,
+      handleSelectPlacement,
+      isCalibrationDragging,
+      placedArtworks,
+      selectedPlacedArtworks,
+      selectedPlacementIdSet,
+    ]
   );
 
   const updateActiveSourceWallShadow = useCallback(
@@ -5129,9 +5848,16 @@ export default function RoomViewScreen() {
 
   const wallPhotoStageSection = (
     <View
+      ref={roomStageRef}
+      onTouchStart={handleStageTouchStart}
+      onTouchEnd={handleStageTouchEnd}
+      onTouchCancel={() => {
+        stageTapStartRef.current = null;
+      }}
       onLayout={(event) => {
         const { width, height } = event.nativeEvent.layout;
         setStageSize({ width, height });
+        measureRoomStageInWindow();
       }}
       style={{
         ...(fittedStageSize
@@ -5234,6 +5960,8 @@ export default function RoomViewScreen() {
             }}
           />
 
+          <RoomAlignmentGuideOverlay guides={alignmentGuides} />
+
           {placedArtworks.map((placedArtwork) => (
             <PlacedWallArtwork
               key={placedArtwork.placement.id}
@@ -5252,6 +5980,7 @@ export default function RoomViewScreen() {
               snapGridSizePixels={snapGridSizePixels}
               groupDragOffset={groupDragOffset}
               externalCommittedCenterOverride={
+                stageDragCenterOverrides?.[placedArtwork.placement.id] ??
                 groupCommittedCenterOverrides?.[placedArtwork.placement.id]
               }
               sceneDefaultShadow={
@@ -5272,10 +6001,28 @@ export default function RoomViewScreen() {
               onSelect={handleSelectPlacement}
               onMoveEnd={handleMovePlacement}
               onGroupMoveEnd={handleMovePlacementGroup}
-              onDragStart={() => setIsArtworkDragging(true)}
-              onDragEnd={() => setIsArtworkDragging(false)}
+              onDragStart={handleArtworkDragStart}
+              onDragMove={handlePlacementDragGuideChange}
+              onDragEnd={handleArtworkDragEnd}
             />
           ))}
+
+          <View
+            {...stageArtworkPanResponder.panHandlers}
+            pointerEvents={
+              roomView.sourceMode === "myWall" && roomView.isCalibrationRulerVisible
+                ? "none"
+                : "auto"
+            }
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: stageSize.width,
+              height: stageSize.height,
+              zIndex: 200,
+            }}
+          />
 
           {roomView.sourceMode === "myWall" && wallPhoto && roomView.isCalibrationRulerVisible ? (
             <CalibrationRuler
