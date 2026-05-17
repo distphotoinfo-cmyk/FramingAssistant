@@ -8,8 +8,8 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "ai:server": "node server/ai-backend.js",
-    "ai:test": "node server/test-enhance-wall-photo.js",
+    "ai:server": "npm --prefix server start",
+    "ai:test": "npm --prefix server run test --",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },
@@ -31,7 +31,6 @@
     "react-native-screens": "~4.11.1",
     "react-native-svg": "15.11.2",
     "react-native-web": "~0.20.0",
-    "sharp": "^0.34.5",
     "zustand": "^5.0.4"
   },
   "devDependencies": {

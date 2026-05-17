@@ -58,6 +58,12 @@ endpoint. Otherwise it uses the owner/model endpoint for `REPLICATE_MODEL`.
 
 ## Run Locally
 
+Install backend-only dependencies once:
+
+```sh
+npm --prefix server install
+```
+
 ```sh
 npm run ai:server
 ```

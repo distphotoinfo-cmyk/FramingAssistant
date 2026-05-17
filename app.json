@@ -10,7 +10,7 @@
     "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.matthewkoller.framingassistant",
-      "buildNumber": "6",
+      "buildNumber": "11",
       "supportsTablet": true,
       "icon": "./assets/icon.png",
       "infoPlist": {
