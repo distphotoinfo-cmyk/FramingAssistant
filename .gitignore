@@ -7,4 +7,9 @@ ios/
 android/
 *.log
 .DS_Store
-
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example

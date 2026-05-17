@@ -54,6 +54,13 @@ type EnhanceWallPhotoResponse = {
   metadata?: AIBackendEnhanceWallPhotoResult["metadata"];
 };
 
+type AIBackendErrorResponse = {
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
 function readPublicEnv(name: string) {
   try {
     return typeof process !== "undefined" ? process.env?.[name]?.trim() : undefined;
@@ -143,6 +150,16 @@ function resolveEnhancedImageUri(response: EnhanceWallPhotoResponse) {
   );
 }
 
+async function readBackendErrorMessage(response: Response) {
+  try {
+    const json = (await response.json()) as AIBackendErrorResponse;
+
+    return json.error?.message ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class AIBackendProvider {
   private readonly config: AIBackendProviderConfig;
 
@@ -171,10 +188,13 @@ export class AIBackendProvider {
       });
 
       if (!response.ok) {
+        const backendMessage = await readBackendErrorMessage(response);
+
         throw new Error(
-          response.status === 404
+          backendMessage ??
+          (response.status === 404
             ? "The AI Wall Enhancement endpoint was not found."
-            : "AI Wall Enhancement is temporarily unavailable."
+            : "AI Wall Enhancement is temporarily unavailable.")
         );
       }
 
