@@ -9,6 +9,7 @@
     "android": "expo run:android",
     "web": "expo start --web",
     "ai:server": "node server/ai-backend.js",
+    "ai:test": "node server/test-enhance-wall-photo.js",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },

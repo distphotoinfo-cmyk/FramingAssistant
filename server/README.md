@@ -101,6 +101,31 @@ curl -X POST http://localhost:8787/api/ai/enhance-wall-photo \
   -d '{"imageBase64":"...","mimeType":"image/jpeg","enhancementMode":"cleanWall","settings":{"cleanupLighting":true,"preserveWallCalibration":true}}'
 ```
 
+Local model test, without the mobile app:
+
+```sh
+npm run ai:test -- /path/to/wall-photo.jpg
+```
+
+Outputs are saved to `server/test-output/`:
+
+- enhanced image file
+- matching JSON metadata file with model, runtime, preprocessing dimensions,
+  resolved enhancement intent, and Replicate prediction metadata
+
+Switch models with env vars or flags:
+
+```sh
+REPLICATE_MODEL=owner/model npm run ai:test -- /path/to/wall-photo.jpg
+npm run ai:test -- /path/to/wall-photo.jpg --model owner/model --version replicate-version-id
+```
+
+For prompt-capable models, set the expected prompt key:
+
+```sh
+npm run ai:test -- /path/to/wall-photo.jpg --prompt-input-key prompt
+```
+
 Successful responses include one of:
 
 ```json

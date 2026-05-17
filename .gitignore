@@ -13,3 +13,4 @@ android/
 server/.env
 server/.env.*
 !server/.env.example
+server/test-output/
