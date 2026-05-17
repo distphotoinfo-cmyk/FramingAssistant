@@ -2211,6 +2211,9 @@ function PlacedWallArtwork({
   environment,
   sceneLightingZones,
   artworkBrightness,
+  groupDragEnabled,
+  externalDragOffset,
+  gesturesEnabled = true,
   touchTargetInset = 0,
   onSelect,
   onMoveEnd,
@@ -2234,6 +2237,9 @@ function PlacedWallArtwork({
   environment: RoomEnvironmentLighting | null;
   sceneLightingZones?: RoomSceneLightingZone[] | null;
   artworkBrightness: number;
+  groupDragEnabled: boolean;
+  externalDragOffset?: Animated.ValueXY;
+  gesturesEnabled?: boolean;
   touchTargetInset?: number;
   onSelect: (placementId: string) => void;
   onMoveEnd: (placementId: string, center: RoomViewPoint) => void;
@@ -2251,7 +2257,7 @@ function PlacedWallArtwork({
   const groupDragStartCentersRef = useRef<Map<string, RoomViewPoint>>(new Map());
   const pendingCenterRef = useRef<RoomViewPoint | null>(null);
   const isDraggingRef = useRef(false);
-  const isGroupDragMember = selected && selectedGroupArtworks.length > 1;
+  const isGroupDragMember = groupDragEnabled && selected && selectedGroupArtworks.length > 1;
   const wallShadow = resolveWallShadow(sceneDefaultShadow, roomShadowOverride);
 
   useLayoutEffect(() => {
@@ -2493,7 +2499,8 @@ function PlacedWallArtwork({
 
   const renderCenter =
     externalCommittedCenterOverride ?? committedCenterOverride ?? placedArtwork.placement.center;
-  const activeDragOffset = isGroupDragMember ? groupDragOffset : dragOffset;
+  const activeDragOffset =
+    externalDragOffset ?? (isGroupDragMember ? groupDragOffset : dragOffset);
   const dragTransforms =
     externalCommittedCenterOverride || committedCenterOverride
       ? []
@@ -2595,7 +2602,7 @@ function PlacedWallArtwork({
 
   return (
     <Animated.View
-      {...panResponder.panHandlers}
+      {...(gesturesEnabled ? panResponder.panHandlers : {})}
       collapsable={touchTargetInset <= 0}
       accessibilityRole="imagebutton"
       accessibilityLabel={`Placed framed artwork ${placedArtwork.artwork.name}`}
@@ -3523,10 +3530,12 @@ export default function RoomViewScreen() {
   const handledRoomViewLaunchIdRef = useRef<string | null>(null);
   const pendingWallPhotoArtworkIdRef = useRef<string | null>(null);
   const groupDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const stageDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const stageTapStartRef = useRef<{
     pageX: number;
     pageY: number;
   } | null>(null);
+  const stageArtworkResponderHandledTouchRef = useRef(false);
   const backgroundTapStartRef = useRef<{
     pageX: number;
     pageY: number;
@@ -3548,6 +3557,8 @@ export default function RoomViewScreen() {
     useState<Record<string, RoomViewPoint> | null>(null);
   const [stageDragCenterOverrides, setStageDragCenterOverrides] =
     useState<Record<string, RoomViewPoint> | null>(null);
+  const [stageActiveDragPlacementIds, setStageActiveDragPlacementIds] =
+    useState<string[] | null>(null);
   const alignmentGuideSignatureRef = useRef(EMPTY_ROOM_ALIGNMENT_GUIDES.signature);
   const [alignmentGuides, setAlignmentGuides] = useState<RoomAlignmentGuideState>(
     EMPTY_ROOM_ALIGNMENT_GUIDES
@@ -4322,9 +4333,11 @@ export default function RoomViewScreen() {
     );
 
     if (allDragCentersApplied) {
+      stageDragOffset.setValue({ x: 0, y: 0 });
+      setStageActiveDragPlacementIds(null);
       setStageDragCenterOverrides(null);
     }
-  }, [activeSourcePlacements, stageDragCenterOverrides]);
+  }, [activeSourcePlacements, stageDragCenterOverrides, stageDragOffset]);
 
   useEffect(() => {
     if (roomView.sourceMode !== "myWall") {
@@ -4940,16 +4953,22 @@ export default function RoomViewScreen() {
       }
 
       const touchInset = isPhoneWorkspace ? ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET : 0;
-      let closestHit: { placementId: string; distance: number; zIndex: number } | null = null;
 
+      // Hit testing must match visual stacking. When two artwork bounds touch or
+      // overlap, choosing the closest center can activate the neighbor instead
+      // of the item visually under the finger.
       for (let index = placedArtworks.length - 1; index >= 0; index -= 1) {
         const placedArtwork = placedArtworks[index];
+        const renderedCenter =
+          stageDragCenterOverrides?.[placedArtwork.placement.id] ??
+          groupCommittedCenterOverrides?.[placedArtwork.placement.id] ??
+          placedArtwork.placement.center;
         const centerX =
           displayedImageRect.left +
-          placedArtwork.placement.center.x * displayedImageRect.width;
+          renderedCenter.x * displayedImageRect.width;
         const centerY =
           displayedImageRect.top +
-          placedArtwork.placement.center.y * displayedImageRect.height;
+          renderedCenter.y * displayedImageRect.height;
         const left =
           centerX - placedArtwork.displaySize.width / 2 - touchInset;
         const top =
@@ -4965,32 +4984,21 @@ export default function RoomViewScreen() {
           stagePoint.y >= top &&
           stagePoint.y <= bottom
         ) {
-          const distance = Math.hypot(stagePoint.x - centerX, stagePoint.y - centerY);
-          const zIndex = placedArtwork.placement.zIndex ?? index;
-
-          if (
-            !closestHit ||
-            distance < closestHit.distance ||
-            (Math.abs(distance - closestHit.distance) < 0.5 && zIndex > closestHit.zIndex)
-          ) {
-            closestHit = {
-              placementId: placedArtwork.placement.id,
-              distance,
-              zIndex,
-            };
-          }
+          return placedArtwork.placement.id;
         }
       }
 
-      return closestHit?.placementId ?? null;
+      return null;
     },
     [
       displayedImageRect.height,
       displayedImageRect.left,
       displayedImageRect.top,
       displayedImageRect.width,
+      groupCommittedCenterOverrides,
       isPhoneWorkspace,
       placedArtworks,
+      stageDragCenterOverrides,
     ]
   );
   const handleBackgroundResponderGrant = useCallback(
@@ -5086,6 +5094,12 @@ export default function RoomViewScreen() {
 
   const handleStageTouchEnd = useCallback(
     (event: GestureResponderEvent) => {
+      if (stageArtworkResponderHandledTouchRef.current) {
+        stageArtworkResponderHandledTouchRef.current = false;
+        stageTapStartRef.current = null;
+        return;
+      }
+
       const start = stageTapStartRef.current;
 
       stageTapStartRef.current = null;
@@ -5130,6 +5144,11 @@ export default function RoomViewScreen() {
       handleSelectPlacement,
     ]
   );
+  const resetStageArtworkResponderHandledTouchSoon = useCallback(() => {
+    setTimeout(() => {
+      stageArtworkResponderHandledTouchRef.current = false;
+    }, 0);
+  }, []);
 
   const handleMovePlacement = useCallback(
     (placementId: string, center: RoomViewPoint) => {
@@ -5265,6 +5284,8 @@ export default function RoomViewScreen() {
 
       if (!dragState) {
         setStageDragCenterOverrides(null);
+        setStageActiveDragPlacementIds(null);
+        stageDragOffset.setValue({ x: 0, y: 0 });
         return;
       }
 
@@ -5272,6 +5293,8 @@ export default function RoomViewScreen() {
 
       if (dragDistance <= 8) {
         setStageDragCenterOverrides(null);
+        setStageActiveDragPlacementIds(null);
+        stageDragOffset.setValue({ x: 0, y: 0 });
         handleSelectPlacement(dragState.placementId);
         handleArtworkDragEnd();
         return;
@@ -5281,8 +5304,22 @@ export default function RoomViewScreen() {
 
       if (centersById.size === 0) {
         setStageDragCenterOverrides(null);
+        setStageActiveDragPlacementIds(null);
+        stageDragOffset.setValue({ x: 0, y: 0 });
         handleArtworkDragEnd();
         return;
+      }
+
+      const startCenter =
+        dragState.startCenters.get(dragState.placementId) ??
+        dragState.activeItem.placement.center;
+      const nextCenter = centersById.get(dragState.placementId);
+
+      if (nextCenter) {
+        stageDragOffset.setValue({
+          x: (nextCenter.x - startCenter.x) * displayedImageRect.width,
+          y: (nextCenter.y - startCenter.y) * displayedImageRect.height,
+        });
       }
 
       setStageDragCenterOverrides(Object.fromEntries(centersById));
@@ -5305,6 +5342,9 @@ export default function RoomViewScreen() {
       handleMovePlacement,
       handleMovePlacementGroup,
       handleSelectPlacement,
+      displayedImageRect.height,
+      displayedImageRect.width,
+      stageDragOffset,
     ]
   );
 
@@ -5318,6 +5358,8 @@ export default function RoomViewScreen() {
         onShouldBlockNativeResponder: () => true,
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (event) => {
+          stageArtworkResponderHandledTouchRef.current = true;
+
           if (isCalibrationDragging) {
             stageArtworkDragRef.current = null;
             return;
@@ -5343,9 +5385,13 @@ export default function RoomViewScreen() {
           }
 
           const isGroupDrag =
-            selectedPlacementIdSet.has(placementId) && selectedPlacedArtworks.length > 1;
+            isMultiSelectMode &&
+            selectedPlacementIdSet.has(placementId) &&
+            selectedPlacedArtworks.length > 1;
           const dragItems = isGroupDrag ? selectedPlacedArtworks : [activeItem];
 
+          stageDragOffset.stopAnimation();
+          stageDragOffset.setValue({ x: 0, y: 0 });
           stageArtworkDragRef.current = {
             placementId,
             activeItem,
@@ -5356,6 +5402,9 @@ export default function RoomViewScreen() {
             isGroupDrag,
           };
           setStageDragCenterOverrides(null);
+          setStageActiveDragPlacementIds(
+            dragItems.map((item) => item.placement.id)
+          );
           handleSelectPlacement(placementId);
           handleArtworkDragStart();
         },
@@ -5370,12 +5419,19 @@ export default function RoomViewScreen() {
           }
 
           const centersById = getStageArtworkDragCenters(dragState, gestureState);
+          const startCenter =
+            dragState.startCenters.get(dragState.placementId) ??
+            dragState.activeItem.placement.center;
+          const nextCenter = centersById.get(dragState.placementId);
 
-          if (centersById.size === 0) {
+          if (centersById.size === 0 || !nextCenter) {
             return;
           }
 
-          setStageDragCenterOverrides(Object.fromEntries(centersById));
+          stageDragOffset.setValue({
+            x: (nextCenter.x - startCenter.x) * displayedImageRect.width,
+            y: (nextCenter.y - startCenter.y) * displayedImageRect.height,
+          });
           handlePlacementDragGuideChange(centersById);
         },
         onPanResponderRelease: (
@@ -5388,16 +5444,21 @@ export default function RoomViewScreen() {
             if (tapDistance <= 8) {
               handleClearPlacementSelection();
             }
+            setStageActiveDragPlacementIds(null);
+            stageDragOffset.setValue({ x: 0, y: 0 });
+            resetStageArtworkResponderHandledTouchSoon();
             return;
           }
 
           finishStageArtworkGesture(gestureState);
+          resetStageArtworkResponderHandledTouchSoon();
         },
         onPanResponderTerminate: (
           _event: GestureResponderEvent,
           gestureState: PanResponderGestureState
         ) => {
           finishStageArtworkGesture(gestureState);
+          resetStageArtworkResponderHandledTouchSoon();
         },
       }),
     [
@@ -5408,10 +5469,15 @@ export default function RoomViewScreen() {
       handleClearPlacementSelection,
       handlePlacementDragGuideChange,
       handleSelectPlacement,
+      displayedImageRect.height,
+      displayedImageRect.width,
       isCalibrationDragging,
+      isMultiSelectMode,
       placedArtworks,
+      resetStageArtworkResponderHandledTouchSoon,
       selectedPlacedArtworks,
       selectedPlacementIdSet,
+      stageDragOffset,
     ]
   );
 
@@ -6108,50 +6174,58 @@ export default function RoomViewScreen() {
 
           <RoomAlignmentGuideOverlay guides={alignmentGuides} />
 
-          {placedArtworks.map((placedArtwork) => (
-            <PlacedWallArtwork
-              key={placedArtwork.placement.id}
-              placedArtwork={placedArtwork}
-              selected={selectedPlacementIdSet.has(placedArtwork.placement.id)}
-              selectedGroupArtworks={selectedPlacedArtworks}
-              stageSize={{
-                width: displayedImageRect.width,
-                height: displayedImageRect.height,
-              }}
-              stageOffset={{
-                x: displayedImageRect.left,
-                y: displayedImageRect.top,
-              }}
-              placementBounds={placementBounds}
-              snapGridSizePixels={snapGridSizePixels}
-              groupDragOffset={groupDragOffset}
-              externalCommittedCenterOverride={
-                stageDragCenterOverrides?.[placedArtwork.placement.id] ??
-                groupCommittedCenterOverrides?.[placedArtwork.placement.id]
-              }
-              sceneDefaultShadow={
-                roomView.sourceMode === "presetRoom"
-                  ? activePresetScene.defaultShadow
-                  : null
-              }
-              roomShadowOverride={activeSourceWallShadowOverride}
-              materialRealism={activeSourceMaterialRealism}
-              environment={activeSourceEnvironment}
-              sceneLightingZones={
-                roomView.sourceMode === "presetRoom"
-                  ? activePresetScene.sceneLightingZones
-                  : null
-              }
-              artworkBrightness={activeSourceArtworkBrightness}
-              touchTargetInset={isPhoneWorkspace ? ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET : 0}
-              onSelect={handleSelectPlacement}
-              onMoveEnd={handleMovePlacement}
-              onGroupMoveEnd={handleMovePlacementGroup}
-              onDragStart={handleArtworkDragStart}
-              onDragMove={handlePlacementDragGuideChange}
-              onDragEnd={handleArtworkDragEnd}
-            />
-          ))}
+          {placedArtworks.map((placedArtwork) => {
+            const isStageDragActive =
+              stageActiveDragPlacementIds?.includes(placedArtwork.placement.id) ?? false;
+
+            return (
+              <PlacedWallArtwork
+                key={placedArtwork.placement.id}
+                placedArtwork={placedArtwork}
+                selected={selectedPlacementIdSet.has(placedArtwork.placement.id)}
+                selectedGroupArtworks={selectedPlacedArtworks}
+                stageSize={{
+                  width: displayedImageRect.width,
+                  height: displayedImageRect.height,
+                }}
+                stageOffset={{
+                  x: displayedImageRect.left,
+                  y: displayedImageRect.top,
+                }}
+                placementBounds={placementBounds}
+                snapGridSizePixels={snapGridSizePixels}
+                groupDragOffset={groupDragOffset}
+                externalCommittedCenterOverride={
+                  stageDragCenterOverrides?.[placedArtwork.placement.id] ??
+                  groupCommittedCenterOverrides?.[placedArtwork.placement.id]
+                }
+                sceneDefaultShadow={
+                  roomView.sourceMode === "presetRoom"
+                    ? activePresetScene.defaultShadow
+                    : null
+                }
+                roomShadowOverride={activeSourceWallShadowOverride}
+                materialRealism={activeSourceMaterialRealism}
+                environment={activeSourceEnvironment}
+                sceneLightingZones={
+                  roomView.sourceMode === "presetRoom"
+                    ? activePresetScene.sceneLightingZones
+                    : null
+                }
+                artworkBrightness={activeSourceArtworkBrightness}
+                groupDragEnabled={isMultiSelectMode}
+                externalDragOffset={isStageDragActive ? stageDragOffset : undefined}
+                gesturesEnabled={false}
+                touchTargetInset={isPhoneWorkspace ? ROOM_VIEW_PHONE_ARTWORK_TOUCH_INSET : 0}
+                onSelect={handleSelectPlacement}
+                onMoveEnd={handleMovePlacement}
+                onGroupMoveEnd={handleMovePlacementGroup}
+                onDragStart={handleArtworkDragStart}
+                onDragMove={handlePlacementDragGuideChange}
+                onDragEnd={handleArtworkDragEnd}
+              />
+            );
+          })}
 
           <View
             {...stageArtworkPanResponder.panHandlers}
