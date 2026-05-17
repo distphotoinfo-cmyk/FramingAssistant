@@ -50,6 +50,7 @@ import {
   type RegisteredRoomPresetScene,
 } from "../data/presetRoomScenes";
 import { enhanceWallPhoto } from "../services/ai/enhanceWallPhoto";
+import { buildAIWallEnhancementSettings } from "../services/ai/wallEnhancementIntent";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import {
   canUseExperimentalFeature,
@@ -836,12 +837,14 @@ function RoomViewBottomSheet({
   visible,
   title,
   maxHeight,
+  compact = false,
   onClose,
   children,
 }: {
   visible: boolean;
   title: string;
   maxHeight: number;
+  compact?: boolean;
   onClose: () => void;
   children: React.ReactNode;
 }) {
@@ -869,17 +872,17 @@ function RoomViewBottomSheet({
             borderWidth: 2,
             borderBottomWidth: 0,
             borderColor: colors.borderStrong,
-            paddingTop: spacing.sm,
-            paddingHorizontal: spacing.lg,
-            paddingBottom: Math.max(insets.bottom, spacing.lg),
-            gap: spacing.md,
+            paddingTop: compact ? spacing.xs : spacing.sm,
+            paddingHorizontal: compact ? spacing.md : spacing.lg,
+            paddingBottom: Math.max(insets.bottom, compact ? spacing.sm : spacing.lg),
+            gap: compact ? spacing.sm : spacing.md,
           }}
         >
           <View
             style={{
               alignSelf: "center",
-              width: 42,
-              height: 4,
+              width: compact ? 34 : 42,
+              height: compact ? 3 : 4,
               borderRadius: radii.pill,
               backgroundColor: colors.borderStrong,
               opacity: 0.45,
@@ -893,7 +896,13 @@ function RoomViewBottomSheet({
               gap: spacing.md,
             }}
           >
-            <Text style={{ ...typography.screenTitle, color: colors.textPrimary, flex: 1 }}>
+            <Text
+              style={{
+                ...(compact ? typography.sectionTitle : typography.screenTitle),
+                color: colors.textPrimary,
+                flex: 1,
+              }}
+            >
               {title}
             </Text>
             <Pressable
@@ -902,9 +911,9 @@ function RoomViewBottomSheet({
               onPress={onClose}
               hitSlop={8}
               style={{
-                width: 34,
-                height: 34,
-                borderRadius: 17,
+                width: compact ? 30 : 34,
+                height: compact ? 30 : 34,
+                borderRadius: compact ? 15 : 17,
                 borderWidth: 1,
                 borderColor: colors.borderStrong,
                 backgroundColor: colors.backgroundInput,
@@ -912,11 +921,14 @@ function RoomViewBottomSheet({
                 justifyContent: "center",
               }}
             >
-              <Ionicons name="close" size={18} color={colors.textPrimary} />
+              <Ionicons name="close" size={compact ? 16 : 18} color={colors.textPrimary} />
             </Pressable>
           </View>
           <ScrollView
-            contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xs }}
+            contentContainerStyle={{
+              gap: compact ? spacing.sm : spacing.md,
+              paddingBottom: compact ? 0 : spacing.xs,
+            }}
             showsVerticalScrollIndicator
           >
             {children}
@@ -2072,6 +2084,113 @@ function RoomAlignmentGuideOverlay({ guides }: { guides: RoomAlignmentGuideState
           }}
         />
       ))}
+    </View>
+  );
+}
+
+function AIWallCanvasControl({
+  enhanced,
+  displayMode,
+  isEnhancing,
+  onEnhance,
+  onDisplayModeChange,
+  style,
+}: {
+  enhanced: boolean;
+  displayMode: "original" | "enhanced";
+  isEnhancing: boolean;
+  onEnhance: () => void;
+  onDisplayModeChange: (displayMode: "original" | "enhanced") => void;
+  style?: ViewStyle;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  if (!enhanced) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Enhance wall photo"
+        disabled={isEnhancing}
+        onPress={onEnhance}
+        hitSlop={8}
+        style={({ pressed }) => ({
+          minHeight: 38,
+          borderRadius: radii.pill,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          backgroundColor: "rgba(0,0,0,0.78)",
+          paddingHorizontal: spacing.md,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: spacing.xs,
+          opacity: isEnhancing ? 0.72 : pressed ? 0.86 : 1,
+          ...style,
+        })}
+      >
+        <Ionicons
+          name={isEnhancing ? "hourglass-outline" : "sparkles-outline"}
+          size={16}
+          color={colors.white}
+        />
+        <Text style={{ ...typography.small, color: colors.white, fontWeight: "800" }}>
+          {isEnhancing ? "Enhancing..." : "Enhance Wall Photo"}
+        </Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View
+      accessibilityRole="tablist"
+      style={{
+        minHeight: 38,
+        borderRadius: radii.pill,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        backgroundColor: "rgba(0,0,0,0.78)",
+        padding: 3,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+        ...style,
+      }}
+    >
+      {(["original", "enhanced"] as const).map((mode) => {
+        const selected = displayMode === mode;
+
+        return (
+          <Pressable
+            key={mode}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={mode === "original" ? "Show original wall photo" : "Show enhanced wall photo"}
+            disabled={isEnhancing}
+            onPress={() => onDisplayModeChange(mode)}
+            hitSlop={6}
+            style={({ pressed }) => ({
+              minHeight: 30,
+              minWidth: 82,
+              borderRadius: radii.pill,
+              paddingHorizontal: spacing.sm,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: selected ? colors.accent : "transparent",
+              opacity: isEnhancing ? 0.7 : pressed ? 0.84 : 1,
+            })}
+          >
+            <Text
+              style={{
+                ...typography.small,
+                color: selected ? colors.white : "rgba(255,255,255,0.78)",
+                fontWeight: "800",
+              }}
+            >
+              {mode === "original" ? "Original" : "Enhanced"}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -3462,10 +3581,24 @@ export default function RoomViewScreen() {
   const aiWallEnhancementEnabled =
     aiWallEnhancementAvailable && experimentalFeatureToggles.aiWallEnhancement;
   const wallPhotoEnhancement = wallPhoto?.aiEnhancement ?? null;
+  const wallPhotoAIComparisonMode =
+    wallPhotoEnhancement?.displayMode ??
+    (wallPhotoEnhancement?.originalImageUri &&
+    wallPhoto?.imageUri === wallPhotoEnhancement.originalImageUri
+      ? "original"
+      : "enhanced");
+  const isEnhancedWallPhotoVisible =
+    roomView.sourceMode === "myWall" &&
+    Boolean(wallPhotoEnhancement) &&
+    wallPhotoAIComparisonMode === "enhanced";
   const showAIWallEnhancementControls =
     roomView.sourceMode === "myWall" && Boolean(wallPhoto) && aiWallEnhancementEnabled;
-  const showWallPhotoRevertControl =
-    roomView.sourceMode === "myWall" && Boolean(wallPhotoEnhancement);
+  const showFloatingAIWallControl =
+    showAIWallEnhancementControls &&
+    activeSheet === null &&
+    !wallPhotoSourceSheetVisible &&
+    !framedArtworkSheetVisible &&
+    !saveLayoutSheetVisible;
   const activePresetScene = getPresetRoomSceneById(roomView.presetSceneId);
   const activeSourceId =
     getRoomSourceId(roomView.sourceMode, activePresetScene?.id ?? null) ??
@@ -3509,6 +3642,8 @@ export default function RoomViewScreen() {
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
   const isTabletWorkspace = !isPhoneWorkspace;
+  const isCompactMyWallSheet =
+    isPhoneWorkspace && activeSheet === "interiors" && roomView.sourceMode === "myWall";
   const presetRoomTileWidth: ViewStyle["width"] = isPhoneWorkspace
     ? "100%"
     : isTabletLandscape
@@ -4546,15 +4681,12 @@ export default function RoomViewScreen() {
     setIsEnhancingWallPhoto(true);
 
     try {
+      const originalImageUri =
+        wallPhoto.aiEnhancement?.originalImageUri ?? wallPhoto.imageUri;
       const result = await enhanceWallPhoto({
         imageUri: wallPhoto.imageUri,
         enhancementMode: "cleanWall",
-        settings: {
-          preservePerspective: true,
-          preserveScaleReferences: true,
-          cleanupWallMarks: true,
-          balanceLighting: true,
-        },
+        settings: buildAIWallEnhancementSettings(undefined, "cleanWall"),
       });
 
       setRoomView({
@@ -4565,10 +4697,11 @@ export default function RoomViewScreen() {
           aiEnhancement: {
             provider: result.provider,
             mode: result.metadata.enhancementMode,
-            originalImageUri:
-              wallPhoto.aiEnhancement?.originalImageUri ?? wallPhoto.imageUri,
+            originalImageUri,
             enhancedImageUri: result.imageUri,
             enhancedAt: result.metadata.enhancedAt,
+            intent: result.metadata.intent,
+            displayMode: "enhanced",
             displayAdjustments: result.metadata.displayAdjustments,
           },
         },
@@ -4588,17 +4721,31 @@ export default function RoomViewScreen() {
     wallPhoto,
   ]);
 
-  const handleRevertWallPhotoEnhancement = useCallback(() => {
+  const handleSetWallPhotoAIComparisonMode = useCallback((displayMode: "original" | "enhanced") => {
     if (!wallPhoto?.aiEnhancement) {
       return;
     }
 
+    const imageUri =
+      displayMode === "original"
+        ? wallPhoto.aiEnhancement.originalImageUri
+        : wallPhoto.aiEnhancement.enhancedImageUri;
+
+    if (
+      wallPhoto.imageUri === imageUri &&
+      wallPhoto.aiEnhancement.displayMode === displayMode
+    ) {
+      return;
+    }
+
     setRoomView({
-      savedRoomLayoutId: null,
       wallPhoto: {
         ...wallPhoto,
-        imageUri: wallPhoto.aiEnhancement.originalImageUri,
-        aiEnhancement: null,
+        imageUri,
+        aiEnhancement: {
+          ...wallPhoto.aiEnhancement,
+          displayMode,
+        },
       },
     });
   }, [setRoomView, wallPhoto]);
@@ -5905,8 +6052,7 @@ export default function RoomViewScreen() {
             />
           ) : null}
 
-          {roomView.sourceMode === "myWall" &&
-          wallPhotoEnhancement &&
+          {isEnhancedWallPhotoVisible &&
           (wallPhotoEnhancementBrightnessOpacity > 0 ||
             wallPhotoEnhancementWarmthOpacity > 0) ? (
             <>
@@ -6034,6 +6180,32 @@ export default function RoomViewScreen() {
               onChange={handleCalibrationRulerChange}
               onDragStart={() => setIsCalibrationDragging(true)}
               onDragEnd={() => setIsCalibrationDragging(false)}
+            />
+          ) : null}
+
+          {showFloatingAIWallControl ? (
+            <AIWallCanvasControl
+              enhanced={Boolean(wallPhotoEnhancement)}
+              displayMode={wallPhotoAIComparisonMode}
+              isEnhancing={isEnhancingWallPhoto}
+              onEnhance={handleEnhanceWallPhoto}
+              onDisplayModeChange={handleSetWallPhotoAIComparisonMode}
+              style={{
+                position: "absolute",
+                top: Math.max(
+                  spacing.sm,
+                  displayedImageRect.top + spacing.sm
+                ),
+                right: Math.max(
+                  spacing.sm,
+                  stageSize.width -
+                    displayedImageRect.left -
+                    displayedImageRect.width +
+                    spacing.sm
+                ),
+                zIndex: 320,
+                elevation: 320,
+              }}
             />
           ) : null}
 
@@ -6180,7 +6352,7 @@ export default function RoomViewScreen() {
   );
 
   const sourceControlsSection = (
-    <AppCard title="Scene source">
+    <AppCard title="Scene source" compact={isCompactMyWallSheet}>
       <AppSegmentedControl<RoomViewSourceMode>
         options={ROOM_SOURCE_OPTIONS}
         value={roomView.sourceMode}
@@ -6192,53 +6364,40 @@ export default function RoomViewScreen() {
   const wallPhotoControlsSection = (
     <AppCard
       title="Wall photo"
-      subtitle="Add a photo of the wall where you want to preview your framed artwork."
+      subtitle={
+        isCompactMyWallSheet
+          ? undefined
+          : "Add a photo of the wall where you want to preview your framed artwork."
+      }
+      compact={isCompactMyWallSheet}
     >
       <AppButton
         label={wallPhoto ? "Change Photo" : "Add Photo"}
         onPress={openWallPhotoSourceChooser}
-        style={{ width: "64%", alignSelf: "center" }}
+        style={{
+          width: isCompactMyWallSheet ? "58%" : "64%",
+          maxWidth: isCompactMyWallSheet ? 190 : undefined,
+          alignSelf: "center",
+        }}
       />
-      {showAIWallEnhancementControls || showWallPhotoRevertControl ? (
-        <View style={{ gap: spacing.xs, alignItems: "center" }}>
-          {showAIWallEnhancementControls ? (
-            <AppButton
-              variant="secondary"
-              label={
-                isEnhancingWallPhoto
-                  ? "Enhancing..."
-                  : wallPhotoEnhancement
-                    ? "Enhance Again"
-                    : "Enhance Wall Photo"
-              }
-              onPress={handleEnhanceWallPhoto}
-              disabled={isEnhancingWallPhoto}
-              style={{ width: "64%", alignSelf: "center" }}
-            />
-          ) : null}
-          {showWallPhotoRevertControl ? (
-            <AppButton
-              variant="secondary"
-              label="Revert to Original"
-              onPress={handleRevertWallPhotoEnhancement}
-              disabled={isEnhancingWallPhoto}
-              style={{ width: "64%", alignSelf: "center" }}
-            />
-          ) : null}
-          <Text
-            style={{
-              ...typography.small,
-              color: wallPhotoEnhancement ? colors.success : colors.textSecondary,
-              textAlign: "center",
-            }}
-          >
-            {wallPhotoEnhancement
-              ? "AI Wall Enhancement applied."
-              : "Beta cleanup prepares this wall photo for cleaner mockups."}
-          </Text>
-        </View>
+      {showAIWallEnhancementControls ? (
+        <Text
+          style={{
+            ...typography.small,
+            color: wallPhotoEnhancement ? colors.success : colors.textSecondary,
+            textAlign: "center",
+          }}
+          numberOfLines={isCompactMyWallSheet ? 2 : undefined}
+        >
+          {wallPhotoEnhancement
+            ? "Use the floating canvas control to compare Original and Enhanced."
+            : "Use the floating canvas control to enhance the wall while keeping the photo visible."}
+        </Text>
       ) : null}
-      <Text style={{ ...typography.small, color: colors.textSecondary }}>
+      <Text
+        style={{ ...typography.small, color: colors.textSecondary }}
+        numberOfLines={isCompactMyWallSheet ? 2 : undefined}
+      >
         {paperPhotoHelperText}
       </Text>
     </AppCard>
@@ -6567,7 +6726,9 @@ export default function RoomViewScreen() {
       exportCardSection
     ) : null;
   const activeBottomSheetMaxHeight =
-    activeSheet === "interiors"
+    isCompactMyWallSheet
+      ? Math.min(windowHeight * 0.48, 360)
+      : activeSheet === "interiors"
       ? Math.min(windowHeight * 0.86, isTabletLandscape ? 860 : 700)
       : Math.min(windowHeight * 0.78, isTabletLandscape ? 720 : 620);
 
@@ -6835,6 +6996,7 @@ export default function RoomViewScreen() {
         visible={activeSheet !== null && activeSheet !== "settings"}
         title={activeSheetTitle}
         maxHeight={activeBottomSheetMaxHeight}
+        compact={isCompactMyWallSheet}
         onClose={() => setActiveSheet(null)}
       >
         {activeSheetContent}

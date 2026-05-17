@@ -2,6 +2,32 @@ const REPLICATE_API_BASE_URL = "https://api.replicate.com/v1";
 const DEFAULT_REPLICATE_MODEL = "nightmareai/real-esrgan";
 const DEFAULT_REPLICATE_TIMEOUT_MS = 120000;
 const DEFAULT_REPLICATE_POLL_INTERVAL_MS = 1200;
+const LOG_PREFIX = "[AI backend][Replicate]";
+const {
+  WALL_ENHANCEMENT_GOAL,
+  WALL_ENHANCEMENT_PIPELINE_PLAN,
+  buildWallEnhancementPrompt,
+  buildWallEnhancementSettings,
+  normalizeWallEnhancementIntent,
+} = require("./wallEnhancementIntent");
+
+function logInfo(message, details) {
+  if (details === undefined) {
+    console.log(`${LOG_PREFIX} ${message}`);
+    return;
+  }
+
+  console.log(`${LOG_PREFIX} ${message}`, details);
+}
+
+function logError(message, details) {
+  if (details === undefined) {
+    console.error(`${LOG_PREFIX} ${message}`);
+    return;
+  }
+
+  console.error(`${LOG_PREFIX} ${message}`, details);
+}
 
 class ReplicateError extends Error {
   constructor(message, options = {}) {
@@ -69,31 +95,37 @@ function resolveModelConfig() {
   };
 }
 
+function getReplicateDebugConfig() {
+  const config = resolveModelConfig();
+
+  return {
+    hasReplicateToken: Boolean(process.env.REPLICATE_API_TOKEN?.trim()),
+    replicateModel: config.model,
+    replicateVersionPresent: Boolean(config.version),
+    timeoutMs: config.timeoutMs,
+    pollIntervalMs: config.pollIntervalMs,
+    imageInputKey: config.imageInputKey,
+    promptInputKeyPresent: Boolean(config.promptInputKey),
+    forwardSettings: process.env.REPLICATE_FORWARD_SETTINGS === "true",
+    wallEnhancementGoal: WALL_ENHANCEMENT_GOAL,
+    wallEnhancementPipeline: WALL_ENHANCEMENT_PIPELINE_PLAN,
+  };
+}
+
 function getEnhancementPrompt(enhancementMode, settings) {
-  const basePrompt =
-    "Enhance this interior wall photo for framed artwork mockups. Preserve the room geometry, camera perspective, wall scale, furniture, windows, outlets, trim, and any calibration references.";
-
-  if (enhancementMode === "relight") {
-    return `${basePrompt} Balance the wall lighting naturally and reduce harsh color casts without changing the room.`;
-  }
-
-  if (enhancementMode === "perspectiveAssist") {
-    return `${basePrompt} Keep the wall plane realistic and visually straight while preserving the original camera perspective.`;
-  }
-
-  const cleanup = settings?.cleanupWallMarks === false
-    ? "Keep existing wall texture and marks natural."
-    : "Subtly clean small wall marks, noise, and uneven patches.";
-  const lighting = settings?.balanceLighting === false
-    ? "Keep the existing lighting character."
-    : "Balance lighting gently so the wall remains believable.";
-
-  return `${basePrompt} ${cleanup} ${lighting}`;
+  return buildWallEnhancementPrompt({
+    enhancementMode,
+    intent: normalizeWallEnhancementIntent(settings, enhancementMode),
+  });
 }
 
 function buildPredictionInput({ imageInput, enhancementMode, settings }) {
   const config = resolveModelConfig();
   const configuredInput = parseJsonEnv("REPLICATE_INPUT_JSON", {});
+  const wallEnhancementSettings = buildWallEnhancementSettings(
+    settings,
+    enhancementMode
+  );
   const input = {
     [config.imageInputKey]: imageInput,
     ...configuredInput,
@@ -105,12 +137,16 @@ function buildPredictionInput({ imageInput, enhancementMode, settings }) {
   }
 
   if (config.promptInputKey) {
-    input[config.promptInputKey] = getEnhancementPrompt(enhancementMode, settings);
+    input[config.promptInputKey] = getEnhancementPrompt(
+      enhancementMode,
+      wallEnhancementSettings
+    );
   }
 
   if (process.env.REPLICATE_FORWARD_SETTINGS === "true") {
     input.enhancement_mode = enhancementMode;
-    input.wall_enhancement_settings = settings ?? {};
+    input.wall_enhancement_goal = WALL_ENHANCEMENT_GOAL;
+    input.wall_enhancement_settings = wallEnhancementSettings;
   }
 
   return input;
@@ -147,6 +183,74 @@ function getCreatePredictionBody(config, input) {
   return { input };
 }
 
+function truncateText(value, maxLength = 1200) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function getReplicateResponseMessage(json) {
+  if (!json || typeof json !== "object") {
+    return null;
+  }
+
+  return (
+    json.detail ||
+    json.error ||
+    json.message ||
+    json.title ||
+    null
+  );
+}
+
+function sanitizeReplicateInputForLog(input, imageInputKey) {
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => {
+      if (key === imageInputKey && typeof value === "string") {
+        if (value.startsWith("data:image/")) {
+          const mimeType = value.slice(5, value.indexOf(";base64,"));
+          const base64 = value.split(",")[1] ?? "";
+
+          return [
+            key,
+            {
+              type: "data-uri",
+              mimeType,
+              approxBytes: Math.round(base64.length * 0.75),
+            },
+          ];
+        }
+
+        if (/^https?:\/\//i.test(value)) {
+          return [
+            key,
+            {
+              type: "url",
+              value: truncateText(value, 180),
+            },
+          ];
+        }
+
+        return [
+          key,
+          {
+            type: "string",
+            length: value.length,
+          },
+        ];
+      }
+
+      if (typeof value === "string" && value.length > 240) {
+        return [key, `${value.slice(0, 240)}...`];
+      }
+
+      return [key, value];
+    })
+  );
+}
+
 async function requestReplicateJson(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -157,14 +261,46 @@ async function requestReplicateJson(url, options, timeoutMs) {
       signal: controller.signal,
     });
     const text = await response.text();
-    const json = text ? JSON.parse(text) : {};
+    let json = {};
+
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch (error) {
+        if (!response.ok) {
+          throw new ReplicateError(
+            `Replicate request failed with HTTP ${response.status} and a non-JSON response.`,
+            {
+              status: response.status >= 500 ? 502 : response.status,
+              code: "replicate_http_error",
+              details: {
+                httpStatus: response.status,
+                bodyPreview: truncateText(text),
+              },
+            }
+          );
+        }
+
+        throw error;
+      }
+    }
 
     if (!response.ok) {
-      throw new ReplicateError("Replicate request failed.", {
-        status: response.status >= 500 ? 502 : response.status,
-        code: "replicate_http_error",
-        details: json,
-      });
+      const replicateMessage = getReplicateResponseMessage(json);
+
+      throw new ReplicateError(
+        replicateMessage
+          ? `Replicate request failed with HTTP ${response.status}: ${replicateMessage}`
+          : `Replicate request failed with HTTP ${response.status}.`,
+        {
+          status: response.status >= 500 ? 502 : response.status,
+          code: "replicate_http_error",
+          details: {
+            httpStatus: response.status,
+            responseBody: json,
+          },
+        }
+      );
     }
 
     return json;
@@ -196,8 +332,13 @@ function isTerminalStatus(status) {
   return ["succeeded", "failed", "canceled"].includes(status);
 }
 
-async function waitForPrediction(prediction, token, timeoutMs, pollIntervalMs) {
+async function waitForPrediction(prediction, token, timeoutMs, pollIntervalMs, requestId) {
   if (isTerminalStatus(prediction.status)) {
+    logInfo("Prediction returned terminal status without polling.", {
+      requestId,
+      predictionId: prediction.id,
+      status: prediction.status,
+    });
     return prediction;
   }
 
@@ -214,9 +355,22 @@ async function waitForPrediction(prediction, token, timeoutMs, pollIntervalMs) {
 
   const startedAt = Date.now();
   let currentPrediction = prediction;
+  let lastLoggedStatus = currentPrediction.status;
+
+  logInfo("Prediction polling started.", {
+    requestId,
+    predictionId: currentPrediction.id,
+    status: currentPrediction.status,
+  });
 
   while (!isTerminalStatus(currentPrediction.status)) {
     if (Date.now() - startedAt > timeoutMs) {
+      logError("Prediction polling timed out.", {
+        requestId,
+        predictionId: currentPrediction.id,
+        lastStatus: currentPrediction.status,
+        timeoutMs,
+      });
       throw new ReplicateTimeoutError();
     }
 
@@ -233,7 +387,22 @@ async function waitForPrediction(prediction, token, timeoutMs, pollIntervalMs) {
       },
       Math.min(30000, timeoutMs)
     );
+
+    if (currentPrediction.status !== lastLoggedStatus) {
+      lastLoggedStatus = currentPrediction.status;
+      logInfo("Prediction status changed.", {
+        requestId,
+        predictionId: currentPrediction.id,
+        status: currentPrediction.status,
+      });
+    }
   }
+
+  logInfo("Prediction polling finished.", {
+    requestId,
+    predictionId: currentPrediction.id,
+    status: currentPrediction.status,
+  });
 
   return currentPrediction;
 }
@@ -281,8 +450,42 @@ function findImageOutput(output) {
   return null;
 }
 
+function describeImageOutput(output) {
+  if (typeof output !== "string") {
+    return {
+      type: typeof output,
+      present: Boolean(output),
+    };
+  }
+
+  if (output.startsWith("data:image/")) {
+    const mimeType = output.slice(5, output.indexOf(";base64,"));
+    const base64 = output.split(",")[1] ?? "";
+
+    return {
+      type: "data-uri",
+      mimeType,
+      approxBytes: Math.round(base64.length * 0.75),
+    };
+  }
+
+  if (/^https?:\/\//i.test(output)) {
+    return {
+      type: "url",
+      value: truncateText(output, 180),
+    };
+  }
+
+  return {
+    type: "string",
+    length: output.length,
+  };
+}
+
 function resolveDisplayAdjustments(enhancementMode, settings) {
-  if (enhancementMode === "relight" || settings?.balanceLighting) {
+  const intent = normalizeWallEnhancementIntent(settings, enhancementMode);
+
+  if (enhancementMode === "relight" || intent.cleanupLighting) {
     return {
       brightness: 1.02,
       warmth: 0.02,
@@ -297,10 +500,12 @@ async function enhanceWallPhotoWithReplicate({
   imageInput,
   enhancementMode,
   settings,
+  requestId,
 }) {
   const token = process.env.REPLICATE_API_TOKEN?.trim();
 
   if (!token) {
+    logError("Missing REPLICATE_API_TOKEN.", { requestId });
     throw new ReplicateError(
       "Missing REPLICATE_API_TOKEN. Set it on the backend server, not in the mobile app.",
       {
@@ -318,10 +523,35 @@ async function enhanceWallPhotoWithReplicate({
   }
 
   const config = resolveModelConfig();
-  const input = buildPredictionInput({ imageInput, enhancementMode, settings });
+  const wallEnhancementSettings = buildWallEnhancementSettings(
+    settings,
+    enhancementMode
+  );
+  const wallEnhancementIntent = normalizeWallEnhancementIntent(
+    wallEnhancementSettings,
+    enhancementMode
+  );
+  const input = buildPredictionInput({
+    imageInput,
+    enhancementMode,
+    settings: wallEnhancementSettings,
+  });
   const createUrl = getCreatePredictionUrl(config);
   const createBody = getCreatePredictionBody(config, input);
   const waitSeconds = Math.max(1, Math.min(60, Math.floor(config.timeoutMs / 1000)));
+
+  logInfo("Starting prediction.", {
+    requestId,
+    model: config.model,
+    versionPresent: Boolean(config.version),
+    createUrl,
+    timeoutMs: config.timeoutMs,
+    waitSeconds,
+    enhancementGoal: WALL_ENHANCEMENT_GOAL,
+    enhancementIntent: wallEnhancementIntent,
+    input: sanitizeReplicateInputForLog(input, config.imageInputKey),
+  });
+
   const createdPrediction = await requestReplicateJson(
     createUrl,
     {
@@ -336,14 +566,29 @@ async function enhanceWallPhotoWithReplicate({
     },
     config.timeoutMs
   );
+
+  logInfo("Prediction created.", {
+    requestId,
+    predictionId: createdPrediction.id,
+    status: createdPrediction.status,
+    hasPollUrl: Boolean(createdPrediction.urls?.get),
+  });
+
   const prediction = await waitForPrediction(
     createdPrediction,
     token,
     config.timeoutMs,
-    config.pollIntervalMs
+    config.pollIntervalMs,
+    requestId
   );
 
   if (prediction.status !== "succeeded") {
+    logError("Prediction failed.", {
+      requestId,
+      predictionId: prediction.id,
+      status: prediction.status,
+      error: prediction.error,
+    });
     throw new ReplicateError("Replicate prediction did not succeed.", {
       status: 502,
       code: "replicate_prediction_failed",
@@ -358,6 +603,12 @@ async function enhanceWallPhotoWithReplicate({
   const imageOutput = findImageOutput(prediction.output);
 
   if (!imageOutput) {
+    logError("Prediction output did not contain an image.", {
+      requestId,
+      predictionId: prediction.id,
+      outputType: Array.isArray(prediction.output) ? "array" : typeof prediction.output,
+      output: prediction.output,
+    });
     throw new ReplicateError("Replicate succeeded but did not return an image output.", {
       status: 502,
       code: "replicate_missing_image_output",
@@ -368,13 +619,23 @@ async function enhanceWallPhotoWithReplicate({
     });
   }
 
+  logInfo("Prediction output received.", {
+    requestId,
+    predictionId: prediction.id,
+    output: describeImageOutput(imageOutput),
+  });
+
   return {
     imageOutput,
     metadata: {
       model: config.version ? config.version : config.model,
       predictionId: prediction.id,
       processingStatus: prediction.status,
-      displayAdjustments: resolveDisplayAdjustments(enhancementMode, settings),
+      intent: wallEnhancementIntent,
+      displayAdjustments: resolveDisplayAdjustments(
+        enhancementMode,
+        wallEnhancementSettings
+      ),
     },
   };
 }
@@ -384,4 +645,5 @@ module.exports = {
   ReplicateError,
   ReplicateTimeoutError,
   enhanceWallPhotoWithReplicate,
+  getReplicateDebugConfig,
 };

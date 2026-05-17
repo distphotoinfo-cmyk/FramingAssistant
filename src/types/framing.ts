@@ -183,12 +183,25 @@ export interface RoomMaterialRealismDraft {
 
 export type AIWallEnhancementMode = "cleanWall" | "relight" | "perspectiveAssist";
 
+export interface AIWallEnhancementIntent {
+  preserveGeometry: boolean;
+  preserveScaleRelationships: boolean;
+  preserveReferenceObjects: boolean;
+  preservePerspectiveConsistency: boolean;
+  preserveWallCalibration: boolean;
+  cleanupLighting: boolean;
+  cleanupNoise: boolean;
+  mildPerspectiveCorrection: boolean;
+}
+
 export interface RoomWallPhotoAIEnhancement {
   provider: "backend" | "replicate" | "placeholder";
   mode: AIWallEnhancementMode;
   originalImageUri: string;
   enhancedImageUri: string;
   enhancedAt: string;
+  intent?: AIWallEnhancementIntent;
+  displayMode?: "original" | "enhanced";
   displayAdjustments?: {
     brightness?: number;
     warmth?: number;

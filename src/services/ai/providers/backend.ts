@@ -1,4 +1,11 @@
 import type { AIWallEnhancementMode } from "../../../types/framing";
+import {
+  buildAIWallEnhancementSettings,
+  type AIWallEnhancementSettings,
+  type ResolvedAIWallEnhancementIntent,
+} from "../wallEnhancementIntent";
+
+export type { AIWallEnhancementSettings } from "../wallEnhancementIntent";
 
 declare const process:
   | {
@@ -13,13 +20,6 @@ export interface AIBackendProviderConfig {
   baseUrl?: string;
   enhanceWallPhotoPath?: string;
   timeoutMs?: number;
-}
-
-export interface AIWallEnhancementSettings {
-  preservePerspective?: boolean;
-  preserveScaleReferences?: boolean;
-  cleanupWallMarks?: boolean;
-  balanceLighting?: boolean;
 }
 
 export interface AIBackendEnhanceWallPhotoRequest {
@@ -40,6 +40,7 @@ export interface AIBackendEnhanceWallPhotoResult {
     model?: string;
     predictionId?: string;
     processingStatus?: "succeeded" | "processing";
+    intent?: ResolvedAIWallEnhancementIntent;
   };
 }
 
@@ -58,6 +59,7 @@ type AIBackendErrorResponse = {
   error?: {
     code?: string;
     message?: string;
+    requestId?: string;
   };
 };
 
@@ -119,13 +121,9 @@ function buildWallPhotoFormData(request: AIBackendEnhanceWallPhotoRequest) {
   formData.append("enhancementMode", request.enhancementMode);
   formData.append(
     "settings",
-    JSON.stringify({
-      preservePerspective: true,
-      preserveScaleReferences: true,
-      cleanupWallMarks: true,
-      balanceLighting: true,
-      ...request.settings,
-    })
+    JSON.stringify(
+      buildAIWallEnhancementSettings(request.settings, request.enhancementMode)
+    )
   );
   formData.append("image", {
     uri: request.imageUri,
@@ -153,8 +151,13 @@ function resolveEnhancedImageUri(response: EnhanceWallPhotoResponse) {
 async function readBackendErrorMessage(response: Response) {
   try {
     const json = (await response.json()) as AIBackendErrorResponse;
+    const message = json.error?.message ?? null;
 
-    return json.error?.message ?? null;
+    if (!message) {
+      return null;
+    }
+
+    return json.error?.requestId ? `${message} (${json.error.requestId})` : message;
   } catch {
     return null;
   }

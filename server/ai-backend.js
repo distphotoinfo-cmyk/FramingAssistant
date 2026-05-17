@@ -5,7 +5,19 @@ const {
   DEFAULT_REPLICATE_MODEL,
   ReplicateError,
   enhanceWallPhotoWithReplicate,
+  getReplicateDebugConfig,
 } = require("./replicateClient");
+const {
+  ImagePreprocessError,
+  getImagePreprocessDebugConfig,
+  preprocessDataImageForReplicate,
+} = require("./imagePreprocess");
+const {
+  WALL_ENHANCEMENT_GOAL,
+  WALL_ENHANCEMENT_PIPELINE_PLAN,
+  buildWallEnhancementSettings,
+  normalizeWallEnhancementIntent,
+} = require("./wallEnhancementIntent");
 
 const DEFAULT_PORT = 8787;
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -14,6 +26,42 @@ const ALLOWED_ENHANCEMENT_MODES = new Set([
   "relight",
   "perspectiveAssist",
 ]);
+const LOG_PREFIX = "[AI backend]";
+let nextRequestSequence = 1;
+
+function createRequestId() {
+  const sequence = nextRequestSequence;
+
+  nextRequestSequence += 1;
+
+  return `wall-enhance-${Date.now().toString(36)}-${sequence}`;
+}
+
+function logInfo(requestId, message, details) {
+  const prefix = `${LOG_PREFIX}${requestId ? ` [${requestId}]` : ""}`;
+
+  if (details === undefined) {
+    console.log(`${prefix} ${message}`);
+    return;
+  }
+
+  console.log(`${prefix} ${message}`, details);
+}
+
+function logError(requestId, message, details) {
+  const prefix = `${LOG_PREFIX}${requestId ? ` [${requestId}]` : ""}`;
+
+  if (details === undefined) {
+    console.error(`${prefix} ${message}`);
+    return;
+  }
+
+  console.error(`${prefix} ${message}`, details);
+}
+
+function isDevelopment() {
+  return process.env.NODE_ENV !== "production";
+}
 
 class RequestError extends Error {
   constructor(message, options = {}) {
@@ -285,6 +333,47 @@ function normalizeBase64Image(value, mimeType = "image/jpeg") {
   return `data:${mimeType};base64,${value}`;
 }
 
+function estimateBase64Bytes(value) {
+  const base64 = value.includes(",") ? value.split(",")[1] ?? "" : value;
+
+  return Math.round(base64.length * 0.75);
+}
+
+function describeImageInput(imageInput, fallbackMimeType) {
+  if (!imageInput) {
+    return {
+      present: false,
+    };
+  }
+
+  if (/^https?:\/\//i.test(imageInput)) {
+    return {
+      present: true,
+      source: "url",
+      urlPreview:
+        imageInput.length > 180 ? `${imageInput.slice(0, 180)}...` : imageInput,
+    };
+  }
+
+  if (imageInput.startsWith("data:image/")) {
+    const mimeType = imageInput.slice(5, imageInput.indexOf(";base64,"));
+
+    return {
+      present: true,
+      source: "base64",
+      mimeType,
+      approxBytes: estimateBase64Bytes(imageInput),
+    };
+  }
+
+  return {
+    present: true,
+    source: "string",
+    mimeType: fallbackMimeType,
+    length: imageInput.length,
+  };
+}
+
 function parseSettings(rawSettings) {
   if (!rawSettings) {
     return {};
@@ -322,15 +411,30 @@ function normalizeEnhancementMode(rawMode) {
 }
 
 function getImageInputFromMultipart(parsedBody) {
-  const imageFile =
-    parsedBody.files.image ||
-    parsedBody.files.wallPhoto ||
-    parsedBody.files.file;
+  const imageFieldName = parsedBody.files.image
+    ? "image"
+    : parsedBody.files.wallPhoto
+      ? "wallPhoto"
+      : parsedBody.files.file
+        ? "file"
+        : null;
+  const imageFile = imageFieldName ? parsedBody.files[imageFieldName] : null;
 
   if (imageFile?.buffer?.length) {
+    const imageInput = `data:${imageFile.mimeType};base64,${imageFile.buffer.toString("base64")}`;
+
     return {
-      imageInput: `data:${imageFile.mimeType};base64,${imageFile.buffer.toString("base64")}`,
+      imageInput,
       sourceMimeType: imageFile.mimeType,
+      debug: {
+        transport: "multipart",
+        fieldName: imageFieldName,
+        filename: imageFile.filename,
+        mimeType: imageFile.mimeType,
+        sizeBytes: imageFile.buffer.length,
+        fileFields: Object.keys(parsedBody.files),
+        fieldNames: Object.keys(parsedBody.fields),
+      },
     };
   }
 
@@ -343,10 +447,20 @@ function getImageInputFromMultipart(parsedBody) {
     parsedBody.fields.imageUrl ||
     parsedBody.fields.wallPhotoUri;
   const mimeType = parsedBody.fields.mimeType || "image/jpeg";
+  const imageInput = normalizeBase64Image(imageUri || base64Image, mimeType);
 
   return {
-    imageInput: normalizeBase64Image(imageUri || base64Image, mimeType),
+    imageInput,
     sourceMimeType: mimeType,
+    debug: {
+      transport: "multipart",
+      fieldName: imageUri ? "imageUri/imageUrl/wallPhotoUri" : "imageBase64/image",
+      mimeType,
+      sizeBytes: imageInput ? estimateBase64Bytes(imageInput) : 0,
+      fileFields: Object.keys(parsedBody.files),
+      fieldNames: Object.keys(parsedBody.fields),
+      imageInput: describeImageInput(imageInput, mimeType),
+    },
   };
 }
 
@@ -374,16 +488,27 @@ function getImageInputFromJson(json) {
   return {
     imageInput,
     sourceMimeType: mimeType,
+    debug: {
+      transport: "json",
+      fieldName:
+        json.imageUri || json.imageUrl || json.wallPhotoUri
+          ? "imageUri/imageUrl/wallPhotoUri"
+          : "imageBase64/image",
+      mimeType,
+      sizeBytes: imageInput ? estimateBase64Bytes(imageInput) : 0,
+      imageInput: describeImageInput(imageInput, mimeType),
+    },
   };
 }
 
 async function parseEnhanceWallPhotoRequest(request) {
   const contentType = request.headers["content-type"] || "";
+  const declaredContentLength = request.headers["content-length"] || null;
   const body = await readBody(request);
 
   if (contentType.includes("multipart/form-data")) {
     const parsedBody = parseMultipartBody(contentType, body);
-    const { imageInput, sourceMimeType } = getImageInputFromMultipart(parsedBody);
+    const { imageInput, sourceMimeType, debug } = getImageInputFromMultipart(parsedBody);
 
     if (!imageInput) {
       throw new RequestError("Upload an image file or provide imageBase64/imageUri.", {
@@ -396,12 +521,18 @@ async function parseEnhanceWallPhotoRequest(request) {
       sourceMimeType,
       enhancementMode: normalizeEnhancementMode(parsedBody.fields.enhancementMode),
       settings: parseSettings(parsedBody.fields.settings),
+      debug: {
+        ...debug,
+        contentType: "multipart/form-data",
+        bodyBytes: body.length,
+        declaredContentLength,
+      },
     };
   }
 
   if (contentType.includes("application/json")) {
     const json = parseJsonBody(body);
-    const { imageInput, sourceMimeType } = getImageInputFromJson(json);
+    const { imageInput, sourceMimeType, debug } = getImageInputFromJson(json);
 
     if (!imageInput) {
       throw new RequestError("Provide imageBase64, imageUri, imageUrl, or image.", {
@@ -414,6 +545,12 @@ async function parseEnhanceWallPhotoRequest(request) {
       sourceMimeType,
       enhancementMode: normalizeEnhancementMode(json.enhancementMode),
       settings: parseSettings(json.settings),
+      debug: {
+        ...debug,
+        contentType: "application/json",
+        bodyBytes: body.length,
+        declaredContentLength,
+      },
     };
   }
 
@@ -456,7 +593,11 @@ function buildEnhanceWallPhotoResponse(result, sourceMimeType) {
 }
 
 function getErrorStatus(error) {
-  if (error instanceof RequestError || error instanceof ReplicateError) {
+  if (
+    error instanceof RequestError ||
+    error instanceof ReplicateError ||
+    error instanceof ImagePreprocessError
+  ) {
     return error.status;
   }
 
@@ -464,7 +605,11 @@ function getErrorStatus(error) {
 }
 
 function getErrorCode(error) {
-  if (error instanceof RequestError || error instanceof ReplicateError) {
+  if (
+    error instanceof RequestError ||
+    error instanceof ReplicateError ||
+    error instanceof ImagePreprocessError
+  ) {
     return error.code;
   }
 
@@ -472,40 +617,142 @@ function getErrorCode(error) {
 }
 
 function getErrorMessage(error) {
-  if (error instanceof RequestError || error instanceof ReplicateError) {
+  if (
+    error instanceof RequestError ||
+    error instanceof ReplicateError ||
+    error instanceof ImagePreprocessError
+  ) {
     return error.message;
   }
 
   return "Unexpected backend error.";
 }
 
+function getSafeErrorDetails(error) {
+  if (
+    error instanceof RequestError ||
+    error instanceof ReplicateError ||
+    error instanceof ImagePreprocessError
+  ) {
+    return error.details;
+  }
+
+  return undefined;
+}
+
+function logHandledError(requestId, error) {
+  const status = getErrorStatus(error);
+  const details = {
+    name: error instanceof Error ? error.name : typeof error,
+    message: getErrorMessage(error),
+    status,
+    code: getErrorCode(error),
+    details: getSafeErrorDetails(error),
+  };
+
+  if (isDevelopment() && error instanceof Error) {
+    details.stack = error.stack;
+  }
+
+  logError(requestId, "Enhance Wall Photo failed.", details);
+}
+
 async function handleEnhanceWallPhoto(request, response) {
+  const requestId = createRequestId();
+  const startedAt = Date.now();
+
+  logInfo(requestId, "Request received.", {
+    method: request.method,
+    contentType: request.headers["content-type"] || null,
+    contentLength: request.headers["content-length"] || null,
+    remoteAddress: request.socket?.remoteAddress,
+  });
+
   try {
     const parsedRequest = await parseEnhanceWallPhotoRequest(request);
-    const result = await enhanceWallPhotoWithReplicate(parsedRequest);
+    const wallEnhancementSettings = buildWallEnhancementSettings(
+      parsedRequest.settings,
+      parsedRequest.enhancementMode
+    );
+    const wallEnhancementIntent = normalizeWallEnhancementIntent(
+      wallEnhancementSettings,
+      parsedRequest.enhancementMode
+    );
+
+    logInfo(requestId, "Request parsed.", {
+      enhancementMode: parsedRequest.enhancementMode,
+      settings: parsedRequest.settings,
+      enhancementGoal: WALL_ENHANCEMENT_GOAL,
+      enhancementIntent: wallEnhancementIntent,
+      image: parsedRequest.debug,
+    });
+
+    const replicateConfig = getReplicateDebugConfig();
+    const preprocessedImage = await preprocessDataImageForReplicate({
+      imageInput: parsedRequest.imageInput,
+    });
+
+    logInfo(requestId, "Image preprocessed for Replicate.", preprocessedImage.metadata);
+    logInfo(requestId, "Replicate config.", {
+      ...replicateConfig,
+      imagePreprocess: getImagePreprocessDebugConfig(),
+    });
+
+    const result = await enhanceWallPhotoWithReplicate({
+      ...parsedRequest,
+      settings: wallEnhancementSettings,
+      imageInput: preprocessedImage.imageInput,
+      requestId,
+    });
+    const responsePayload = buildEnhanceWallPhotoResponse(
+      result,
+      parsedRequest.sourceMimeType
+    );
+
+    logInfo(requestId, "Output prepared.", {
+      hasEnhancedImageUrl: Boolean(responsePayload.enhancedImageUrl),
+      hasEnhancedImageBase64: Boolean(responsePayload.enhancedImageBase64),
+      mimeType: responsePayload.mimeType,
+      metadata: responsePayload.metadata,
+    });
 
     sendJson(
       response,
       200,
-      buildEnhanceWallPhotoResponse(result, parsedRequest.sourceMimeType)
+      responsePayload
     );
+    logInfo(requestId, "Response sent.", {
+      status: 200,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error) {
+    logHandledError(requestId, error);
+
     const payload = {
       error: {
         code: getErrorCode(error),
         message: getErrorMessage(error),
+        requestId,
       },
     };
 
     if (
-      process.env.NODE_ENV !== "production" &&
-      (error instanceof RequestError || error instanceof ReplicateError) &&
+      isDevelopment() &&
+      (error instanceof RequestError ||
+        error instanceof ReplicateError ||
+        error instanceof ImagePreprocessError) &&
       error.details
     ) {
       payload.error.details = error.details;
     }
 
-    sendJson(response, getErrorStatus(error), payload);
+    const status = getErrorStatus(error);
+
+    sendJson(response, status, payload);
+    logInfo(requestId, "Error response sent.", {
+      status,
+      durationMs: Date.now() - startedAt,
+    });
   }
 }
 
@@ -523,6 +770,16 @@ function createServer() {
         ok: true,
         service: "framing-assistant-ai-backend",
         replicateModel: process.env.REPLICATE_MODEL || DEFAULT_REPLICATE_MODEL,
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/debug/config") {
+      sendJson(response, 200, {
+        ...getReplicateDebugConfig(),
+        imagePreprocess: getImagePreprocessDebugConfig(),
+        wallEnhancementGoal: WALL_ENHANCEMENT_GOAL,
+        wallEnhancementPipeline: WALL_ENHANCEMENT_PIPELINE_PLAN,
       });
       return;
     }

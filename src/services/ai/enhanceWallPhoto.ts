@@ -4,6 +4,7 @@ import {
   AIBackendProvider,
   type AIWallEnhancementSettings,
 } from "./providers/backend";
+import type { ResolvedAIWallEnhancementIntent } from "./wallEnhancementIntent";
 
 export interface EnhanceWallPhotoInput {
   imageUri: string;
@@ -24,6 +25,7 @@ export interface EnhanceWallPhotoResult {
     };
     model?: string;
     predictionId?: string;
+    intent?: ResolvedAIWallEnhancementIntent;
   };
 }
 
@@ -57,6 +59,7 @@ export async function enhanceWallPhoto({
       displayAdjustments: result.metadata?.displayAdjustments,
       model: result.metadata?.model,
       predictionId: result.metadata?.predictionId,
+      intent: result.metadata?.intent,
     },
   };
 }
