@@ -75,6 +75,16 @@ function getDefaultBaseUrl() {
   return readPublicEnv("EXPO_PUBLIC_AI_BACKEND_URL") ?? "";
 }
 
+function getConfiguredBaseUrl(config: Pick<AIBackendProviderConfig, "baseUrl"> = {}) {
+  return (config.baseUrl ?? getDefaultBaseUrl()).trim();
+}
+
+export function hasConfiguredAIBackendUrl(
+  config: Pick<AIBackendProviderConfig, "baseUrl"> = {}
+) {
+  return getConfiguredBaseUrl(config).length > 0;
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -84,7 +94,7 @@ function ensureLeadingSlash(value: string) {
 }
 
 function resolveEndpoint(config: AIBackendProviderConfig) {
-  const baseUrl = (config.baseUrl ?? getDefaultBaseUrl()).trim();
+  const baseUrl = getConfiguredBaseUrl(config);
 
   if (!baseUrl) {
     throw new Error(

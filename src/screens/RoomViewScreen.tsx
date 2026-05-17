@@ -49,7 +49,10 @@ import {
   getPresetRoomSceneById,
   type RegisteredRoomPresetScene,
 } from "../data/presetRoomScenes";
-import { enhanceWallPhoto } from "../services/ai/enhanceWallPhoto";
+import {
+  enhanceWallPhoto,
+  isAIWallEnhancementBackendConfigured,
+} from "../services/ai/enhanceWallPhoto";
 import { buildAIWallEnhancementSettings } from "../services/ai/wallEnhancementIntent";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import {
@@ -3529,6 +3532,9 @@ export default function RoomViewScreen() {
   } | null>(null);
   const handledRoomViewLaunchIdRef = useRef<string | null>(null);
   const pendingWallPhotoArtworkIdRef = useRef<string | null>(null);
+  const wallPhotoSourceSheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const groupDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const stageDragOffset = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const stageTapStartRef = useRef<{
@@ -3591,6 +3597,7 @@ export default function RoomViewScreen() {
   );
   const aiWallEnhancementEnabled =
     aiWallEnhancementAvailable && experimentalFeatureToggles.aiWallEnhancement;
+  const aiWallEnhancementBackendConfigured = isAIWallEnhancementBackendConfigured();
   const wallPhotoEnhancement = wallPhoto?.aiEnhancement ?? null;
   const wallPhotoAIComparisonMode =
     wallPhotoEnhancement?.displayMode ??
@@ -3603,7 +3610,10 @@ export default function RoomViewScreen() {
     Boolean(wallPhotoEnhancement) &&
     wallPhotoAIComparisonMode === "enhanced";
   const showAIWallEnhancementControls =
-    roomView.sourceMode === "myWall" && Boolean(wallPhoto) && aiWallEnhancementEnabled;
+    roomView.sourceMode === "myWall" &&
+    Boolean(wallPhoto) &&
+    aiWallEnhancementEnabled &&
+    aiWallEnhancementBackendConfigured;
   const showFloatingAIWallControl =
     showAIWallEnhancementControls &&
     activeSheet === null &&
@@ -4691,6 +4701,14 @@ export default function RoomViewScreen() {
       return;
     }
 
+    if (!aiWallEnhancementBackendConfigured) {
+      Alert.alert(
+        "AI Wall Enhancement unavailable",
+        "This app build does not have an AI backend URL configured yet."
+      );
+      return;
+    }
+
     setIsEnhancingWallPhoto(true);
 
     try {
@@ -4729,6 +4747,7 @@ export default function RoomViewScreen() {
     }
   }, [
     aiWallEnhancementAvailable,
+    aiWallEnhancementBackendConfigured,
     aiWallEnhancementEnabled,
     setRoomView,
     wallPhoto,
@@ -4764,30 +4783,35 @@ export default function RoomViewScreen() {
   }, [setRoomView, wallPhoto]);
 
   const openWallPhotoSourceChooser = useCallback(() => {
+    if (wallPhotoSourceSheetOpenTimeoutRef.current) {
+      clearTimeout(wallPhotoSourceSheetOpenTimeoutRef.current);
+      wallPhotoSourceSheetOpenTimeoutRef.current = null;
+    }
+
+    const shouldDeferSourceSheet =
+      Platform.OS === "ios" && isPhoneWorkspace && activeSheet !== null;
+
     setActiveSheet(null);
 
-    if (Platform.OS === "ios" && isPhoneWorkspace) {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ["Cancel", "Take Photo", "Choose from Photo Library"],
-          cancelButtonIndex: 0,
-          userInterfaceStyle: isDark ? "dark" : "light",
-        },
-        (buttonIndex) => {
-          if (buttonIndex === 1) {
-            void handleTakeWallPhoto();
-          }
-
-          if (buttonIndex === 2) {
-            void handlePickWallPhotoFromLibrary();
-          }
-        }
-      );
+    if (shouldDeferSourceSheet) {
+      wallPhotoSourceSheetOpenTimeoutRef.current = setTimeout(() => {
+        wallPhotoSourceSheetOpenTimeoutRef.current = null;
+        setWallPhotoSourceSheetVisible(true);
+      }, 180);
       return;
     }
 
     setWallPhotoSourceSheetVisible(true);
-  }, [handlePickWallPhotoFromLibrary, handleTakeWallPhoto, isDark, isPhoneWorkspace]);
+  }, [activeSheet, isPhoneWorkspace]);
+
+  useEffect(
+    () => () => {
+      if (wallPhotoSourceSheetOpenTimeoutRef.current) {
+        clearTimeout(wallPhotoSourceSheetOpenTimeoutRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const launchParams = route.params;
@@ -7186,7 +7210,7 @@ export default function RoomViewScreen() {
         />
         <WallPhotoSourceOption
           icon="images-outline"
-          label="Choose from Photo Library"
+          label="Upload Photo"
           onPress={() => {
             setWallPhotoSourceSheetVisible(false);
             setTimeout(() => {

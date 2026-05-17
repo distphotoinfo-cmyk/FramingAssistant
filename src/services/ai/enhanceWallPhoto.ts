@@ -2,6 +2,7 @@ import { useExperimentalFeaturesStore } from "../../state/experimentalFeaturesSt
 import type { AIWallEnhancementMode } from "../../types/framing";
 import {
   AIBackendProvider,
+  hasConfiguredAIBackendUrl,
   type AIWallEnhancementSettings,
 } from "./providers/backend";
 import type { ResolvedAIWallEnhancementIntent } from "./wallEnhancementIntent";
@@ -27,6 +28,10 @@ export interface EnhanceWallPhotoResult {
     predictionId?: string;
     intent?: ResolvedAIWallEnhancementIntent;
   };
+}
+
+export function isAIWallEnhancementBackendConfigured() {
+  return hasConfiguredAIBackendUrl();
 }
 
 export async function enhanceWallPhoto({
