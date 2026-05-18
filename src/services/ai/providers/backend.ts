@@ -63,16 +63,17 @@ type AIBackendErrorResponse = {
   };
 };
 
-function readPublicEnv(name: string) {
-  try {
-    return typeof process !== "undefined" ? process.env?.[name]?.trim() : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function getDefaultBaseUrl() {
-  return readPublicEnv("EXPO_PUBLIC_AI_BACKEND_URL") ?? "";
+  try {
+    const expoPublicAIBackendUrl =
+      typeof process !== "undefined" && process.env
+        ? process.env.EXPO_PUBLIC_AI_BACKEND_URL
+        : undefined;
+
+    return expoPublicAIBackendUrl?.trim() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function getConfiguredBaseUrl(config: Pick<AIBackendProviderConfig, "baseUrl"> = {}) {

@@ -498,6 +498,130 @@ function WallPhotoSourceOption({
   );
 }
 
+function CalibrationKnownLengthControl({
+  value,
+  unitLabel,
+  standardLabel,
+  usingStandardMeasurement,
+  onChangeText,
+  onUseStandard,
+  style,
+}: {
+  value: string;
+  unitLabel: string;
+  standardLabel: string;
+  usingStandardMeasurement: boolean;
+  onChangeText: (value: string) => void;
+  onUseStandard: () => void;
+  style?: ViewStyle;
+}) {
+  const { colors, radii, spacing, typography } = useAppTheme();
+
+  const stopStageTouchHandling = useCallback((event: GestureResponderEvent) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <View
+      accessibilityLabel="Known calibration length"
+      onTouchStart={stopStageTouchHandling}
+      onTouchEnd={stopStageTouchHandling}
+      style={[
+        {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: spacing.sm,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          borderRadius: radii.lg,
+          backgroundColor: colors.backgroundCard,
+          paddingHorizontal: spacing.sm,
+          paddingVertical: spacing.xs,
+          shadowColor: "#000",
+          shadowOpacity: 0.24,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+        },
+        style,
+      ]}
+    >
+      <View style={{ flexShrink: 0 }}>
+        <Text style={{ ...typography.eyebrow, color: colors.textSecondary }}>
+          Known length
+        </Text>
+        {!usingStandardMeasurement ? (
+          <Text
+            style={{ ...typography.small, color: colors.textPrimary }}
+            numberOfLines={1}
+          >
+            Custom measurement
+          </Text>
+        ) : null}
+      </View>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          borderRadius: radii.md,
+          backgroundColor: colors.backgroundInput,
+          paddingLeft: spacing.sm,
+          paddingRight: spacing.sm,
+        }}
+      >
+        <TextInput
+          accessibilityLabel="Known length value"
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType="decimal-pad"
+          selectTextOnFocus
+          returnKeyType="done"
+          style={{
+            minWidth: 46,
+            paddingVertical: 6,
+            color: colors.textPrimary,
+            fontSize: 16,
+            fontWeight: "700",
+            textAlign: "right",
+          }}
+        />
+        <Text
+          style={{
+            ...typography.small,
+            color: colors.textSecondary,
+            minWidth: 22,
+            textAlign: "center",
+          }}
+        >
+          {unitLabel}
+        </Text>
+      </View>
+      {!usingStandardMeasurement ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${standardLabel}`}
+          onPress={onUseStandard}
+          hitSlop={8}
+          style={{
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.pill,
+            paddingHorizontal: spacing.sm,
+            paddingVertical: 6,
+            backgroundColor: colors.backgroundInput,
+          }}
+        >
+          <Text style={{ ...typography.small, color: colors.textPrimary }}>
+            {standardLabel}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function PresetRoomSceneTile({
   scene,
   selected,
@@ -2095,6 +2219,7 @@ function AIWallCanvasControl({
   enhanced,
   displayMode,
   isEnhancing,
+  unavailableReason,
   onEnhance,
   onDisplayModeChange,
   style,
@@ -2102,18 +2227,24 @@ function AIWallCanvasControl({
   enhanced: boolean;
   displayMode: "original" | "enhanced";
   isEnhancing: boolean;
+  unavailableReason?: string | null;
   onEnhance: () => void;
   onDisplayModeChange: (displayMode: "original" | "enhanced") => void;
   style?: ViewStyle;
 }) {
   const { colors, radii, spacing, typography } = useAppTheme();
+  const unavailable = Boolean(unavailableReason);
 
   if (!enhanced) {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Enhance wall photo"
-        disabled={isEnhancing}
+        accessibilityLabel={
+          unavailableReason
+            ? `AI Wall Enhancement unavailable: ${unavailableReason}`
+            : "Enhance wall photo"
+        }
+        disabled={isEnhancing || unavailable}
         onPress={onEnhance}
         hitSlop={8}
         style={({ pressed }) => ({
@@ -2127,17 +2258,25 @@ function AIWallCanvasControl({
           alignItems: "center",
           justifyContent: "center",
           gap: spacing.xs,
-          opacity: isEnhancing ? 0.72 : pressed ? 0.86 : 1,
+          opacity: isEnhancing || unavailable ? 0.72 : pressed ? 0.86 : 1,
           ...style,
         })}
       >
         <Ionicons
-          name={isEnhancing ? "hourglass-outline" : "sparkles-outline"}
+          name={
+            isEnhancing
+              ? "hourglass-outline"
+              : unavailable
+                ? "alert-circle-outline"
+                : "sparkles-outline"
+          }
           size={16}
           color={colors.white}
         />
         <Text style={{ ...typography.small, color: colors.white, fontWeight: "800" }}>
-          {isEnhancing ? "Enhancing..." : "Enhance Wall Photo"}
+          {isEnhancing
+            ? "Enhancing..."
+            : unavailableReason ?? "Enhance Wall Photo"}
         </Text>
       </Pressable>
     );
@@ -3609,11 +3748,17 @@ export default function RoomViewScreen() {
     roomView.sourceMode === "myWall" &&
     Boolean(wallPhotoEnhancement) &&
     wallPhotoAIComparisonMode === "enhanced";
+  const hasMyWallPhotoForAI =
+    roomView.sourceMode === "myWall" && Boolean(wallPhoto) && aiWallEnhancementEnabled;
+  const aiWallEnhancementUnavailableReason =
+    hasMyWallPhotoForAI && !aiWallEnhancementBackendConfigured && !wallPhotoEnhancement
+      ? "AI backend URL missing"
+      : null;
   const showAIWallEnhancementControls =
-    roomView.sourceMode === "myWall" &&
-    Boolean(wallPhoto) &&
-    aiWallEnhancementEnabled &&
-    aiWallEnhancementBackendConfigured;
+    hasMyWallPhotoForAI &&
+    (aiWallEnhancementBackendConfigured ||
+      Boolean(wallPhotoEnhancement) ||
+      Boolean(aiWallEnhancementUnavailableReason));
   const showFloatingAIWallControl =
     showAIWallEnhancementControls &&
     activeSheet === null &&
@@ -3934,8 +4079,14 @@ export default function RoomViewScreen() {
   const placedArtworkCount = placedArtworks.length;
   const customMeasurementUnitLabel = unit === "cm" ? "cm" : "in";
   const customMeasurementUnitName = unit === "cm" ? "centimeters" : "inches";
+  const standardCalibrationMeasurementValue = unit === "cm" ? "29.7" : "11";
   const standardCalibrationMeasurementLabel = getStandardCalibrationMeasurementLabel(unit);
   const standardCalibrationPaperLabel = getStandardCalibrationPaperLabel(unit);
+  const calibrationKnownLengthValue =
+    calibration.measurementMode === "custom"
+      ? calibration.customMeasurement
+      : standardCalibrationMeasurementValue;
+  const usingStandardCalibrationMeasurement = calibration.measurementMode !== "custom";
   const wallPhotoEmptyStageHeight = fittedStageSize?.height ?? previewAreaSize.height;
   const useCompactWallPhotoEmptyState =
     isPhoneWorkspace && roomView.sourceMode === "myWall" && !wallPhoto;
@@ -4475,6 +4626,29 @@ export default function RoomViewScreen() {
     setRoomView,
     unit,
   ]);
+
+  const handleCalibrationKnownLengthChange = useCallback(
+    (customMeasurement: string) => {
+      setRoomView({
+        calibration: {
+          measurementMode: "custom",
+          customMeasurement,
+          customMeasurementUnit: unit,
+        },
+      });
+    },
+    [setRoomView, unit]
+  );
+
+  const handleUseStandardCalibrationMeasurement = useCallback(() => {
+    setRoomView({
+      calibration: {
+        measurementMode: "letterLongEdge",
+        customMeasurement: standardCalibrationMeasurementValue,
+        customMeasurementUnit: unit,
+      },
+    });
+  }, [setRoomView, standardCalibrationMeasurementValue, unit]);
 
   const handleCalibrationRulerChange = useCallback(
     (start: RoomViewPoint, end: RoomViewPoint) => {
@@ -6082,6 +6256,21 @@ export default function RoomViewScreen() {
       This saved framed artwork needs valid dimensions before Room View can place it.
     </Text>
   ) : null;
+  const calibrationKnownLengthOverlayInset = isPhoneWorkspace ? spacing.md : spacing.lg;
+  const calibrationKnownLengthOverlayMaxWidth = isPhoneWorkspace ? 260 : 300;
+  const calibrationKnownLengthOverlayWidth = Math.max(
+    0,
+    Math.min(
+      displayedImageRect.width - calibrationKnownLengthOverlayInset * 2,
+      stageSize.width - calibrationKnownLengthOverlayInset * 2,
+      calibrationKnownLengthOverlayMaxWidth
+    )
+  );
+  const showCalibrationKnownLengthOverlay =
+    roomView.sourceMode === "myWall" &&
+    Boolean(wallPhoto) &&
+    roomView.isCalibrationRulerVisible &&
+    calibrationKnownLengthOverlayWidth > 0;
 
   const wallPhotoStageSection = (
     <View
@@ -6281,11 +6470,39 @@ export default function RoomViewScreen() {
             />
           ) : null}
 
+          {showCalibrationKnownLengthOverlay ? (
+            <CalibrationKnownLengthControl
+              value={calibrationKnownLengthValue}
+              unitLabel={customMeasurementUnitLabel}
+              standardLabel={standardCalibrationMeasurementLabel}
+              usingStandardMeasurement={usingStandardCalibrationMeasurement}
+              onChangeText={handleCalibrationKnownLengthChange}
+              onUseStandard={handleUseStandardCalibrationMeasurement}
+              style={{
+                position: "absolute",
+                left:
+                  displayedImageRect.left +
+                  (displayedImageRect.width - calibrationKnownLengthOverlayWidth) / 2,
+                bottom: Math.max(
+                  calibrationKnownLengthOverlayInset,
+                  stageSize.height -
+                    displayedImageRect.top -
+                    displayedImageRect.height +
+                    calibrationKnownLengthOverlayInset
+                ),
+                width: calibrationKnownLengthOverlayWidth,
+                zIndex: 340,
+                elevation: 340,
+              }}
+            />
+          ) : null}
+
           {showFloatingAIWallControl ? (
             <AIWallCanvasControl
               enhanced={Boolean(wallPhotoEnhancement)}
               displayMode={wallPhotoAIComparisonMode}
               isEnhancing={isEnhancingWallPhoto}
+              unavailableReason={aiWallEnhancementUnavailableReason}
               onEnhance={handleEnhanceWallPhoto}
               onDisplayModeChange={handleSetWallPhotoAIComparisonMode}
               style={{
@@ -6301,8 +6518,8 @@ export default function RoomViewScreen() {
                     displayedImageRect.width +
                     spacing.sm
                 ),
-                zIndex: 320,
-                elevation: 320,
+                zIndex: 380,
+                elevation: 380,
               }}
             />
           ) : null}
@@ -6487,7 +6704,9 @@ export default function RoomViewScreen() {
           }}
           numberOfLines={isCompactMyWallSheet ? 2 : undefined}
         >
-          {wallPhotoEnhancement
+          {aiWallEnhancementUnavailableReason
+            ? "AI Wall Enhancement needs a backend URL in this app build."
+            : wallPhotoEnhancement
             ? "Use the floating canvas control to compare Original and Enhanced."
             : "Use the floating canvas control to enhance the wall while keeping the photo visible."}
         </Text>
