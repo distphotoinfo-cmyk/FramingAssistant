@@ -124,6 +124,7 @@ function createInitialDraft(): FramingProjectDraft {
       projectName: "",
       notes: "",
       savedFramedArtworkId: null,
+      sourceFramedArtworkId: null,
     },
     artwork: {
       artworkSize: {

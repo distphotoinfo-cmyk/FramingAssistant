@@ -20,7 +20,8 @@ type DismissedGuideTips = Partial<Record<GuideTipKey, boolean>>;
 
 const MAX_CUSTOM_COLOR_PRESETS = 5;
 const DEFAULT_IMPERIAL_PRECISION: FractionDenominator = 8;
-export const DEFAULT_CANVAS_BACKGROUND_COLOR_HEX = "#111111";
+const LEGACY_CANVAS_BACKGROUND_COLOR_HEX = "#111111";
+export const DEFAULT_CANVAS_BACKGROUND_COLOR_HEX = "#E7DED2";
 
 function normalizeImperialPrecision(
   imperialPrecision: FractionDenominator | number | null | undefined
@@ -261,10 +262,14 @@ export const useAppSettingsStore = create<AppSettingsState>()(
             typedState.previewSnapIncrementInches ??
               (legacyPreviewSnapDenominator ? 1 / legacyPreviewSnapDenominator : undefined)
           ),
-          canvasBackgroundColorHex: normalizeHex(
-            typedState.canvasBackgroundColorHex,
-            DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
-          ),
+          canvasBackgroundColorHex:
+            normalizeHex(typedState.canvasBackgroundColorHex, DEFAULT_CANVAS_BACKGROUND_COLOR_HEX) ===
+            LEGACY_CANVAS_BACKGROUND_COLOR_HEX
+              ? DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
+              : normalizeHex(
+                  typedState.canvasBackgroundColorHex,
+                  DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
+                ),
           canvasBackgroundColorPresets: typedState.canvasBackgroundColorPresets ?? [],
         };
       },

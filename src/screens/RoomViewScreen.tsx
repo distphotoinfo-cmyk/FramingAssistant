@@ -126,6 +126,7 @@ import {
   type ResolvedRoomMaterialRealism,
 } from "../utils/roomRealism";
 import { resolveSceneLightingEffect } from "../utils/sceneLighting";
+import { prepareDraftForSavedArtwork } from "../utils/persistentArtworkImages";
 
 const CALIBRATION_HANDLE_SIZE = 38;
 const CALIBRATION_RULER_HEIGHT = 24;
@@ -282,6 +283,38 @@ function WallCastShadow({
   }
 
   const featherRadius = getWallShadowFeatherRadius(shadow.blurRadius);
+  const shadowDistance = getWallShadowDistance(shadow);
+  const direction =
+    shadowDistance > 0.1
+      ? {
+          x: shadow.offsetX / shadowDistance,
+          y: shadow.offsetY / shadowDistance,
+        }
+      : { x: 0.58, y: 0.82 };
+  const directionalExpansion = {
+    left: Math.max(-direction.x, 0),
+    right: Math.max(direction.x, 0),
+    top: Math.max(-direction.y, 0),
+    bottom: Math.max(direction.y, 0),
+  };
+  const canvasLeft = Math.min(
+    0,
+    shadow.offsetX - featherRadius * directionalExpansion.left
+  );
+  const canvasTop = Math.min(
+    0,
+    shadow.offsetY - featherRadius * directionalExpansion.top
+  );
+  const canvasRight = Math.max(
+    width,
+    shadow.offsetX + width + featherRadius * directionalExpansion.right
+  );
+  const canvasBottom = Math.max(
+    height,
+    shadow.offsetY + height + featherRadius * directionalExpansion.bottom
+  );
+  const svgWidth = Math.max(1, canvasRight - canvasLeft);
+  const svgHeight = Math.max(1, canvasBottom - canvasTop);
   let layerWeightTotal = 0;
 
   for (let index = 0; index < WALL_SHADOW_FEATHER_STEPS; index += 1) {
@@ -296,29 +329,49 @@ function WallCastShadow({
     const grow = featherRadius * progress;
 
     return {
-      grow,
+      left: shadow.offsetX - grow * directionalExpansion.left - canvasLeft,
+      top: shadow.offsetY - grow * directionalExpansion.top - canvasTop,
+      width:
+        width +
+        grow * directionalExpansion.left +
+        grow * directionalExpansion.right,
+      height:
+        height +
+        grow * directionalExpansion.top +
+        grow * directionalExpansion.bottom,
       opacity: (nearEdgeOpacity * falloff) / layerWeightTotal,
     };
   });
+  const coreOpacity = clampNumber(shadow.opacity * 0.16, 0, 0.22);
 
   return (
     <Svg
       pointerEvents="none"
-      width={width + featherRadius * 2}
-      height={height + featherRadius * 2}
+      width={svgWidth}
+      height={svgHeight}
       style={{
         position: "absolute",
-        left: shadow.offsetX - featherRadius,
-        top: shadow.offsetY - featherRadius,
+        left: canvasLeft,
+        top: canvasTop,
       }}
     >
+      <SvgRect
+        x={shadow.offsetX - canvasLeft}
+        y={shadow.offsetY - canvasTop}
+        width={width}
+        height={height}
+        rx={1}
+        ry={1}
+        fill="#000000"
+        opacity={coreOpacity}
+      />
       {shadowLayers.map((layer, index) => (
         <SvgRect
-          key={`${index}-${layer.grow}`}
-          x={featherRadius - layer.grow}
-          y={featherRadius - layer.grow}
-          width={width + layer.grow * 2}
-          height={height + layer.grow * 2}
+          key={`${index}-${layer.left}-${layer.top}`}
+          x={layer.left}
+          y={layer.top}
+          width={layer.width}
+          height={layer.height}
           rx={1}
           ry={1}
           fill="#000000"
@@ -3715,6 +3768,7 @@ export default function RoomViewScreen() {
     startCenters: Map<string, RoomViewPoint>;
     isGroupDrag: boolean;
   } | null>(null);
+  const stageDisplayedDragCentersRef = useRef<Map<string, RoomViewPoint> | null>(null);
   const [selectedArtworkProjectFolderId, setSelectedArtworkProjectFolderId] = useState<string | null>(null);
   const [selectedLayoutProjectFolderId, setSelectedLayoutProjectFolderId] = useState<string | null>(null);
   const [layoutName, setLayoutName] = useState("");
@@ -4324,10 +4378,18 @@ export default function RoomViewScreen() {
       return;
     }
 
-    const draftForSave = cloneFramingProjectDraft(selectedFramedArtwork.draft);
     const hasImageOverride = hasArtworkImageOverride(activePlacement);
 
-    if (hasImageOverride) {
+    if (!hasImageOverride) {
+      Alert.alert(
+        "Artwork Already Saved",
+        "This wall placement has no artwork replacement to save. Deselect the artwork to save the wall layout, or use Edit to revise the framed artwork."
+      );
+      return;
+    }
+
+    const buildDraftForSave = () => {
+      const draftForSave = cloneFramingProjectDraft(selectedFramedArtwork.draft);
       draftForSave.preview = {
         ...draftForSave.preview,
         artworkSourceMode:
@@ -4336,39 +4398,17 @@ export default function RoomViewScreen() {
           activePlacement.artworkImageUriOverride ?? draftForSave.preview.artworkImageUri,
         artworkCrop: activePlacement.artworkCropOverride ?? draftForSave.preview.artworkCrop,
       };
-    }
+      return draftForSave;
+    };
 
-    const savedArtwork = hasImageOverride
-      ? saveFramedArtwork({
-          projectFolderId: selectedFramedArtwork.projectFolderId,
-          name: `${selectedFramedArtwork.name} Copy`,
-          notes: selectedFramedArtwork.notes ?? "",
-          draft: draftForSave,
-          unit: selectedFramedArtwork.unit,
-          finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
-        })
-      : updateFramedArtwork(selectedFramedArtwork.id, {
-          projectFolderId: selectedFramedArtwork.projectFolderId,
-          name: selectedFramedArtwork.name,
-          notes: selectedFramedArtwork.notes ?? "",
-          draft: draftForSave,
-          unit: selectedFramedArtwork.unit,
-          finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
-        });
-
-    if (!savedArtwork) {
-      Alert.alert("Unable to save", "This framed artwork is no longer available in your saved library.");
-      return;
-    }
-
-    if (hasImageOverride) {
+    const clearArtworkOverrides = (framedArtworkId: string) => {
       setRoomView({
         savedRoomLayoutId: null,
         placements: roomView.placements.map((placement) =>
           placement.id === activePlacement.id
             ? {
                 ...placement,
-                framedArtworkId: savedArtwork.id,
+                framedArtworkId,
                 artworkSourceModeOverride: undefined,
                 artworkImageUriOverride: undefined,
                 artworkCropOverride: undefined,
@@ -4377,13 +4417,101 @@ export default function RoomViewScreen() {
         ),
         activePlacementId: activePlacement.id,
       });
-    }
+    };
+
+    const saveCopy = async () => {
+      let draftForSave: FramingProjectDraft;
+
+      try {
+        draftForSave = await prepareDraftForSavedArtwork(buildDraftForSave());
+      } catch {
+        Alert.alert(
+          "Unable to save image",
+          "Framing Assistant couldn't keep a permanent copy of this artwork image. Please try saving again."
+        );
+        return;
+      }
+
+      const savedArtwork = saveFramedArtwork({
+        projectFolderId: selectedFramedArtwork.projectFolderId,
+        name: `${selectedFramedArtwork.name} Copy`,
+        notes: selectedFramedArtwork.notes ?? "",
+        draft: draftForSave,
+        unit: selectedFramedArtwork.unit,
+        finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
+      });
+
+      if (!savedArtwork) {
+        Alert.alert("Unable to save", "This framed artwork is no longer available in your saved library.");
+        return;
+      }
+
+      clearArtworkOverrides(savedArtwork.id);
+      Alert.alert("Artwork Saved", `"${savedArtwork.name}" is saved as a new artwork.`);
+    };
+
+    const updateOriginal = async () => {
+      let draftForSave: FramingProjectDraft;
+
+      try {
+        draftForSave = await prepareDraftForSavedArtwork(buildDraftForSave());
+      } catch {
+        Alert.alert(
+          "Unable to save image",
+          "Framing Assistant couldn't keep a permanent copy of this artwork image. Please try saving again."
+        );
+        return;
+      }
+
+      const savedArtwork = updateFramedArtwork(selectedFramedArtwork.id, {
+        projectFolderId: selectedFramedArtwork.projectFolderId,
+        name: selectedFramedArtwork.name,
+        notes: selectedFramedArtwork.notes ?? "",
+        draft: draftForSave,
+        unit: selectedFramedArtwork.unit,
+        finalOuterSizeInches: selectedFramedArtwork.finalOuterSizeInches,
+      });
+
+      if (!savedArtwork) {
+        Alert.alert("Unable to save", "This framed artwork is no longer available in your saved library.");
+        return;
+      }
+
+      clearArtworkOverrides(savedArtwork.id);
+      Alert.alert("Artwork Updated", `"${savedArtwork.name}" has been updated.`);
+    };
 
     Alert.alert(
-      "Artwork Saved",
-      hasImageOverride
-        ? `"${savedArtwork.name}" is saved as a new artwork.`
-        : `"${savedArtwork.name}" has been updated.`
+      "Save Artwork",
+      "This placement uses a replaced artwork image. Save it as a new copy, or update the original saved artwork.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Save as New Copy",
+          onPress: () => {
+            void saveCopy();
+          },
+        },
+        {
+          text: "Update Original",
+          style: "destructive",
+          onPress: () =>
+            Alert.alert(
+              "Update Original?",
+              `This will replace the saved artwork "${selectedFramedArtwork.name}". Continue?`,
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Update Original",
+                  style: "destructive",
+                  onPress: () => {
+                    void updateOriginal();
+                  },
+                },
+              ]
+            ),
+        },
+      ]
     );
   }, [
     activePlacement,
@@ -5481,6 +5609,7 @@ export default function RoomViewScreen() {
       stageArtworkDragRef.current = null;
 
       if (!dragState) {
+        stageDisplayedDragCentersRef.current = null;
         setStageDragCenterOverrides(null);
         setStageActiveDragPlacementIds(null);
         stageDragOffset.setValue({ x: 0, y: 0 });
@@ -5490,6 +5619,7 @@ export default function RoomViewScreen() {
       const dragDistance = Math.hypot(gestureState.dx, gestureState.dy);
 
       if (dragDistance <= 8) {
+        stageDisplayedDragCentersRef.current = null;
         setStageDragCenterOverrides(null);
         setStageActiveDragPlacementIds(null);
         stageDragOffset.setValue({ x: 0, y: 0 });
@@ -5498,7 +5628,12 @@ export default function RoomViewScreen() {
         return;
       }
 
-      const centersById = getStageArtworkDragCenters(dragState, gestureState);
+      const centersById =
+        stageDisplayedDragCentersRef.current &&
+        stageDisplayedDragCentersRef.current.size > 0
+          ? new Map(stageDisplayedDragCentersRef.current)
+          : getStageArtworkDragCenters(dragState, gestureState);
+      stageDisplayedDragCentersRef.current = null;
 
       if (centersById.size === 0) {
         setStageDragCenterOverrides(null);
@@ -5560,6 +5695,7 @@ export default function RoomViewScreen() {
 
           if (isCalibrationDragging) {
             stageArtworkDragRef.current = null;
+            stageDisplayedDragCentersRef.current = null;
             return;
           }
 
@@ -5570,6 +5706,7 @@ export default function RoomViewScreen() {
 
           if (!placementId) {
             stageArtworkDragRef.current = null;
+            stageDisplayedDragCentersRef.current = null;
             return;
           }
 
@@ -5579,6 +5716,7 @@ export default function RoomViewScreen() {
 
           if (!activeItem) {
             stageArtworkDragRef.current = null;
+            stageDisplayedDragCentersRef.current = null;
             return;
           }
 
@@ -5599,6 +5737,7 @@ export default function RoomViewScreen() {
             ),
             isGroupDrag,
           };
+          stageDisplayedDragCentersRef.current = null;
           setStageDragCenterOverrides(null);
           setStageActiveDragPlacementIds(
             dragItems.map((item) => item.placement.id)
@@ -5617,6 +5756,7 @@ export default function RoomViewScreen() {
           }
 
           const centersById = getStageArtworkDragCenters(dragState, gestureState);
+          stageDisplayedDragCentersRef.current = new Map(centersById);
           const startCenter =
             dragState.startCenters.get(dragState.placementId) ??
             dragState.activeItem.placement.center;
@@ -5642,6 +5782,7 @@ export default function RoomViewScreen() {
             if (tapDistance <= 8) {
               handleClearPlacementSelection();
             }
+            stageDisplayedDragCentersRef.current = null;
             setStageActiveDragPlacementIds(null);
             stageDragOffset.setValue({ x: 0, y: 0 });
             resetStageArtworkResponderHandledTouchSoon();
@@ -5932,6 +6073,7 @@ export default function RoomViewScreen() {
       ...draftForEdit.meta,
       projectName: selectedFramedArtwork.name,
       savedFramedArtworkId: selectedFramedArtwork.id,
+      sourceFramedArtworkId: selectedFramedArtwork.id,
     };
     draftForEdit.preview = getPlacementPreview(selectedFramedArtwork, activePlacement);
     draftForEdit.roomView = cloneRoomViewDraft(roomView);

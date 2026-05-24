@@ -9,6 +9,7 @@ import ColorPickerField from "../ui/ColorPickerField";
 
 const CANVAS_BACKGROUND_DEFAULT_COLORS = [
   DEFAULT_CANVAS_BACKGROUND_COLOR_HEX,
+  "#111111",
   "#171717",
   "#1A1A1A",
   "#202020",
@@ -16,7 +17,6 @@ const CANVAS_BACKGROUND_DEFAULT_COLORS = [
   "#808080",
   "#FFFFFF",
   "#F3EEE6",
-  "#E7DED2",
 ];
 
 type CanvasBackgroundColorPickerProps = {

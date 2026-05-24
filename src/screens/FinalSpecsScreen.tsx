@@ -4,6 +4,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
   type LayoutChangeEvent,
@@ -32,7 +33,10 @@ import AppSheetModal from "../components/ui/AppSheetModal";
 import { useStepNavigation } from "../hooks/useStepNavigation";
 import Svg, { Line, Polygon } from "react-native-svg";
 import { getPresetRoomScenesByOrientation } from "../data/presetRoomScenes";
-import { useAppSettingsStore } from "../state/appSettingsStore";
+import {
+  DEFAULT_CANVAS_BACKGROUND_COLOR_HEX,
+  useAppSettingsStore,
+} from "../state/appSettingsStore";
 import { useFramingFlowStore } from "../state/framingFlowStore";
 import { useSavedProjectsStore } from "../state/savedProjectsStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
@@ -55,12 +59,14 @@ import {
 import { formatMeasurement, formatSize } from "../utils/formatters";
 import { getFrameProfile } from "../utils/frameProfiles";
 import { normalizeHex } from "../utils/color";
+import { prepareDraftForSavedArtwork } from "../utils/persistentArtworkImages";
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
 type SaveArtworkIntent = "manual" | "viewOnWall";
+type SaveArtworkMode = "normal" | "newCopy" | "updateOriginal";
 
 function DiagramLabel({
   label,
@@ -211,7 +217,10 @@ function FinalCutDiagram({
   const { colors, radii, spacing, typography } = useAppTheme();
   const canvasBackgroundColorHex = useAppSettingsStore((state) => state.canvasBackgroundColorHex);
   const [canvasWidth, setCanvasWidth] = useState(0);
-  const canvasBackgroundColor = normalizeHex(canvasBackgroundColorHex, "#111111");
+  const canvasBackgroundColor = normalizeHex(
+    canvasBackgroundColorHex,
+    DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
+  );
 
   const finalOuterSize = finalOuterSizeInches
     ? {
@@ -478,6 +487,7 @@ export default function FinalSpecsScreen() {
   const imperialPrecision = useAppSettingsStore((state) => state.imperialPrecision);
   const draft = useFramingFlowStore((state) => state.draft);
   const setMeta = useFramingFlowStore((state) => state.setMeta);
+  const setPreview = useFramingFlowStore((state) => state.setPreview);
   const projectFolders = useSavedProjectsStore((state) => state.projectFolders);
   const framedArtworks = useSavedProjectsStore((state) => state.framedArtworks);
   const createProjectFolder = useSavedProjectsStore((state) => state.createProjectFolder);
@@ -489,6 +499,7 @@ export default function FinalSpecsScreen() {
   const [selectedProjectFolderId, setSelectedProjectFolderId] = useState<string | null>(null);
   const [newProjectFolderName, setNewProjectFolderName] = useState("");
   const [saveArtworkIntent, setSaveArtworkIntent] = useState<SaveArtworkIntent>("manual");
+  const [isSavingArtwork, setIsSavingArtwork] = useState(false);
   const [roomChoiceSheetVisible, setRoomChoiceSheetVisible] = useState(false);
   const [presetRoomPickerVisible, setPresetRoomPickerVisible] = useState(false);
   const [presetRoomOrientation, setPresetRoomOrientation] =
@@ -531,6 +542,10 @@ export default function FinalSpecsScreen() {
   );
   const currentSavedArtwork =
     framedArtworks.find((artwork) => artwork.id === draft.meta.savedFramedArtworkId) ?? null;
+  const sourceSavedArtwork =
+    framedArtworks.find((artwork) => artwork.id === draft.meta.sourceFramedArtworkId) ?? null;
+  const isEditingSavedArtwork = Boolean(sourceSavedArtwork);
+  const protectedSavedArtwork = sourceSavedArtwork ?? currentSavedArtwork;
   const sortedProjectFolders = useMemo(
     () =>
       [...projectFolders].sort(
@@ -584,12 +599,14 @@ export default function FinalSpecsScreen() {
   );
 
   const saveOrUpdateCurrentArtwork = useCallback(
-    ({
+    async ({
       artworkName: nextArtworkName,
       projectFolderId,
+      mode = "normal",
     }: {
       artworkName?: string;
       projectFolderId?: string | null;
+      mode?: SaveArtworkMode;
     } = {}) => {
       if (!derived.isValidGeometry || !finalOuterSizeInches) {
         Alert.alert(
@@ -599,19 +616,37 @@ export default function FinalSpecsScreen() {
         return null;
       }
 
-      const trimmedArtworkName =
+      const updateTarget =
+        mode === "updateOriginal"
+          ? protectedSavedArtwork
+          : mode === "normal" && !isEditingSavedArtwork
+            ? currentSavedArtwork
+            : null;
+      const baseArtworkName =
         nextArtworkName?.trim() ||
         currentSavedArtwork?.name ||
+        sourceSavedArtwork?.name ||
         draft.meta.projectName.trim() ||
         "Untitled artwork";
+      const trimmedArtworkName =
+        mode === "newCopy" &&
+        protectedSavedArtwork &&
+        baseArtworkName === protectedSavedArtwork.name
+          ? `${baseArtworkName} Copy`
+          : baseArtworkName;
       const nextProjectFolderId =
-        projectFolderId ?? currentSavedArtwork?.projectFolderId ?? sortedProjectFolders[0]?.id ?? null;
+        projectFolderId ??
+        updateTarget?.projectFolderId ??
+        currentSavedArtwork?.projectFolderId ??
+        sourceSavedArtwork?.projectFolderId ??
+        sortedProjectFolders[0]?.id ??
+        null;
 
       if (!nextProjectFolderId) {
         return null;
       }
 
-      const existingSavedArtworkId = currentSavedArtwork?.id ?? null;
+      const existingSavedArtworkId = updateTarget?.id ?? null;
       const draftForSave: FramingProjectDraft = JSON.parse(
         JSON.stringify({
           ...draft,
@@ -619,22 +654,24 @@ export default function FinalSpecsScreen() {
             ...draft.meta,
             projectName: trimmedArtworkName,
             savedFramedArtworkId: existingSavedArtworkId,
+            sourceFramedArtworkId: existingSavedArtworkId,
           },
         })
       );
+      const persistentDraftForSave = await prepareDraftForSavedArtwork(draftForSave);
 
       const savedArtwork = existingSavedArtworkId
         ? updateFramedArtwork(existingSavedArtworkId, {
             projectFolderId: nextProjectFolderId,
             name: trimmedArtworkName,
-            draft: draftForSave,
+            draft: persistentDraftForSave,
             unit,
             finalOuterSizeInches,
           })
         : saveFramedArtwork({
             projectFolderId: nextProjectFolderId,
             name: trimmedArtworkName,
-            draft: draftForSave,
+            draft: persistentDraftForSave,
             unit,
             finalOuterSizeInches,
           });
@@ -646,7 +683,15 @@ export default function FinalSpecsScreen() {
       setMeta({
         projectName: savedArtwork.name,
         savedFramedArtworkId: savedArtwork.id,
+        sourceFramedArtworkId:
+          mode === "normal" && !isEditingSavedArtwork ? null : savedArtwork.id,
       });
+
+      if (persistentDraftForSave.preview.artworkImageUri !== draft.preview.artworkImageUri) {
+        setPreview({
+          artworkImageUri: persistentDraftForSave.preview.artworkImageUri,
+        });
+      }
 
       return savedArtwork;
     },
@@ -655,8 +700,12 @@ export default function FinalSpecsScreen() {
       derived.isValidGeometry,
       draft,
       finalOuterSizeInches,
+      isEditingSavedArtwork,
+      protectedSavedArtwork,
       saveFramedArtwork,
       setMeta,
+      setPreview,
+      sourceSavedArtwork,
       sortedProjectFolders,
       unit,
       updateFramedArtwork,
@@ -673,9 +722,22 @@ export default function FinalSpecsScreen() {
     }
 
     setSaveArtworkIntent(intent);
-    setArtworkName(currentSavedArtwork?.name ?? (draft.meta.projectName.trim() || "Untitled artwork"));
+    const draftProjectName = draft.meta.projectName.trim();
+    const savedArtworkName =
+      currentSavedArtwork?.name.trim() || sourceSavedArtwork?.name.trim();
+    const initialArtworkName =
+      savedArtworkName && savedArtworkName !== "Untitled artwork"
+        ? savedArtworkName
+        : draftProjectName && draftProjectName !== "Untitled artwork"
+          ? draftProjectName
+          : "";
+
+    setArtworkName(initialArtworkName);
     setSelectedProjectFolderId(
-      currentSavedArtwork?.projectFolderId ?? sortedProjectFolders[0]?.id ?? null
+      currentSavedArtwork?.projectFolderId ??
+        sourceSavedArtwork?.projectFolderId ??
+        sortedProjectFolders[0]?.id ??
+        null
     );
     setNewProjectFolderName("");
     setSaveSheetVisible(true);
@@ -694,12 +756,32 @@ export default function FinalSpecsScreen() {
     setNewProjectFolderName("");
   };
 
-  const handleViewOnWall = () => {
-    if (currentSavedArtwork) {
-      const savedArtwork = saveOrUpdateCurrentArtwork();
+  const handleViewOnWall = async () => {
+    if (isEditingSavedArtwork) {
+      openSaveArtworkSheet("viewOnWall");
+      return;
+    }
 
-      if (savedArtwork) {
-        openRoomChoiceForArtwork(savedArtwork.id);
+    if (currentSavedArtwork) {
+      if (isSavingArtwork) {
+        return;
+      }
+
+      setIsSavingArtwork(true);
+
+      try {
+        const savedArtwork = await saveOrUpdateCurrentArtwork();
+
+        if (savedArtwork) {
+          openRoomChoiceForArtwork(savedArtwork.id);
+        }
+      } catch {
+        Alert.alert(
+          "Unable to save image",
+          "Framing Assistant couldn't keep a permanent copy of this artwork image. Please try saving again."
+        );
+      } finally {
+        setIsSavingArtwork(false);
       }
       return;
     }
@@ -707,7 +789,11 @@ export default function FinalSpecsScreen() {
     openSaveArtworkSheet("viewOnWall");
   };
 
-  const handleSaveArtwork = () => {
+  const completeSaveArtwork = async (mode: SaveArtworkMode) => {
+    if (isSavingArtwork) {
+      return;
+    }
+
     if (!derived.isValidGeometry || !finalOuterSizeInches) {
       Alert.alert(
         "Specs not ready",
@@ -716,36 +802,89 @@ export default function FinalSpecsScreen() {
       return;
     }
 
-    const trimmedArtworkName = artworkName.trim();
-
-    if (!trimmedArtworkName) {
-      Alert.alert("Artwork name needed", "Enter a name for this artwork.");
-      return;
-    }
-
     if (!selectedProjectFolderId) {
       Alert.alert("Project folder needed", "Select or create a project folder.");
       return;
     }
 
-    const savedArtwork = saveOrUpdateCurrentArtwork({
-      artworkName: trimmedArtworkName,
-      projectFolderId: selectedProjectFolderId,
-    });
+    setIsSavingArtwork(true);
 
-    if (!savedArtwork) {
-      Alert.alert("Unable to save", "Choose or create a project folder before saving.");
+    try {
+      const savedArtwork = await saveOrUpdateCurrentArtwork({
+        artworkName,
+        projectFolderId: selectedProjectFolderId,
+        mode,
+      });
+
+      if (!savedArtwork) {
+        Alert.alert("Unable to save", "Choose or create a project folder before saving.");
+        return;
+      }
+
+      setSaveSheetVisible(false);
+
+      if (saveArtworkIntent === "viewOnWall") {
+        openRoomChoiceForArtwork(savedArtwork.id);
+        return;
+      }
+
+      Alert.alert("Artwork Saved", `"${savedArtwork.name}" is now available in Room View.`);
+    } catch {
+      Alert.alert(
+        "Unable to save image",
+        "Framing Assistant couldn't keep a permanent copy of this artwork image. Please try saving again."
+      );
+    } finally {
+      setIsSavingArtwork(false);
+    }
+  };
+
+  const confirmUpdateOriginalArtwork = () => {
+    if (!protectedSavedArtwork) {
+      void completeSaveArtwork("normal");
       return;
     }
 
-    setSaveSheetVisible(false);
+    Alert.alert(
+      "Update Original?",
+      `This will replace the saved artwork "${protectedSavedArtwork.name}". Continue?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Update Original",
+          style: "destructive",
+          onPress: () => {
+            void completeSaveArtwork("updateOriginal");
+          },
+        },
+      ]
+    );
+  };
 
-    if (saveArtworkIntent === "viewOnWall") {
-      openRoomChoiceForArtwork(savedArtwork.id);
+  const handleSaveArtwork = () => {
+    if (isEditingSavedArtwork && protectedSavedArtwork) {
+      Alert.alert(
+        "Save Artwork",
+        "How would you like to save this edited artwork?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save as New Copy",
+            onPress: () => {
+              void completeSaveArtwork("newCopy");
+            },
+          },
+          {
+            text: "Update Original",
+            style: "destructive",
+            onPress: confirmUpdateOriginalArtwork,
+          },
+        ]
+      );
       return;
     }
 
-    Alert.alert("Artwork Saved", `"${savedArtwork.name}" is now available in Room View.`);
+    void completeSaveArtwork("normal");
   };
 
   const formatNumericSize = (size: NumericSize | null) =>
@@ -912,8 +1051,9 @@ export default function FinalSpecsScreen() {
             ) : null}
 
             <AppButton
-              label="View on Wall"
+              label={isSavingArtwork ? "Saving..." : "View on Wall"}
               onPress={handleViewOnWall}
+              disabled={isSavingArtwork}
               style={{ width: "52%", maxWidth: 360, alignSelf: "center" }}
             />
           </View>
@@ -925,90 +1065,128 @@ export default function FinalSpecsScreen() {
         title="Save Artwork"
         onClose={() => setSaveSheetVisible(false)}
       >
-        <AppTextField
-          label="Artwork name"
-          placeholder="Untitled artwork"
-          value={artworkName}
-          onChangeText={setArtworkName}
-        />
-
-        <View>
-          <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
-            Project folder
-          </Text>
-          <ScrollView
-            style={{ maxHeight: 176 }}
-            contentContainerStyle={{ gap: spacing.xs }}
-            showsVerticalScrollIndicator={sortedProjectFolders.length > 3}
-          >
-            {sortedProjectFolders.length === 0 ? (
-              <Text style={{ ...typography.small, color: colors.textSecondary }}>
-                Create a project folder before saving this artwork.
-              </Text>
-            ) : (
-              sortedProjectFolders.map((folder) => {
-                const selected = folder.id === selectedProjectFolderId;
-
-                return (
-                  <Pressable
-                    key={folder.id}
-                    onPress={() => setSelectedProjectFolderId(folder.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select ${folder.name}`}
-                    style={{
-                      minHeight: 42,
-                      borderRadius: radii.md,
-                      borderWidth: 1,
-                      borderColor: selected ? colors.accent : colors.borderStrong,
-                      backgroundColor: selected ? colors.accentSoft : colors.backgroundCard,
-                      paddingHorizontal: spacing.md,
-                      alignItems: "center",
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        ...typography.sectionTitle,
-                        color: selected ? colors.accent : colors.textPrimary,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {folder.name}
-                    </Text>
-                    {selected ? (
-                      <Text style={{ ...typography.small, color: colors.accent, fontWeight: "700" }}>
-                        Selected
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                );
-              })
-            )}
-          </ScrollView>
-        </View>
-
-        <View style={{ gap: spacing.sm }}>
+        <View style={{ gap: spacing.md }}>
           <AppTextField
-            label="Create new project folder"
-            placeholder="Client or project name"
-            value={newProjectFolderName}
-            onChangeText={setNewProjectFolderName}
+            label="Artwork name"
+            placeholder="Untitled artwork"
+            value={artworkName}
+            onChangeText={setArtworkName}
           />
+
+          <View>
+            <Text style={{ ...typography.eyebrow, color: colors.textPrimary, marginBottom: spacing.xs }}>
+              Project folder
+            </Text>
+            <ScrollView
+              style={{ maxHeight: 154 }}
+              contentContainerStyle={{ gap: spacing.xs }}
+              showsVerticalScrollIndicator={sortedProjectFolders.length > 3}
+            >
+              {sortedProjectFolders.length === 0 ? (
+                <Text style={{ ...typography.small, color: colors.textSecondary }}>
+                  Create a project folder before saving this artwork.
+                </Text>
+              ) : (
+                sortedProjectFolders.map((folder) => {
+                  const selected = folder.id === selectedProjectFolderId;
+
+                  return (
+                    <Pressable
+                      key={folder.id}
+                      onPress={() => setSelectedProjectFolderId(folder.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select ${folder.name}`}
+                      style={{
+                        minHeight: 40,
+                        borderRadius: radii.md,
+                        borderWidth: 1,
+                        borderColor: selected ? colors.accent : colors.borderStrong,
+                        backgroundColor: selected ? colors.accentSoft : colors.backgroundInput,
+                        paddingHorizontal: spacing.md,
+                        alignItems: "center",
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          ...typography.sectionTitle,
+                          color: selected ? colors.accent : colors.textPrimary,
+                          flex: 1,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {folder.name}
+                      </Text>
+                      {selected ? (
+                        <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+
+          <View
+            style={{
+              borderTopWidth: 1,
+              borderTopColor: colors.borderSubtle,
+              paddingTop: spacing.md,
+              gap: spacing.xs,
+            }}
+          >
+            <Text style={{ ...typography.eyebrow, color: colors.textPrimary }}>
+              New folder
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "flex-end", gap: spacing.sm }}>
+              <TextInput
+                placeholder="Client or project name"
+                placeholderTextColor={colors.textPlaceholder}
+                value={newProjectFolderName}
+                onChangeText={setNewProjectFolderName}
+                style={{
+                  flex: 1,
+                  minHeight: 42,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  borderRadius: radii.md,
+                  backgroundColor: colors.backgroundInput,
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.xs,
+                  color: colors.textPrimary,
+                  fontSize: 15,
+                }}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Create project folder"
+                onPress={handleCreateProjectFolder}
+                style={({ pressed }) => ({
+                  minHeight: 42,
+                  borderRadius: radii.pill,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  paddingHorizontal: spacing.md,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed ? colors.backgroundInput : "transparent",
+                })}
+              >
+                <Text style={{ ...typography.small, color: colors.textPrimary, fontWeight: "700" }}>
+                  Create
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
           <AppButton
-            variant="secondary"
-            label="Create Folder"
-            onPress={handleCreateProjectFolder}
-            style={{ width: "56%", alignSelf: "center" }}
+            label={isSavingArtwork ? "Saving..." : "Save Artwork"}
+            onPress={handleSaveArtwork}
+            disabled={!selectedProjectFolderId || isSavingArtwork}
+            style={{ width: "100%", marginTop: spacing.xs }}
           />
         </View>
-
-        <AppButton
-          label="Save Artwork"
-          onPress={handleSaveArtwork}
-          disabled={!selectedProjectFolderId || !artworkName.trim()}
-          style={{ width: "60%", alignSelf: "center" }}
-        />
       </AppSheetModal>
 
       <AppSheetModal

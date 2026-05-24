@@ -58,6 +58,7 @@ export interface ProjectMeta {
   projectName: string;
   notes: string;
   savedFramedArtworkId?: string | null;
+  sourceFramedArtworkId?: string | null;
 }
 
 export interface ArtworkSetupDraft {

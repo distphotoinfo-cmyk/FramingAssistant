@@ -459,6 +459,7 @@ export default function SavedProjectsScreen() {
       ...draftForEdit.meta,
       projectName: artwork.name,
       savedFramedArtworkId: artwork.id,
+      sourceFramedArtworkId: artwork.id,
     };
 
     setAppUnit(artwork.unit);

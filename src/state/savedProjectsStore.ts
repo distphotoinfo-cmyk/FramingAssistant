@@ -242,6 +242,7 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
             ...artwork.draft.meta,
             projectName: artwork.name,
             savedFramedArtworkId: id,
+            sourceFramedArtworkId: id,
           },
         };
         const renderData = artwork.renderData ?? buildRenderData(draft, artwork.finalOuterSizeInches);
@@ -301,6 +302,7 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
             ...artwork.draft.meta,
             projectName: artwork.name,
             savedFramedArtworkId: id,
+            sourceFramedArtworkId: id,
           },
         };
         const renderData = artwork.renderData ?? buildRenderData(draft, artwork.finalOuterSizeInches);

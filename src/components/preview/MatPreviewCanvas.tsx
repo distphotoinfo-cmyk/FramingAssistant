@@ -13,7 +13,10 @@ import type {
   RoomEnvironmentLighting,
   RoomMaterialRealismDraft,
 } from "../../types/framing";
-import { useAppSettingsStore } from "../../state/appSettingsStore";
+import {
+  DEFAULT_CANVAS_BACKGROUND_COLOR_HEX,
+  useAppSettingsStore,
+} from "../../state/appSettingsStore";
 import { getArtworkAspectRatio, resolveArtworkCropMetrics } from "../../utils/artworkCrop";
 import { getFrameProfile } from "../../utils/frameProfiles";
 import { getOffsetBounds, type NumericSize } from "../../utils/framingGeometry";
@@ -810,11 +813,18 @@ export function FinishedFramedArtwork({
   const roomFrameOverdriveRatio = clamp(roomFrameOverdrive / 1.5, 0, 1);
   const roomBevelOverdrive = Math.max(0, roomBevelDepth - 1.5);
   const roomBevelOverdriveRatio = clamp(roomBevelOverdrive / 1.5, 0, 1);
+  const lightMatBevelReadabilityRatio = isRoomMockupDepth
+    ? clamp((matLightness - 0.66) / 0.34, 0, 1)
+    : 0;
+  const roomBevelReadabilityScale = isRoomMockupDepth
+    ? 1.12 + lightMatBevelReadabilityRatio * 0.12
+    : 1;
   const roomBevelContrast = clamp(
     (clamp(0.62 + roomBevelDepth * 0.4, 0, 1.16) + roomBevelOverdrive * 0.55) *
-      environmentContrastScale,
+      environmentContrastScale *
+      roomBevelReadabilityScale,
     0,
-    2.12
+    2.32
   );
   const matShadowBoost = isRoomMockupDepth
     ? (1 + roomBevelDepth * 0.6) * environmentShadowScale
@@ -851,7 +861,7 @@ export function FinishedFramedArtwork({
     6: { physicalWidth: 0.11 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.07 },
     8: { physicalWidth: 0.14 * bevelUnitScale * bevelVisualScale * bevelThicknessMultiplier, apertureEdgeAlpha: 0.08 },
   }[matThicknessPly];
-  const minimumBevelInset = 0.85;
+  const minimumBevelInset = isRoomMockupDepth ? 1.12 : 0.85;
   const darkMatShadowLiftRatio =
     !isWhiteCore && matLightness < 0.18 ? (0.18 - matLightness) / 0.18 : 0;
   const useDarkMatShadowLift = darkMatShadowLiftRatio > 0;
@@ -933,7 +943,7 @@ export function FinishedFramedArtwork({
       : mixHexColors(
           coreFaceColor,
           "#000000",
-          clamp(0.14 * roomBevelContrast, 0, 0.42 + roomBevelOverdriveRatio * 0.1)
+          clamp(0.17 * roomBevelContrast, 0, 0.48 + roomBevelOverdriveRatio * 0.1)
         );
   const roomMatHighlightEdgeColor = !isWhiteCore
     ? mixHexColors(
@@ -948,7 +958,7 @@ export function FinishedFramedArtwork({
     : mixHexColors(
         coreFaceColor,
         "#FFFFFF",
-        clamp(0.16 * roomBevelContrast, 0, 0.34 + roomBevelOverdriveRatio * 0.12)
+        clamp(0.2 * roomBevelContrast, 0, 0.42 + roomBevelOverdriveRatio * 0.12)
       );
   const buildRoomBevelSide = (orientation: FrameOrientation): MatBevelSidePalette => {
     const { useLight, amount } = getDirectionalSurfaceValues(
@@ -957,23 +967,23 @@ export function FinishedFramedArtwork({
       true
     );
     const edgeMixAmount = clamp(
-      (isWhiteCore ? 0.32 + amount * 0.22 : 0.42 + amount * 0.24) * roomBevelContrast,
+      (isWhiteCore ? 0.36 + amount * 0.25 : 0.45 + amount * 0.25) * roomBevelContrast,
       0,
-      isWhiteCore ? 0.6 + roomBevelOverdriveRatio * 0.2 : 0.66 + roomBevelOverdriveRatio * 0.18
+      isWhiteCore ? 0.68 + roomBevelOverdriveRatio * 0.18 : 0.72 + roomBevelOverdriveRatio * 0.16
     );
     const edgeColor = useLight
       ? mixHexColors(coreFaceColor, roomMatHighlightEdgeColor, edgeMixAmount)
       : mixHexColors(coreFaceColor, roomMatShadowEdgeColor, edgeMixAmount);
     const innerMixAmount = clamp(
       (useLight
-        ? isWhiteCore ? 0.24 + amount * 0.1 : 0.36 + amount * 0.12
-        : isWhiteCore ? 0.3 + amount * 0.13 : 0.44 + amount * 0.16) * roomBevelContrast,
+        ? isWhiteCore ? 0.29 + amount * 0.11 : 0.39 + amount * 0.12
+        : isWhiteCore ? 0.35 + amount * 0.14 : 0.48 + amount * 0.16) * roomBevelContrast,
       0,
-      isWhiteCore ? 0.62 + roomBevelOverdriveRatio * 0.16 : 0.74 + roomBevelOverdriveRatio * 0.14
+      isWhiteCore ? 0.7 + roomBevelOverdriveRatio * 0.14 : 0.8 + roomBevelOverdriveRatio * 0.12
     );
     const midOffset = useLight
-      ? `${Math.round(52 + (1 - roomBevelSoftness) * 8)}%`
-      : `${Math.round(48 - (1 - roomBevelSoftness) * 8)}%`;
+      ? `${Math.round(54 + (1 - roomBevelSoftness) * 10)}%`
+      : `${Math.round(46 - (1 - roomBevelSoftness) * 10)}%`;
 
     return {
       outer: edgeColor,
@@ -1000,24 +1010,24 @@ export function FinishedFramedArtwork({
   );
   const apertureOcclusionColors = buildDirectionalEdgeColors(
     roomLightDirection,
-    ((isWhiteCore ? 0.055 : 0.075) +
-      roomBevelDepth * (isWhiteCore ? 0.085 : 0.11) +
-      roomBevelOverdrive * (isWhiteCore ? 0.04 : 0.055)) *
+    ((isWhiteCore ? 0.07 : 0.085) +
+      roomBevelDepth * (isWhiteCore ? 0.1 : 0.12) +
+      roomBevelOverdrive * (isWhiteCore ? 0.045 : 0.06)) *
       environmentAmbientOcclusionScale,
-    ((isWhiteCore ? 0.035 : 0.052) +
-      roomBevelDepth * (isWhiteCore ? 0.05 : 0.062) +
-      roomBevelOverdrive * (isWhiteCore ? 0.025 : 0.035)) *
+    ((isWhiteCore ? 0.044 : 0.058) +
+      roomBevelDepth * (isWhiteCore ? 0.06 : 0.07) +
+      roomBevelOverdrive * (isWhiteCore ? 0.028 : 0.038)) *
       environmentAmbientOcclusionScale,
     true
   );
   const apertureEdgeAlpha = clamp(
     bevelProfile.apertureEdgeAlpha *
       (isRoomMockupDepth
-        ? (0.6 + roomBevelDepth * 0.45 + roomBevelOverdrive * 0.24) *
+        ? (0.78 + roomBevelDepth * 0.52 + roomBevelOverdrive * 0.26) *
           environmentAmbientOcclusionScale
         : 1),
     0,
-    isRoomMockupDepth ? 0.16 : 0.18
+    isRoomMockupDepth ? 0.2 : 0.18
   );
   const apertureEdgeColor = `rgba(0,0,0,${apertureEdgeAlpha})`;
   const frameFinishPalette: FrameFacePalette = {
@@ -1492,7 +1502,10 @@ export default function MatPreviewCanvas({
   const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
-  const previewCardColor = normalizeHex(canvasBackgroundColorHex, "#111111");
+  const previewCardColor = normalizeHex(
+    canvasBackgroundColorHex,
+    DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
+  );
   const previewCardBorderColor = colors.borderStrong;
   const previewCardPaddingHorizontal = isWorkspaceLayout ? spacing.xl : spacing.lg;
   const previewCardPaddingTop = isWorkspaceLayout ? spacing.lg : spacing.md;
