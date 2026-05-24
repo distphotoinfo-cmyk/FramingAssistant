@@ -17,6 +17,7 @@ import type {
 } from "../types/framing";
 import { DEFAULT_PRESET_ROOM_SCENE_ID } from "../data/presetRoomScenes";
 import { FRAME_FINISHES, normalizeFrameSelection } from "../utils/frameProfiles";
+import { normalizeDraftArtworkImageReference } from "../utils/persistentArtworkImages";
 import { MY_WALL_SCENE_SOURCE_ID } from "../utils/roomView";
 
 const DEFAULT_SETUP_DIMENSIONS = {
@@ -69,6 +70,7 @@ export function createInitialPreviewDraft(): PreviewDraft {
     offsetY: 0,
     artworkSourceMode: "placeholder",
     artworkImageUri: null,
+    artworkImageStoragePath: null,
     artworkCrop: null,
   };
 }
@@ -193,7 +195,7 @@ function mergeDraftWithDefaults(
         ]
       : base.roomView.placements);
 
-  return {
+  const mergedDraft: FramingProjectDraft = {
     ...base,
     ...draft,
     meta: {
@@ -336,6 +338,8 @@ function mergeDraftWithDefaults(
         draft?.roomView?.sourceMaterialRealism ?? base.roomView.sourceMaterialRealism,
     },
   };
+
+  return normalizeDraftArtworkImageReference(mergedDraft);
 }
 
 export const initialDraft: FramingProjectDraft = createInitialDraft();

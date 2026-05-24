@@ -308,6 +308,7 @@ export default function ArtworkCropScreen({ navigation, route }: Props) {
     setPreview({
       artworkSourceMode: "import",
       artworkImageUri: route.params.imageUri,
+      artworkImageStoragePath: null,
       artworkCrop: nextCrop,
     });
 

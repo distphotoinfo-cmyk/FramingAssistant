@@ -94,6 +94,7 @@ export interface PreviewDraft {
   offsetY: number;
   artworkSourceMode: ArtworkPreviewSourceMode;
   artworkImageUri: string | null;
+  artworkImageStoragePath?: string | null;
   artworkCrop: ArtworkCropState | null;
 }
 

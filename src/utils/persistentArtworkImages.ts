@@ -10,9 +10,31 @@ function getPersistentArtworkImageDirectory() {
     : null;
 }
 
+function getPersistentArtworkImageUri(storagePath: string | null | undefined) {
+  if (!storagePath || !FileSystem.documentDirectory) {
+    return null;
+  }
+
+  return `${FileSystem.documentDirectory}${storagePath}`;
+}
+
+function getStoragePathFromArtworkImageUri(uri: string | null | undefined) {
+  if (!uri) {
+    return null;
+  }
+
+  const marker = `${PERSISTENT_ARTWORK_IMAGE_DIRECTORY}/`;
+  const markerIndex = uri.indexOf(marker);
+
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  return uri.slice(markerIndex);
+}
+
 function isAppOwnedArtworkImageUri(uri: string) {
-  const directory = getPersistentArtworkImageDirectory();
-  return Boolean(directory && uri.startsWith(directory));
+  return Boolean(getStoragePathFromArtworkImageUri(uri));
 }
 
 function getImageExtension(uri: string) {
@@ -35,7 +57,7 @@ function getImageExtension(uri: string) {
   return DEFAULT_IMAGE_EXTENSION;
 }
 
-function createPersistentArtworkImageUri(sourceUri: string) {
+function createPersistentArtworkImageTarget(sourceUri: string) {
   const directory = getPersistentArtworkImageDirectory();
 
   if (!directory) {
@@ -44,31 +66,92 @@ function createPersistentArtworkImageUri(sourceUri: string) {
 
   const extension = getImageExtension(sourceUri);
   const filename = `artwork-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
-  return `${directory}${filename}`;
+  const storagePath = `${PERSISTENT_ARTWORK_IMAGE_DIRECTORY}/${filename}`;
+
+  return {
+    uri: `${directory}${filename}`,
+    storagePath,
+  };
 }
 
-export async function persistArtworkImageUriForSave(imageUri: string | null) {
-  if (!imageUri || isAppOwnedArtworkImageUri(imageUri)) {
-    return imageUri;
+export function resolveArtworkImageUriForDisplay(
+  imageUri: string | null | undefined,
+  storagePath?: string | null
+) {
+  return getPersistentArtworkImageUri(storagePath) ??
+    getPersistentArtworkImageUri(getStoragePathFromArtworkImageUri(imageUri)) ??
+    imageUri ??
+    null;
+}
+
+export function normalizeDraftArtworkImageReference(
+  draft: FramingProjectDraft
+): FramingProjectDraft {
+  const storagePath =
+    draft.preview.artworkImageStoragePath ??
+    getStoragePathFromArtworkImageUri(draft.preview.artworkImageUri);
+  const resolvedArtworkImageUri = resolveArtworkImageUriForDisplay(
+    draft.preview.artworkImageUri,
+    storagePath
+  );
+
+  if (
+    storagePath === draft.preview.artworkImageStoragePath &&
+    resolvedArtworkImageUri === draft.preview.artworkImageUri
+  ) {
+    return draft;
   }
 
-  const targetUri = createPersistentArtworkImageUri(imageUri);
+  return {
+    ...draft,
+    preview: {
+      ...draft.preview,
+      artworkImageUri: resolvedArtworkImageUri,
+      artworkImageStoragePath: storagePath,
+    },
+  };
+}
+
+export async function persistArtworkImageUriForSave(
+  imageUri: string | null,
+  storagePath?: string | null
+) {
+  if (!imageUri) {
+    return { imageUri, storagePath: storagePath ?? null };
+  }
+
+  const existingStoragePath = storagePath ?? getStoragePathFromArtworkImageUri(imageUri);
+  const existingPersistentUri = getPersistentArtworkImageUri(existingStoragePath);
+
+  if (existingStoragePath && existingPersistentUri) {
+    const existingImageInfo = await FileSystem.getInfoAsync(existingPersistentUri);
+
+    if (existingImageInfo.exists) {
+      return { imageUri: existingPersistentUri, storagePath: existingStoragePath };
+    }
+  }
+
+  if (isAppOwnedArtworkImageUri(imageUri) && existingStoragePath) {
+    return { imageUri: existingPersistentUri ?? imageUri, storagePath: existingStoragePath };
+  }
+
+  const target = createPersistentArtworkImageTarget(imageUri);
   const directory = getPersistentArtworkImageDirectory();
 
-  if (!targetUri || !directory) {
-    return imageUri;
+  if (!target || !directory) {
+    return { imageUri, storagePath: existingStoragePath ?? null };
   }
 
   await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-  await FileSystem.copyAsync({ from: imageUri, to: targetUri });
+  await FileSystem.copyAsync({ from: imageUri, to: target.uri });
 
-  const copiedImageInfo = await FileSystem.getInfoAsync(targetUri);
+  const copiedImageInfo = await FileSystem.getInfoAsync(target.uri);
 
   if (!copiedImageInfo.exists) {
     throw new Error("Saved artwork image copy was not created.");
   }
 
-  return targetUri;
+  return { imageUri: target.uri, storagePath: target.storagePath };
 }
 
 export async function prepareDraftForSavedArtwork(
@@ -78,11 +161,15 @@ export async function prepareDraftForSavedArtwork(
     return draft;
   }
 
-  const persistentArtworkImageUri = await persistArtworkImageUriForSave(
-    draft.preview.artworkImageUri
+  const persistentArtworkImage = await persistArtworkImageUriForSave(
+    draft.preview.artworkImageUri,
+    draft.preview.artworkImageStoragePath
   );
 
-  if (persistentArtworkImageUri === draft.preview.artworkImageUri) {
+  if (
+    persistentArtworkImage.imageUri === draft.preview.artworkImageUri &&
+    persistentArtworkImage.storagePath === draft.preview.artworkImageStoragePath
+  ) {
     return draft;
   }
 
@@ -90,7 +177,8 @@ export async function prepareDraftForSavedArtwork(
     ...draft,
     preview: {
       ...draft.preview,
-      artworkImageUri: persistentArtworkImageUri,
+      artworkImageUri: persistentArtworkImage.imageUri,
+      artworkImageStoragePath: persistentArtworkImage.storagePath,
     },
   };
 }

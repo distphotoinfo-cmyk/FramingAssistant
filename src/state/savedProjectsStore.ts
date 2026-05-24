@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { FramingProjectDraft, MeasurementUnit } from "../types/framing";
+import { normalizeDraftArtworkImageReference } from "../utils/persistentArtworkImages";
 
 const DEFAULT_PROJECT_FOLDER_NAME = "General";
 
@@ -18,6 +19,7 @@ export interface ProjectFolder {
 
 export interface SavedFramedArtworkRenderData {
   artworkImageUri: string | null;
+  artworkImageStoragePath?: string | null;
   artworkDimensions: FramingProjectDraft["artwork"]["artworkSize"];
   outerMatDimensions: FramingProjectDraft["outerMat"]["outerMatSize"];
   matWindowSettings: FramingProjectDraft["reveal"];
@@ -101,9 +103,37 @@ interface SavedProjectsState {
     id: string,
     artwork: SavedFramedArtworkInput
   ) => SavedFramedArtwork | null;
+  reorderFramedArtworksInFolder: (projectFolderId: string, orderedIds: string[]) => void;
+  reorderRoomLayoutsInFolder: (projectFolderId: string, orderedIds: string[]) => void;
   deleteProject: (id: string) => void;
   deleteFramedArtwork: (id: string) => void;
   deleteRoomLayout: (id: string) => void;
+}
+
+function reorderItemsInFolder<T extends { id: string; projectFolderId: string }>(
+  items: T[],
+  projectFolderId: string,
+  orderedIds: string[]
+) {
+  const rankById = new Map(orderedIds.map((id, index) => [id, index]));
+  const folderItems = items
+    .filter((item) => item.projectFolderId === projectFolderId)
+    .sort(
+      (first, second) =>
+        (rankById.get(first.id) ?? Number.MAX_SAFE_INTEGER) -
+        (rankById.get(second.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+  let folderIndex = 0;
+
+  return items.map((item) => {
+    if (item.projectFolderId !== projectFolderId) {
+      return item;
+    }
+
+    const reorderedItem = folderItems[folderIndex];
+    folderIndex += 1;
+    return reorderedItem ?? item;
+  });
 }
 
 function buildRenderData(
@@ -112,6 +142,7 @@ function buildRenderData(
 ): SavedFramedArtworkRenderData {
   return {
     artworkImageUri: draft.preview.artworkImageUri,
+    artworkImageStoragePath: draft.preview.artworkImageStoragePath,
     artworkDimensions: draft.artwork.artworkSize,
     outerMatDimensions: draft.outerMat.outerMatSize,
     matWindowSettings: draft.reveal,
@@ -150,15 +181,17 @@ function normalizePersistedState(
     const createdAt = artwork.createdAt ?? artwork.savedAt ?? now;
     const updatedAt = artwork.updatedAt ?? artwork.savedAt ?? createdAt;
     const finalOuterSizeInches = artwork.finalOuterSizeInches;
+    const draft = normalizeDraftArtworkImageReference(artwork.draft);
 
     return {
       ...artwork,
+      draft,
       projectFolderId: artwork.projectFolderId ?? fallbackFolderId,
       createdAt,
       updatedAt,
       savedAt: artwork.savedAt ?? createdAt,
       notes: artwork.notes ?? "",
-      renderData: artwork.renderData ?? buildRenderData(artwork.draft, finalOuterSizeInches),
+      renderData: buildRenderData(draft, finalOuterSizeInches),
     };
   });
   const roomLayouts = persistedRoomLayouts.map((layout) => {
@@ -341,6 +374,34 @@ export const useSavedProjectsStore = create<SavedProjectsState>()(
         });
 
         return updatedArtwork;
+      },
+      reorderFramedArtworksInFolder: (projectFolderId, orderedIds) => {
+        const timestamp = new Date().toISOString();
+
+        set((state) => ({
+          framedArtworks: reorderItemsInFolder(
+            state.framedArtworks,
+            projectFolderId,
+            orderedIds
+          ),
+          projectFolders: state.projectFolders.map((folder) =>
+            folder.id === projectFolderId ? { ...folder, updatedAt: timestamp } : folder
+          ),
+        }));
+      },
+      reorderRoomLayoutsInFolder: (projectFolderId, orderedIds) => {
+        const timestamp = new Date().toISOString();
+
+        set((state) => ({
+          roomLayouts: reorderItemsInFolder(
+            state.roomLayouts,
+            projectFolderId,
+            orderedIds
+          ),
+          projectFolders: state.projectFolders.map((folder) =>
+            folder.id === projectFolderId ? { ...folder, updatedAt: timestamp } : folder
+          ),
+        }));
       },
       deleteProject: (id) =>
         set((state) => ({

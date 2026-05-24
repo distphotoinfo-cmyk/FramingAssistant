@@ -687,9 +687,14 @@ export default function FinalSpecsScreen() {
           mode === "normal" && !isEditingSavedArtwork ? null : savedArtwork.id,
       });
 
-      if (persistentDraftForSave.preview.artworkImageUri !== draft.preview.artworkImageUri) {
+      if (
+        persistentDraftForSave.preview.artworkImageUri !== draft.preview.artworkImageUri ||
+        persistentDraftForSave.preview.artworkImageStoragePath !==
+          draft.preview.artworkImageStoragePath
+      ) {
         setPreview({
           artworkImageUri: persistentDraftForSave.preview.artworkImageUri,
+          artworkImageStoragePath: persistentDraftForSave.preview.artworkImageStoragePath,
         });
       }
 

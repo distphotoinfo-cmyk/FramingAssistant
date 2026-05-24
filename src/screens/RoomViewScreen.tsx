@@ -140,7 +140,9 @@ const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
 const WALL_SHADOW_MAX_SOFTNESS = 160;
 const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
-const ROOM_ALIGNMENT_GUIDE_THRESHOLD_PIXELS = 8;
+const ROOM_ALIGNMENT_GUIDE_PHONE_THRESHOLD_PIXELS = 5;
+const ROOM_ALIGNMENT_GUIDE_TABLET_THRESHOLD_PIXELS = 6;
+const ROOM_ALIGNMENT_GUIDE_HAPTIC_THROTTLE_MS = 160;
 
 type ArtworkSortMode = "recent" | "name" | "size";
 type RoomViewDockSheet = "artwork" | "interiors" | "layouts" | "settings" | "export";
@@ -428,9 +430,11 @@ interface RoomArtworkPixelBounds {
 interface RoomAlignmentGuideLine {
   id: string;
   axis: "vertical" | "horizontal";
+  kind: "alignment" | "spacing";
   position: number;
   start: number;
   end: number;
+  label: string;
 }
 
 interface RoomAlignmentGuideState {
@@ -1550,6 +1554,37 @@ function getUnionArtworkPixelBounds(bounds: RoomArtworkPixelBounds[]) {
   };
 }
 
+type RoomAlignmentAnchorRole = "left" | "right" | "top" | "bottom" | "center" | "room-center";
+type RoomAlignmentAnchor = {
+  id: string;
+  position: number;
+  role: RoomAlignmentAnchorRole;
+};
+
+function getAlignmentGuideLabel({
+  axis,
+  anchorRole,
+  targetRole,
+}: {
+  axis: RoomAlignmentGuideLine["axis"];
+  anchorRole: RoomAlignmentAnchorRole;
+  targetRole: RoomAlignmentAnchorRole;
+}) {
+  if (targetRole === "room-center") {
+    return axis === "vertical" ? "Room vertical center" : "Room horizontal center";
+  }
+
+  if (anchorRole === "center" || targetRole === "center") {
+    return "Center to center";
+  }
+
+  if (axis === "vertical") {
+    return anchorRole === "left" ? "Left edge" : "Right edge";
+  }
+
+  return anchorRole === "top" ? "Top edge" : "Bottom edge";
+}
+
 function findClosestAlignmentLine({
   axis,
   draggedAnchors,
@@ -1559,16 +1594,16 @@ function findClosestAlignmentLine({
   thresholdPixels,
 }: {
   axis: RoomAlignmentGuideLine["axis"];
-  draggedAnchors: { id: string; position: number }[];
-  targets: { id: string; position: number }[];
+  draggedAnchors: RoomAlignmentAnchor[];
+  targets: RoomAlignmentAnchor[];
   lineStart: number;
   lineEnd: number;
   thresholdPixels: number;
 }): RoomAlignmentGuideLine | null {
   let best:
     | {
-        target: { id: string; position: number };
-        anchor: { id: string; position: number };
+        target: RoomAlignmentAnchor;
+        anchor: RoomAlignmentAnchor;
         distance: number;
       }
     | null = null;
@@ -1594,10 +1629,143 @@ function findClosestAlignmentLine({
   return {
     id: `${axis}-${best.target.id}-${best.anchor.id}`,
     axis,
+    kind: "alignment",
     position: best.target.position,
     start: lineStart,
     end: lineEnd,
+    label: getAlignmentGuideLabel({
+      axis,
+      anchorRole: best.anchor.role,
+      targetRole: best.target.role,
+    }),
   };
+}
+
+function createSpacingGuideLines({
+  firstBounds,
+  secondBounds,
+  thirdBounds,
+  y,
+}: {
+  firstBounds: RoomArtworkPixelBounds;
+  secondBounds: RoomArtworkPixelBounds;
+  thirdBounds: RoomArtworkPixelBounds;
+  y: number;
+}): RoomAlignmentGuideLine[] {
+  return [
+    {
+      id: `spacing-${firstBounds.id}-${secondBounds.id}`,
+      axis: "horizontal",
+      kind: "spacing",
+      position: y,
+      start: firstBounds.right,
+      end: secondBounds.left,
+      label: "Even spacing",
+    },
+    {
+      id: `spacing-${secondBounds.id}-${thirdBounds.id}`,
+      axis: "horizontal",
+      kind: "spacing",
+      position: y,
+      start: secondBounds.right,
+      end: thirdBounds.left,
+      label: "",
+    },
+  ];
+}
+
+function calculateHorizontalSpacingGuides({
+  draggedBounds,
+  otherBounds,
+  placementPixelBounds,
+  thresholdPixels,
+}: {
+  draggedBounds: RoomArtworkPixelBounds;
+  otherBounds: RoomArtworkPixelBounds[];
+  placementPixelBounds: ReturnType<typeof getPlacementPixelBounds>;
+  thresholdPixels: number;
+}): RoomAlignmentGuideLine[] {
+  if (otherBounds.length < 2) {
+    return [];
+  }
+
+  const allBounds = [...otherBounds, draggedBounds].sort(
+    (first, second) => first.centerX - second.centerX
+  );
+  const draggedIndex = allBounds.findIndex((bounds) => bounds.id === draggedBounds.id);
+
+  if (draggedIndex < 0) {
+    return [];
+  }
+
+  const y = clampNumber(
+    draggedBounds.centerY,
+    placementPixelBounds.top + 12,
+    placementPixelBounds.bottom - 12
+  );
+  const candidates: {
+    difference: number;
+    lines: RoomAlignmentGuideLine[];
+  }[] = [];
+  const addCandidate = (
+    firstBounds: RoomArtworkPixelBounds,
+    secondBounds: RoomArtworkPixelBounds,
+    thirdBounds: RoomArtworkPixelBounds
+  ) => {
+    const firstGap = secondBounds.left - firstBounds.right;
+    const secondGap = thirdBounds.left - secondBounds.right;
+
+    if (firstGap < 0 || secondGap < 0) {
+      return;
+    }
+
+    const difference = Math.abs(firstGap - secondGap);
+
+    if (difference > thresholdPixels) {
+      return;
+    }
+
+    candidates.push({
+      difference,
+      lines: createSpacingGuideLines({
+        firstBounds,
+        secondBounds,
+        thirdBounds,
+        y,
+      }),
+    });
+  };
+
+  if (draggedIndex > 0 && draggedIndex < allBounds.length - 1) {
+    addCandidate(
+      allBounds[draggedIndex - 1],
+      draggedBounds,
+      allBounds[draggedIndex + 1]
+    );
+  }
+
+  if (draggedIndex >= 2) {
+    addCandidate(
+      allBounds[draggedIndex - 2],
+      allBounds[draggedIndex - 1],
+      draggedBounds
+    );
+  }
+
+  if (draggedIndex <= allBounds.length - 3) {
+    addCandidate(
+      draggedBounds,
+      allBounds[draggedIndex + 1],
+      allBounds[draggedIndex + 2]
+    );
+  }
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  candidates.sort((first, second) => first.difference - second.difference);
+  return candidates[0].lines;
 }
 
 function calculateRoomAlignmentGuides({
@@ -1618,28 +1786,28 @@ function calculateRoomAlignmentGuides({
   }
 
   const placementPixelBounds = getPlacementPixelBounds(imageRect, placementBounds);
-  const verticalTargets = [
-    { id: "room-center", position: placementPixelBounds.centerX },
-    ...otherBounds.flatMap((bounds) => [
-      { id: `${bounds.id}-left`, position: bounds.left },
-      { id: `${bounds.id}-center`, position: bounds.centerX },
-      { id: `${bounds.id}-right`, position: bounds.right },
+  const verticalTargets: RoomAlignmentAnchor[] = [
+    { id: "room-center", position: placementPixelBounds.centerX, role: "room-center" },
+    ...otherBounds.flatMap<RoomAlignmentAnchor>((bounds) => [
+      { id: `${bounds.id}-left`, position: bounds.left, role: "left" },
+      { id: `${bounds.id}-center`, position: bounds.centerX, role: "center" },
+      { id: `${bounds.id}-right`, position: bounds.right, role: "right" },
     ]),
   ];
-  const horizontalTargets = [
-    { id: "room-center", position: placementPixelBounds.centerY },
-    ...otherBounds.flatMap((bounds) => [
-      { id: `${bounds.id}-top`, position: bounds.top },
-      { id: `${bounds.id}-center`, position: bounds.centerY },
-      { id: `${bounds.id}-bottom`, position: bounds.bottom },
+  const horizontalTargets: RoomAlignmentAnchor[] = [
+    { id: "room-center", position: placementPixelBounds.centerY, role: "room-center" },
+    ...otherBounds.flatMap<RoomAlignmentAnchor>((bounds) => [
+      { id: `${bounds.id}-top`, position: bounds.top, role: "top" },
+      { id: `${bounds.id}-center`, position: bounds.centerY, role: "center" },
+      { id: `${bounds.id}-bottom`, position: bounds.bottom, role: "bottom" },
     ]),
   ];
   const verticalGuide = findClosestAlignmentLine({
     axis: "vertical",
     draggedAnchors: [
-      { id: "left", position: draggedBounds.left },
-      { id: "center", position: draggedBounds.centerX },
-      { id: "right", position: draggedBounds.right },
+      { id: "left", position: draggedBounds.left, role: "left" },
+      { id: "center", position: draggedBounds.centerX, role: "center" },
+      { id: "right", position: draggedBounds.right, role: "right" },
     ],
     targets: verticalTargets,
     lineStart: placementPixelBounds.top,
@@ -1649,18 +1817,26 @@ function calculateRoomAlignmentGuides({
   const horizontalGuide = findClosestAlignmentLine({
     axis: "horizontal",
     draggedAnchors: [
-      { id: "top", position: draggedBounds.top },
-      { id: "center", position: draggedBounds.centerY },
-      { id: "bottom", position: draggedBounds.bottom },
+      { id: "top", position: draggedBounds.top, role: "top" },
+      { id: "center", position: draggedBounds.centerY, role: "center" },
+      { id: "bottom", position: draggedBounds.bottom, role: "bottom" },
     ],
     targets: horizontalTargets,
     lineStart: placementPixelBounds.left,
     lineEnd: placementPixelBounds.right,
     thresholdPixels,
   });
-  const lines = [verticalGuide, horizontalGuide].filter(
-    (line): line is RoomAlignmentGuideLine => line !== null
-  );
+  const spacingGuides = calculateHorizontalSpacingGuides({
+    draggedBounds,
+    otherBounds,
+    placementPixelBounds,
+    thresholdPixels,
+  });
+  const lines = [
+    verticalGuide,
+    horizontalGuide,
+    ...spacingGuides,
+  ].filter((line): line is RoomAlignmentGuideLine => line !== null);
 
   if (lines.length === 0) {
     return EMPTY_ROOM_ALIGNMENT_GUIDES;
@@ -1669,7 +1845,7 @@ function calculateRoomAlignmentGuides({
   return {
     lines,
     signature: lines
-      .map((line) => `${line.id}:${Math.round(line.position)}`)
+      .map((line) => `${line.id}:${line.kind}:${Math.round(line.position)}:${line.label}`)
       .sort()
       .join("|"),
   };
@@ -2238,6 +2414,7 @@ function RoomAlignmentGuideOverlay({ guides }: { guides: RoomAlignmentGuideState
   }
 
   const lineColor = "rgba(20,82,255,0.72)";
+  const spacingLineColor = "rgba(20,82,255,0.52)";
 
   return (
     <View
@@ -2248,21 +2425,59 @@ function RoomAlignmentGuideOverlay({ guides }: { guides: RoomAlignmentGuideState
         top: 0,
         right: 0,
         bottom: 0,
-        zIndex: 9,
+        zIndex: 260,
+        elevation: 260,
       }}
     >
       {guides.lines.map((line) => (
-        <View
-          key={line.id}
-          style={{
-            position: "absolute",
-            left: line.axis === "vertical" ? line.position : line.start,
-            top: line.axis === "vertical" ? line.start : line.position,
-            width: line.axis === "vertical" ? 1 : Math.max(1, line.end - line.start),
-            height: line.axis === "vertical" ? Math.max(1, line.end - line.start) : 1,
-            backgroundColor: lineColor,
-          }}
-        />
+        <React.Fragment key={line.id}>
+          <View
+            style={{
+              position: "absolute",
+              left: line.axis === "vertical" ? line.position : line.start,
+              top: line.axis === "vertical" ? line.start : line.position,
+              width: line.axis === "vertical" ? 1 : Math.max(1, line.end - line.start),
+              height: line.axis === "vertical" ? Math.max(1, line.end - line.start) : 1,
+              backgroundColor: line.kind === "spacing" ? spacingLineColor : lineColor,
+            }}
+          />
+          {line.label ? (
+            <View
+              style={{
+                position: "absolute",
+                left:
+                  line.axis === "vertical"
+                    ? line.position + 5
+                    : line.start + Math.max(0, line.end - line.start) / 2 - 46,
+              top:
+                line.axis === "vertical"
+                  ? line.start + 8
+                  : line.position - (line.kind === "spacing" ? 34 : 28),
+                maxWidth: 112,
+                borderRadius: 10,
+                backgroundColor: "rgba(12,14,18,0.78)",
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.16)",
+                paddingHorizontal: 7,
+                paddingVertical: 3,
+                zIndex: 261,
+                elevation: 261,
+              }}
+            >
+              <Text
+                style={{
+                  color: "rgba(255,255,255,0.86)",
+                  fontSize: 10,
+                  lineHeight: 12,
+                  fontWeight: "700",
+                }}
+                numberOfLines={1}
+              >
+                {line.label}
+              </Text>
+            </View>
+          ) : null}
+        </React.Fragment>
       ))}
     </View>
   );
@@ -3758,6 +3973,8 @@ export default function RoomViewScreen() {
   const [stageActiveDragPlacementIds, setStageActiveDragPlacementIds] =
     useState<string[] | null>(null);
   const alignmentGuideSignatureRef = useRef(EMPTY_ROOM_ALIGNMENT_GUIDES.signature);
+  const alignmentGuideHapticSignatureRef = useRef(EMPTY_ROOM_ALIGNMENT_GUIDES.signature);
+  const lastAlignmentGuideHapticAtRef = useRef(0);
   const [alignmentGuides, setAlignmentGuides] = useState<RoomAlignmentGuideState>(
     EMPTY_ROOM_ALIGNMENT_GUIDES
   );
@@ -3862,6 +4079,9 @@ export default function RoomViewScreen() {
     Math.min(windowWidth, windowHeight) >= TABLET_WIDTH_BREAKPOINT && windowWidth > windowHeight;
   const isPhoneWorkspace = Math.min(windowWidth, windowHeight) < TABLET_WIDTH_BREAKPOINT;
   const isTabletWorkspace = !isPhoneWorkspace;
+  const alignmentGuideThresholdPixels = isPhoneWorkspace
+    ? ROOM_ALIGNMENT_GUIDE_PHONE_THRESHOLD_PIXELS
+    : ROOM_ALIGNMENT_GUIDE_TABLET_THRESHOLD_PIXELS;
   const isCompactMyWallSheet =
     isPhoneWorkspace && activeSheet === "interiors" && roomView.sourceMode === "myWall";
   const presetRoomTileWidth: ViewStyle["width"] = isPhoneWorkspace
@@ -4055,10 +4275,12 @@ export default function RoomViewScreen() {
   );
   const clearAlignmentGuides = useCallback(() => {
     if (alignmentGuideSignatureRef.current === EMPTY_ROOM_ALIGNMENT_GUIDES.signature) {
+      alignmentGuideHapticSignatureRef.current = EMPTY_ROOM_ALIGNMENT_GUIDES.signature;
       return;
     }
 
     alignmentGuideSignatureRef.current = EMPTY_ROOM_ALIGNMENT_GUIDES.signature;
+    alignmentGuideHapticSignatureRef.current = EMPTY_ROOM_ALIGNMENT_GUIDES.signature;
     setAlignmentGuides(EMPTY_ROOM_ALIGNMENT_GUIDES);
   }, []);
   const handlePlacementDragGuideChange = useCallback(
@@ -4103,7 +4325,7 @@ export default function RoomViewScreen() {
         otherBounds,
         imageRect: displayedImageRect,
         placementBounds,
-        thresholdPixels: ROOM_ALIGNMENT_GUIDE_THRESHOLD_PIXELS,
+        thresholdPixels: alignmentGuideThresholdPixels,
       });
 
       if (nextGuides.signature === alignmentGuideSignatureRef.current) {
@@ -4112,8 +4334,30 @@ export default function RoomViewScreen() {
 
       alignmentGuideSignatureRef.current = nextGuides.signature;
       setAlignmentGuides(nextGuides);
+
+      if (nextGuides.signature === EMPTY_ROOM_ALIGNMENT_GUIDES.signature) {
+        alignmentGuideHapticSignatureRef.current = EMPTY_ROOM_ALIGNMENT_GUIDES.signature;
+        return;
+      }
+
+      const now = Date.now();
+
+      if (nextGuides.signature !== alignmentGuideHapticSignatureRef.current) {
+        alignmentGuideHapticSignatureRef.current = nextGuides.signature;
+
+        if (now - lastAlignmentGuideHapticAtRef.current > ROOM_ALIGNMENT_GUIDE_HAPTIC_THROTTLE_MS) {
+          lastAlignmentGuideHapticAtRef.current = now;
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      }
     },
-    [clearAlignmentGuides, displayedImageRect, placedArtworks, placementBounds]
+    [
+      alignmentGuideThresholdPixels,
+      clearAlignmentGuides,
+      displayedImageRect,
+      placedArtworks,
+      placementBounds,
+    ]
   );
   const handleArtworkDragStart = useCallback(() => {
     clearAlignmentGuides();
