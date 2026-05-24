@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "ai:server": "npm --prefix server start",
     "ai:test": "npm --prefix server run test --",
+    "realism:profiles": "node scripts/realismProfiles.js",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },
