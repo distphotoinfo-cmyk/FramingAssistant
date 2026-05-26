@@ -11,14 +11,14 @@ export const DEFAULT_WALL_SHADOW: ResolvedWallShadow = {
   opacity: 0.1,
   offsetX: 8,
   offsetY: 11,
-  blurRadius: 20,
+  blurRadius: 10,
 };
 
 const WALL_SHADOW_LIMITS = {
   opacity: { min: 0, max: 1 },
   offsetX: { min: -80, max: 80 },
   offsetY: { min: -80, max: 80 },
-  blurRadius: { min: 0, max: 160 },
+  blurRadius: { min: 0, max: 15 },
 };
 
 function clamp(value: number, min: number, max: number) {

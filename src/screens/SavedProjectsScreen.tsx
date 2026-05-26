@@ -130,6 +130,7 @@ function getArtworkThumbnailGeometry(
     artworkSize: derived.artworkSize,
     openingSize: derived.openingSize,
     outerMatSize: derived.outerMatSize,
+    artworkReveal: derived.visibleReveal,
     offsetX: preview.offsetX,
     offsetY: preview.offsetY,
     physicalScale,
@@ -315,6 +316,7 @@ function SavedArtworkThumbnail({
           artworkSize={thumbnailGeometry.artworkSize}
           openingSize={thumbnailGeometry.openingSize}
           outerMatSize={thumbnailGeometry.outerMatSize}
+          artworkReveal={thumbnailGeometry.artworkReveal}
           frameProfileId={preview.frameProfileId}
           frameColorHex={thumbnailGeometry.frameColorHex}
           matThicknessPly={preview.matThicknessPly}
@@ -458,6 +460,7 @@ function RoomLayoutThumbnailArtwork({
           artworkSize={thumbnailGeometry.artworkSize}
           openingSize={thumbnailGeometry.openingSize}
           outerMatSize={thumbnailGeometry.outerMatSize}
+          artworkReveal={thumbnailGeometry.artworkReveal}
           frameProfileId={preview.frameProfileId}
           frameColorHex={thumbnailGeometry.frameColorHex}
           matThicknessPly={preview.matThicknessPly}

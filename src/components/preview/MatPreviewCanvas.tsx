@@ -1,9 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, PixelRatio, Text, View, type ViewStyle } from "react-native";
+import { Image, PixelRatio, Text, View, type ImageSourcePropType, type ViewStyle } from "react-native";
+import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import Svg, { Defs, LinearGradient, Polygon, Rect as SvgRect, Stop } from "react-native-svg";
+import Svg, {
+  ClipPath,
+  Defs,
+  G,
+  Image as SvgImage,
+  LinearGradient,
+  Polygon,
+  Rect as SvgRect,
+  Stop,
+} from "react-native-svg";
 import type {
   ArtworkCropState,
   ArtworkPreviewSourceMode,
@@ -19,7 +29,7 @@ import {
 } from "../../state/appSettingsStore";
 import { getArtworkAspectRatio, resolveArtworkCropMetrics } from "../../utils/artworkCrop";
 import { getFrameProfile } from "../../utils/frameProfiles";
-import { getOffsetBounds, type NumericSize } from "../../utils/framingGeometry";
+import { getOffsetBounds, type MatMargins, type NumericSize } from "../../utils/framingGeometry";
 import { hexToHsl, mixHexColors, normalizeHex } from "../../utils/color";
 import { useAppTheme } from "../../theme/AppThemeProvider";
 import { resolveRoomEnvironment } from "../../utils/roomEnvironment";
@@ -29,6 +39,7 @@ interface MatPreviewCanvasProps {
   artworkSize: NumericSize | null;
   openingSize: NumericSize | null;
   outerMatSize: NumericSize | null;
+  artworkReveal?: MatMargins | null;
   frameProfileId: FrameProfileId;
   frameColorHex: string;
   matThicknessPly: MatThicknessPly;
@@ -44,6 +55,10 @@ interface MatPreviewCanvasProps {
   onAdjustOffsets: (offsetX: number, offsetY: number) => void;
   onLiveOffsetsChange?: (offsetX: number, offsetY: number) => void;
   onDragStateChange?: (isDragging: boolean) => void;
+  matOpeningGuidesEnabled?: boolean;
+  matOpeningGuideTargets?: MatOpeningGuideTarget[];
+  matOpeningGuideThresholdPx?: number;
+  matOpeningGuideMeasurementThreshold?: number;
   canvasHeight?: number;
   layoutVariant?: "default" | "workspace";
 }
@@ -52,6 +67,7 @@ export interface FinishedFramedArtworkProps {
   artworkSize: NumericSize | null;
   openingSize: NumericSize | null;
   outerMatSize: NumericSize | null;
+  artworkReveal?: MatMargins | null;
   frameProfileId: FrameProfileId;
   frameColorHex: string;
   matThicknessPly: MatThicknessPly;
@@ -69,6 +85,7 @@ export interface FinishedFramedArtworkProps {
   shadowDirection?: { x: number; y: number };
   materialRealism?: RoomMaterialRealismDraft;
   environment?: RoomEnvironmentLighting;
+  enableImageProfileFrames?: boolean;
   style?: ViewStyle;
 }
 
@@ -96,13 +113,244 @@ interface MatBevelPalette {
   bottom: MatBevelSidePalette;
 }
 
+interface MatOpeningGuideTarget {
+  id: string;
+  label: string;
+  bottomWeightDelta: number;
+}
+
+interface MatOpeningGuideSnapshot {
+  verticalCenter: boolean;
+  horizontalCenter: boolean;
+  weightedTargetId: string | null;
+  weightedTargetLabel: string | null;
+  primaryGuideId: string | null;
+}
+
+const EMPTY_MAT_OPENING_GUIDE_SNAPSHOT: MatOpeningGuideSnapshot = {
+  verticalCenter: false,
+  horizontalCenter: false,
+  weightedTargetId: null,
+  weightedTargetLabel: null,
+  primaryGuideId: null,
+};
+const EMPTY_MAT_OPENING_GUIDE_TARGETS: MatOpeningGuideTarget[] = [];
+const DEFAULT_MAT_OPENING_GUIDE_THRESHOLD_PX = 2;
+const DEFAULT_MAT_OPENING_GUIDE_MEASUREMENT_THRESHOLD = 1 / 64;
+const MAT_OPENING_GUIDE_EXIT_THRESHOLD_EXTRA_PX = 3;
+const MAT_OPENING_GUIDE_EXIT_MEASUREMENT_MULTIPLIER = 1.5;
+
 function roundToPixel(value: number) {
   return Number(PixelRatio.roundToNearestPixel(value).toFixed(2));
 }
 
+function resolveArtworkRevealInset(
+  openingLength: number,
+  artworkLength: number,
+  leadingReveal: number | null | undefined,
+  trailingReveal: number | null | undefined,
+  scale: number
+) {
+  const centeredInset = roundToPixel((openingLength - artworkLength) / 2);
+  const effectiveLeadingReveal = leadingReveal ?? trailingReveal;
+  const effectiveTrailingReveal = trailingReveal ?? leadingReveal;
+
+  if (
+    effectiveLeadingReveal === null ||
+    effectiveLeadingReveal === undefined ||
+    effectiveTrailingReveal === null ||
+    effectiveTrailingReveal === undefined ||
+    openingLength < artworkLength
+  ) {
+    return centeredInset;
+  }
+
+  const availableReveal = Math.max(openingLength - artworkLength, 0);
+  const leadingPixels = Math.max(effectiveLeadingReveal * scale, 0);
+  const trailingPixels = Math.max(effectiveTrailingReveal * scale, 0);
+  const revealTotal = leadingPixels + trailingPixels;
+
+  if (revealTotal <= 0) {
+    return centeredInset;
+  }
+
+  // Opening and artwork dimensions are rounded independently for display.
+  // Place the artwork from both physical reveal values so uniform borders stay
+  // visually centered and custom per-side borders keep their intended ratio.
+  return roundToPixel(clamp((availableReveal * leadingPixels) / revealTotal, 0, availableReveal));
+}
+
+function getMatOpeningGuideSnapshot({
+  offsetX,
+  offsetY,
+  scale,
+  targets,
+  thresholdPx,
+  measurementThreshold,
+  preferredPrimaryGuideId,
+}: {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+  targets: MatOpeningGuideTarget[];
+  thresholdPx: number;
+  measurementThreshold: number;
+  preferredPrimaryGuideId?: string | null;
+}): MatOpeningGuideSnapshot {
+  const verticalRevealDifference = Math.abs(offsetX * 2);
+  const horizontalRevealDifference = Math.abs(offsetY * 2);
+  const verticalCenter =
+    Math.abs(offsetX * scale) <= thresholdPx &&
+    verticalRevealDifference <= measurementThreshold;
+  const horizontalCenter =
+    Math.abs(offsetY * scale) <= thresholdPx &&
+    horizontalRevealDifference <= measurementThreshold;
+  let weightedTargetId: string | null = null;
+  let weightedTargetLabel: string | null = null;
+  let closestWeightedDistance = Number.POSITIVE_INFINITY;
+
+  targets.forEach((target) => {
+    const targetOffsetY = -target.bottomWeightDelta / 2;
+    const distance = Math.abs((offsetY - targetOffsetY) * scale);
+    const revealRelationshipError = Math.abs(-2 * offsetY - target.bottomWeightDelta);
+
+    if (
+      distance <= thresholdPx &&
+      revealRelationshipError <= measurementThreshold &&
+      distance < closestWeightedDistance
+    ) {
+      closestWeightedDistance = distance;
+      weightedTargetId = target.id;
+      weightedTargetLabel = target.label;
+    }
+  });
+
+  const weightedGuideId = weightedTargetId ? `weighted-${weightedTargetId}` : null;
+  let primaryGuideId: string | null = null;
+
+  if (preferredPrimaryGuideId === "perfect-center" && verticalCenter && horizontalCenter) {
+    primaryGuideId = "perfect-center";
+  } else if (preferredPrimaryGuideId === weightedGuideId && weightedGuideId) {
+    primaryGuideId = weightedGuideId;
+  } else if (preferredPrimaryGuideId === "equal-reveal" && horizontalCenter) {
+    primaryGuideId = "equal-reveal";
+  } else if (preferredPrimaryGuideId === "vertical-center" && verticalCenter) {
+    primaryGuideId = "vertical-center";
+  } else {
+    primaryGuideId =
+      verticalCenter && horizontalCenter
+        ? "perfect-center"
+        : weightedGuideId
+          ? weightedGuideId
+          : horizontalCenter
+            ? "equal-reveal"
+            : verticalCenter
+              ? "vertical-center"
+              : null;
+  }
+
+  return {
+    verticalCenter,
+    horizontalCenter,
+    weightedTargetId,
+    weightedTargetLabel,
+    primaryGuideId,
+  };
+}
+
+function getMatOpeningGuideSnapshotKey(snapshot: MatOpeningGuideSnapshot) {
+  return [
+    snapshot.verticalCenter ? "v" : "-",
+    snapshot.horizontalCenter ? "h" : "-",
+    snapshot.weightedTargetId ?? "-",
+    snapshot.primaryGuideId ?? "-",
+  ].join(":");
+}
+
 type FrameOrientation = "top" | "right" | "bottom" | "left";
+type ImageProfileTextureKey =
+  | "larsPanelSilverBlack"
+  | "larsPanelSilverBlackSlim"
+  | "andoverSuede21116"
+  | "altoWhite11516"
+  | "altoBlack11516";
 
 const FRAME_ORIENTATIONS: FrameOrientation[] = ["top", "right", "bottom", "left"];
+// Image-profile assembly constants. These keep real-frame asset calibration
+// isolated from the existing procedural frame renderers.
+interface ImageProfileTextureConfig {
+  edgeVertical: ImageSourcePropType;
+  sourceWidthPx: number;
+  sourceHeightPx: number;
+  cropX: number;
+  cropY: number;
+  cropWidth: number;
+  cropHeight: number;
+  blackPanelDarkenOpacity: number;
+  innerLipWarmthOpacity: number;
+}
+
+const LARS_RAIL_MITER_OVERLAP_PX = 1.5;
+const LARS_BLACK_PANEL_DARKEN_OPACITY = 0.125;
+const LARS_INNER_LIP_WARMTH_OPACITY = 0.068;
+
+const IMAGE_PROFILE_TEXTURES: Record<ImageProfileTextureKey, ImageProfileTextureConfig> = {
+  larsPanelSilverBlack: {
+    edgeVertical: require("../../../assets/frame-profiles/lars-panel-silver-black/edge-vertical.png"),
+    sourceWidthPx: 444,
+    sourceHeightPx: 1000,
+    cropX: 37,
+    cropY: 28,
+    cropWidth: 370,
+    cropHeight: 777,
+    blackPanelDarkenOpacity: LARS_BLACK_PANEL_DARKEN_OPACITY,
+    innerLipWarmthOpacity: LARS_INNER_LIP_WARMTH_OPACITY,
+  },
+  larsPanelSilverBlackSlim: {
+    edgeVertical: require("../../../assets/frame-profiles/lars-panel-silver-black-slim/edge-vertical.png"),
+    sourceWidthPx: 416,
+    sourceHeightPx: 1000,
+    cropX: 115,
+    cropY: 28,
+    cropWidth: 186,
+    cropHeight: 777,
+    blackPanelDarkenOpacity: LARS_BLACK_PANEL_DARKEN_OPACITY,
+    innerLipWarmthOpacity: LARS_INNER_LIP_WARMTH_OPACITY,
+  },
+  andoverSuede21116: {
+    edgeVertical: require("../../../assets/frame-profiles/andover-suede-2-11-16/rail.png"),
+    sourceWidthPx: 223,
+    sourceHeightPx: 1000,
+    cropX: 0,
+    cropY: 0,
+    cropWidth: 223,
+    cropHeight: 880,
+    blackPanelDarkenOpacity: 0.035,
+    innerLipWarmthOpacity: 0,
+  },
+  altoWhite11516: {
+    edgeVertical: require("../../../assets/frame-profiles/alto-white-1-15-16/rail.png"),
+    sourceWidthPx: 161,
+    sourceHeightPx: 1000,
+    cropX: 0,
+    cropY: 0,
+    cropWidth: 161,
+    cropHeight: 930,
+    blackPanelDarkenOpacity: 0,
+    innerLipWarmthOpacity: 0,
+  },
+  altoBlack11516: {
+    edgeVertical: require("../../../assets/frame-profiles/alto-black-1-15-16/rail.png"),
+    sourceWidthPx: 161,
+    sourceHeightPx: 1000,
+    cropX: 0,
+    cropY: 0,
+    cropWidth: 161,
+    cropHeight: 930,
+    blackPanelDarkenOpacity: 0.05,
+    innerLipWarmthOpacity: 0,
+  },
+};
 const FRAME_EDGE_NORMALS: Record<FrameOrientation, { x: number; y: number }> = {
   top: { x: 0, y: -1 },
   right: { x: 1, y: 0 },
@@ -318,6 +566,80 @@ function getMiterBandPoints(
   }
 }
 
+function getLarsRailClipPoints(
+  orientation: FrameOrientation,
+  width: number,
+  height: number,
+  thickness: number,
+  overlap: number
+) {
+  switch (orientation) {
+    case "top":
+      return buildPolygonPoints([
+        [0, 0],
+        [width, 0],
+        [width - thickness + overlap, thickness],
+        [thickness - overlap, thickness],
+      ]);
+    case "right":
+      return buildPolygonPoints([
+        [width, 0],
+        [width, height],
+        [width - thickness, height - thickness + overlap],
+        [width - thickness, thickness - overlap],
+      ]);
+    case "bottom":
+      return buildPolygonPoints([
+        [0, height],
+        [width, height],
+        [width - thickness + overlap, height - thickness],
+        [thickness - overlap, height - thickness],
+      ]);
+    case "left":
+      return buildPolygonPoints([
+        [0, 0],
+        [0, height],
+        [thickness, height - thickness + overlap],
+        [thickness, thickness - overlap],
+      ]);
+  }
+}
+
+type FrameBandFalloff = "outerToInner" | "innerToOuter";
+
+function getFrameBandGradientVector(orientation: FrameOrientation) {
+  switch (orientation) {
+    case "top":
+      return { x1: "0%", y1: "0%", x2: "0%", y2: "100%" };
+    case "right":
+      return { x1: "100%", y1: "0%", x2: "0%", y2: "0%" };
+    case "bottom":
+      return { x1: "0%", y1: "100%", x2: "0%", y2: "0%" };
+    case "left":
+      return { x1: "0%", y1: "0%", x2: "100%", y2: "0%" };
+  }
+}
+
+function getFrameBandFalloffStops(opacity: number, falloff: FrameBandFalloff) {
+  const edgeOpacity = opacity * 0.76;
+  const midOpacity = opacity * 0.38;
+  const featherOpacity = opacity * 0.06;
+
+  if (falloff === "outerToInner") {
+    return {
+      start: edgeOpacity,
+      mid: midOpacity,
+      end: featherOpacity,
+    };
+  }
+
+  return {
+    start: featherOpacity,
+    mid: midOpacity,
+    end: edgeOpacity,
+  };
+}
+
 function FrameBandLayer({
   width,
   height,
@@ -325,6 +647,8 @@ function FrameBandLayer({
   endOffset,
   fillByOrientation,
   opacityByOrientation,
+  gradientIdPrefix,
+  falloff,
 }: {
   width: number;
   height: number;
@@ -332,21 +656,56 @@ function FrameBandLayer({
   endOffset: number;
   fillByOrientation: Record<FrameOrientation, string>;
   opacityByOrientation?: Partial<Record<FrameOrientation, number>>;
+  gradientIdPrefix?: string;
+  falloff?: FrameBandFalloff;
 }) {
   if (endOffset <= startOffset) {
     return null;
   }
 
+  const useGradientFalloff = Boolean(gradientIdPrefix && falloff);
+  const bandId = `${gradientIdPrefix}-${Math.round(startOffset * 100)}-${Math.round(endOffset * 100)}`;
+
   return (
     <>
-      {FRAME_ORIENTATIONS.map((orientation) => (
-        <Polygon
-          key={`${orientation}-${startOffset}-${endOffset}-${fillByOrientation[orientation]}`}
-          points={getMiterBandPoints(orientation, width, height, startOffset, endOffset)}
-          fill={fillByOrientation[orientation]}
-          opacity={opacityByOrientation?.[orientation] ?? 1}
-        />
-      ))}
+      {useGradientFalloff ? (
+        <Defs>
+          {FRAME_ORIENTATIONS.map((orientation) => {
+            const opacity = opacityByOrientation?.[orientation] ?? 1;
+            const stops = getFrameBandFalloffStops(opacity, falloff as FrameBandFalloff);
+            const vector = getFrameBandGradientVector(orientation);
+
+            return (
+              <LinearGradient
+                key={`${bandId}-${orientation}`}
+                id={`${bandId}-${orientation}`}
+                x1={vector.x1}
+                y1={vector.y1}
+                x2={vector.x2}
+                y2={vector.y2}
+              >
+                <Stop offset="0%" stopColor={fillByOrientation[orientation]} stopOpacity={stops.start} />
+                <Stop offset="56%" stopColor={fillByOrientation[orientation]} stopOpacity={stops.mid} />
+                <Stop offset="100%" stopColor={fillByOrientation[orientation]} stopOpacity={stops.end} />
+              </LinearGradient>
+            );
+          })}
+        </Defs>
+      ) : null}
+      {FRAME_ORIENTATIONS.map((orientation) => {
+        const fill = useGradientFalloff
+          ? `url(#${bandId}-${orientation})`
+          : fillByOrientation[orientation];
+
+        return (
+          <Polygon
+            key={`${orientation}-${startOffset}-${endOffset}-${fillByOrientation[orientation]}`}
+            points={getMiterBandPoints(orientation, width, height, startOffset, endOffset)}
+            fill={fill}
+            opacity={useGradientFalloff ? 1 : opacityByOrientation?.[orientation] ?? 1}
+          />
+        );
+      })}
     </>
   );
 }
@@ -370,6 +729,9 @@ function FrameFaceOverlay({
   lightDirection?: { x: number; y: number };
   innerLipContrast?: number;
 }) {
+  const gradientIdPrefixRef = useRef(`frame-face-${Math.random().toString(36).slice(2)}`);
+  const gradientIdPrefix = gradientIdPrefixRef.current;
+
   if (thickness <= 0) {
     return null;
   }
@@ -515,6 +877,8 @@ function FrameFaceOverlay({
             left: scaleOpacity(renderStyle === "florentine" ? 0.16 : renderStyle === "monochrome" ? 0.12 : 0.1, depthIntensity, 0.34),
           }
         }
+        gradientIdPrefix={`${gradientIdPrefix}-outer`}
+        falloff="outerToInner"
       />
       {showMetalLines ? (
         <>
@@ -585,6 +949,8 @@ function FrameFaceOverlay({
             left: scaleOpacity(renderStyle === "florentine" ? 0.08 : renderStyle === "monochrome" ? 0.06 : 0.05, depthIntensity, 0.24),
           }
         }
+        gradientIdPrefix={`${gradientIdPrefix}-inner`}
+        falloff="innerToOuter"
       />
       {innerLipAccentStyle ? (
         <FrameBandLayer
@@ -594,9 +960,286 @@ function FrameFaceOverlay({
           endOffset={thickness}
           fillByOrientation={innerLipAccentStyle.fillByOrientation}
           opacityByOrientation={innerLipAccentStyle.opacityByOrientation}
+          gradientIdPrefix={`${gradientIdPrefix}-inner-accent`}
+          falloff="innerToOuter"
         />
       ) : null}
     </Svg>
+  );
+}
+
+function isImageProfileTextureKey(
+  textureAssetKey: string | null | undefined
+): textureAssetKey is ImageProfileTextureKey {
+  return (
+    textureAssetKey === "larsPanelSilverBlack" ||
+    textureAssetKey === "larsPanelSilverBlackSlim" ||
+    textureAssetKey === "andoverSuede21116" ||
+    textureAssetKey === "altoWhite11516" ||
+    textureAssetKey === "altoBlack11516"
+  );
+}
+
+function ImageProfileFrameFaceOverlay({
+  width,
+  height,
+  thickness,
+  textureAssetKey,
+  depthIntensity = 1,
+  lightDirection,
+  innerLipContrast = 1,
+}: {
+  width: number;
+  height: number;
+  thickness: number;
+  textureAssetKey: string | null | undefined;
+  depthIntensity?: number;
+  lightDirection?: { x: number; y: number };
+  innerLipContrast?: number;
+}) {
+  const idPrefixRef = useRef(`image-profile-frame-${Math.random().toString(36).slice(2)}`);
+  const idPrefix = idPrefixRef.current;
+
+  if (thickness <= 0 || !isImageProfileTextureKey(textureAssetKey)) {
+    return null;
+  }
+
+  const textureConfig = IMAGE_PROFILE_TEXTURES[textureAssetKey];
+  const effectiveThickness = roundToPixel(clamp(thickness, 0, Math.min(width, height) / 2));
+  const onePixel = roundToPixel(Math.max(1 / PixelRatio.get(), PixelRatio.roundToNearestPixel(1)));
+  const outerBand = roundToPixel(
+    clamp(effectiveThickness * 0.08, onePixel, Math.max(onePixel, effectiveThickness * 0.3))
+  );
+  const railMiterOverlap = roundToPixel(
+    clamp(LARS_RAIL_MITER_OVERLAP_PX, onePixel, Math.max(onePixel, effectiveThickness * 0.08))
+  );
+  const blackPanelStart = roundToPixel(clamp(effectiveThickness * 0.2, onePixel, effectiveThickness));
+  const blackPanelEnd = roundToPixel(clamp(effectiveThickness * 0.74, blackPanelStart, effectiveThickness));
+  const innerBand = roundToPixel(
+    clamp(effectiveThickness * 0.14, onePixel, Math.max(onePixel, effectiveThickness * 0.38))
+  );
+  const innerBandStart = roundToPixel(Math.max(0, effectiveThickness - innerBand));
+  const innerLipWarmthStart = roundToPixel(
+    clamp(effectiveThickness * 0.74, blackPanelEnd, effectiveThickness)
+  );
+  const innerLipWarmthEnd = roundToPixel(
+    clamp(effectiveThickness * 0.92, innerLipWarmthStart, effectiveThickness)
+  );
+  const effectiveLightDirection = lightDirection ?? STANDARD_PREVIEW_LIGHT_DIRECTION;
+  const effectiveInnerLipContrast = clamp(innerLipContrast, 0, 4);
+  const outerBandStyle = buildDirectionalFrameBandStyle({
+    lightDirection: effectiveLightDirection,
+    lightColor: "#FFFFFF",
+    shadowColor: "#000000",
+    baseLightOpacity: 0.14,
+    baseShadowOpacity: 0.24,
+    depthIntensity,
+    maxOpacity: 0.4,
+  });
+  const innerBandStyle = buildDirectionalFrameBandStyle({
+    lightDirection: effectiveLightDirection,
+    lightColor: "#FFFFFF",
+    shadowColor: "#000000",
+    baseLightOpacity: 0.15 * effectiveInnerLipContrast,
+    baseShadowOpacity: 0.25 * effectiveInnerLipContrast,
+    depthIntensity,
+    maxOpacity: 0.54,
+    recessed: true,
+  });
+  const blackPanelOpacity = scaleOpacity(textureConfig.blackPanelDarkenOpacity, depthIntensity, 0.16);
+  const innerLipWarmthOpacity = scaleOpacity(
+    textureConfig.innerLipWarmthOpacity,
+    effectiveInnerLipContrast,
+    0.09
+  );
+  const clipIds = {
+    top: `${idPrefix}-clip-top`,
+    right: `${idPrefix}-clip-right`,
+    bottom: `${idPrefix}-clip-bottom`,
+    left: `${idPrefix}-clip-left`,
+  };
+  const edgeViewBox = `${textureConfig.cropX} ${textureConfig.cropY} ${textureConfig.cropWidth} ${textureConfig.cropHeight}`;
+  const renderEdgeStrip = (length: number) => (
+    <Svg
+      x={0}
+      y={0}
+      width={effectiveThickness}
+      height={length}
+      viewBox={edgeViewBox}
+      preserveAspectRatio="none"
+    >
+      <SvgImage
+        href={textureConfig.edgeVertical}
+        x={0}
+        y={0}
+        width={textureConfig.sourceWidthPx}
+        height={textureConfig.sourceHeightPx}
+        preserveAspectRatio="none"
+      />
+    </Svg>
+  );
+
+  return (
+    <Svg
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        inset: 0,
+      }}
+      width={width}
+      height={height}
+    >
+      <Defs>
+        {FRAME_ORIENTATIONS.map((orientation) => (
+          <ClipPath key={orientation} id={clipIds[orientation]}>
+            <Polygon
+              points={getLarsRailClipPoints(
+                orientation,
+                width,
+                height,
+                effectiveThickness,
+                railMiterOverlap
+              )}
+            />
+          </ClipPath>
+        ))}
+      </Defs>
+
+      <G clipPath={`url(#${clipIds.left})`}>
+        <G transform={`translate(${effectiveThickness} 0) scale(-1 1)`}>
+          {renderEdgeStrip(height)}
+        </G>
+      </G>
+      <G clipPath={`url(#${clipIds.right})`}>
+        <G transform={`translate(${width - effectiveThickness} 0)`}>
+          {renderEdgeStrip(height)}
+        </G>
+      </G>
+      <G clipPath={`url(#${clipIds.top})`}>
+        <G transform={`translate(0 ${effectiveThickness}) rotate(-90)`}>
+          {renderEdgeStrip(width)}
+        </G>
+      </G>
+      <G clipPath={`url(#${clipIds.bottom})`}>
+        <G transform={`translate(${width} ${height - effectiveThickness}) rotate(90)`}>
+          {renderEdgeStrip(width)}
+        </G>
+      </G>
+
+      <FrameBandLayer
+        width={width}
+        height={height}
+        startOffset={0}
+        endOffset={outerBand}
+        fillByOrientation={outerBandStyle.fillByOrientation}
+        opacityByOrientation={outerBandStyle.opacityByOrientation}
+        gradientIdPrefix={`${idPrefix}-outer`}
+        falloff="outerToInner"
+      />
+      <FrameBandLayer
+        width={width}
+        height={height}
+        startOffset={blackPanelStart}
+        endOffset={blackPanelEnd}
+        fillByOrientation={{
+          top: "#000000",
+          right: "#000000",
+          bottom: "#000000",
+          left: "#000000",
+        }}
+        opacityByOrientation={{
+          top: blackPanelOpacity,
+          right: blackPanelOpacity,
+          bottom: blackPanelOpacity,
+          left: blackPanelOpacity,
+        }}
+      />
+      <FrameBandLayer
+        width={width}
+        height={height}
+        startOffset={innerLipWarmthStart}
+        endOffset={innerLipWarmthEnd}
+        fillByOrientation={{
+          top: "#E2BE70",
+          right: "#E2BE70",
+          bottom: "#E2BE70",
+          left: "#E2BE70",
+        }}
+        opacityByOrientation={{
+          top: innerLipWarmthOpacity * 0.78,
+          right: innerLipWarmthOpacity,
+          bottom: innerLipWarmthOpacity,
+          left: innerLipWarmthOpacity * 0.78,
+        }}
+        gradientIdPrefix={`${idPrefix}-inner-warmth`}
+        falloff="innerToOuter"
+      />
+      <FrameBandLayer
+        width={width}
+        height={height}
+        startOffset={innerBandStart}
+        endOffset={effectiveThickness}
+        fillByOrientation={innerBandStyle.fillByOrientation}
+        opacityByOrientation={innerBandStyle.opacityByOrientation}
+        gradientIdPrefix={`${idPrefix}-inner`}
+        falloff="innerToOuter"
+      />
+    </Svg>
+  );
+}
+
+function FrameFaceRenderer({
+  width,
+  height,
+  thickness,
+  palette,
+  renderStyle,
+  textureAssetKey,
+  enableImageProfileFrames = true,
+  depthIntensity,
+  lightDirection,
+  innerLipContrast,
+}: {
+  width: number;
+  height: number;
+  thickness: number;
+  palette: FrameFacePalette;
+  renderStyle: "none" | "basic" | "florentine" | "monochrome" | "imageProfile";
+  textureAssetKey?: string | null;
+  enableImageProfileFrames?: boolean;
+  depthIntensity?: number;
+  lightDirection?: { x: number; y: number };
+  innerLipContrast?: number;
+}) {
+  if (
+    renderStyle === "imageProfile" &&
+    enableImageProfileFrames &&
+    isImageProfileTextureKey(textureAssetKey)
+  ) {
+    return (
+      <ImageProfileFrameFaceOverlay
+        width={width}
+        height={height}
+        thickness={thickness}
+        textureAssetKey={textureAssetKey}
+        depthIntensity={depthIntensity}
+        lightDirection={lightDirection}
+        innerLipContrast={innerLipContrast}
+      />
+    );
+  }
+
+  return (
+    <FrameFaceOverlay
+      width={width}
+      height={height}
+      thickness={thickness}
+      palette={palette}
+      renderStyle={renderStyle === "imageProfile" ? "basic" : renderStyle}
+      depthIntensity={depthIntensity}
+      lightDirection={lightDirection}
+      innerLipContrast={innerLipContrast}
+    />
   );
 }
 
@@ -757,6 +1400,7 @@ export function FinishedFramedArtwork({
   artworkSize,
   openingSize,
   outerMatSize,
+  artworkReveal,
   frameProfileId,
   frameColorHex,
   matThicknessPly,
@@ -774,6 +1418,7 @@ export function FinishedFramedArtwork({
   shadowDirection,
   materialRealism,
   environment,
+  enableImageProfileFrames = false,
   style,
 }: FinishedFramedArtworkProps) {
   const { isDark } = useAppTheme();
@@ -791,6 +1436,10 @@ export function FinishedFramedArtwork({
   const blackCoreLiftRatio = isWhiteCore ? 0 : clamp((0.42 - matLightness) / 0.42, 0, 1);
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
+  const isImageProfileFrameActive =
+    enableImageProfileFrames &&
+    frameProfile.renderStyle === "imageProfile" &&
+    isImageProfileTextureKey(frameProfile.textureAssetKey);
   const isRoomMockupDepth = depthMode === "roomMockup";
   const frameLightness = hexToHsl(frameColor).l;
   const darkFrameLiftRatio = isRoomMockupDepth ? clamp((0.62 - frameLightness) / 0.62, 0, 1) : 0;
@@ -1128,6 +1777,20 @@ export function FinishedFramedArtwork({
     ));
     const artworkWidth = roundToPixel(artworkSize.width * physicalScale);
     const artworkHeight = roundToPixel(artworkSize.height * physicalScale);
+    const artworkLeft = resolveArtworkRevealInset(
+      openingWidth,
+      artworkWidth,
+      artworkReveal?.left,
+      artworkReveal?.right,
+      physicalScale
+    );
+    const artworkTop = resolveArtworkRevealInset(
+      openingHeight,
+      artworkHeight,
+      artworkReveal?.top,
+      artworkReveal?.bottom,
+      physicalScale
+    );
 
     return {
       frameThickness,
@@ -1148,8 +1811,14 @@ export function FinishedFramedArtwork({
       bevelInset,
       apertureWidth: openingWidth,
       apertureHeight: openingHeight,
+      artworkLeft,
+      artworkTop,
     };
   }, [
+    artworkReveal?.bottom,
+    artworkReveal?.left,
+    artworkReveal?.right,
+    artworkReveal?.top,
     artworkSize,
     bevelProfile.physicalWidth,
     frameFaceWidth,
@@ -1292,13 +1961,33 @@ export function FinishedFramedArtwork({
           height: geometry.apertureHeight,
           backgroundColor: mountingBoardColor,
           overflow: "hidden",
-          borderWidth: isRoomMockupDepth ? 0 : 1,
-          borderColor: apertureEdgeColor,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        {renderArtworkContent()}
+        <View
+          style={{
+            position: "absolute",
+            left: geometry.artworkLeft,
+            top: geometry.artworkTop,
+          }}
+        >
+          {renderArtworkContent()}
+        </View>
+        {!isRoomMockupDepth ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              borderWidth: 1,
+              borderColor: apertureEdgeColor,
+            }}
+          />
+        ) : null}
         {isRoomMockupDepth ? (
           <View
             pointerEvents="none"
@@ -1330,7 +2019,10 @@ export function FinishedFramedArtwork({
         {
           width: geometry.frameOuterWidth,
           height: geometry.frameOuterHeight,
-          backgroundColor: geometry.frameThickness > 0 ? frameFinishPalette.base : "transparent",
+          backgroundColor:
+            geometry.frameThickness > 0 && !isImageProfileFrameActive
+              ? frameFinishPalette.base
+              : "transparent",
           overflow: "hidden",
           shadowColor: "#000",
           shadowOpacity: showShadow
@@ -1349,12 +2041,14 @@ export function FinishedFramedArtwork({
     >
       {geometry.frameThickness > 0 ? (
         <>
-          <FrameFaceOverlay
+          <FrameFaceRenderer
             width={geometry.frameOuterWidth}
             height={geometry.frameOuterHeight}
             thickness={geometry.frameThickness}
             palette={frameFinishPalette}
             renderStyle={frameProfile.renderStyle}
+            textureAssetKey={frameProfile.textureAssetKey}
+            enableImageProfileFrames={enableImageProfileFrames}
             depthIntensity={frameFaceDepthIntensity}
             lightDirection={isRoomMockupDepth ? roomLightDirection : undefined}
             innerLipContrast={frameInnerLipContrast}
@@ -1455,6 +2149,7 @@ export default function MatPreviewCanvas({
   artworkSize,
   openingSize,
   outerMatSize,
+  artworkReveal,
   frameProfileId,
   frameColorHex,
   matThicknessPly,
@@ -1470,6 +2165,10 @@ export default function MatPreviewCanvas({
   onAdjustOffsets,
   onLiveOffsetsChange,
   onDragStateChange,
+  matOpeningGuidesEnabled = false,
+  matOpeningGuideTargets = EMPTY_MAT_OPENING_GUIDE_TARGETS,
+  matOpeningGuideThresholdPx = DEFAULT_MAT_OPENING_GUIDE_THRESHOLD_PX,
+  matOpeningGuideMeasurementThreshold = DEFAULT_MAT_OPENING_GUIDE_MEASUREMENT_THRESHOLD,
   canvasHeight = 420,
   layoutVariant = "default",
 }: MatPreviewCanvasProps) {
@@ -1488,6 +2187,15 @@ export default function MatPreviewCanvas({
   const maxOffsetY = useSharedValue(0);
   const liveOffsetsFrameRef = useRef<number | null>(null);
   const pendingLiveOffsetsRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
+  const [matOpeningGuideSnapshot, setMatOpeningGuideSnapshot] = useState(
+    EMPTY_MAT_OPENING_GUIDE_SNAPSHOT
+  );
+  const lastMatOpeningGuideKeyRef = useRef(
+    getMatOpeningGuideSnapshotKey(EMPTY_MAT_OPENING_GUIDE_SNAPSHOT)
+  );
+  const lastMatOpeningLockedGuideRef = useRef<string | null>(null);
+  const lastMatOpeningHapticGuideRef = useRef<string | null>(null);
+  const lastMatOpeningHapticAtRef = useRef(0);
 
   const isWorkspaceLayout = layoutVariant === "workspace";
   const previewInset = isWorkspaceLayout ? spacing.lg : spacing.md;
@@ -1502,6 +2210,9 @@ export default function MatPreviewCanvas({
   const coreFaceColor = isWhiteCore ? "#F8F7F2" : "#161616";
   const isFlorentineFrame = frameProfile.renderStyle === "florentine";
   const isMonochromeFrame = frameProfile.renderStyle === "monochrome";
+  const isImageProfileFrameActive =
+    frameProfile.renderStyle === "imageProfile" &&
+    isImageProfileTextureKey(frameProfile.textureAssetKey);
   const previewCardColor = normalizeHex(
     canvasBackgroundColorHex,
     DEFAULT_CANVAS_BACKGROUND_COLOR_HEX
@@ -1699,6 +2410,20 @@ export default function MatPreviewCanvas({
     const apertureHeight = openingHeight;
     const artworkWidth = roundToPixel(artworkSize.width * scale);
     const artworkHeight = roundToPixel(artworkSize.height * scale);
+    const artworkLeft = resolveArtworkRevealInset(
+      openingWidth,
+      artworkWidth,
+      artworkReveal?.left,
+      artworkReveal?.right,
+      scale
+    );
+    const artworkTop = resolveArtworkRevealInset(
+      openingHeight,
+      artworkHeight,
+      artworkReveal?.top,
+      artworkReveal?.bottom,
+      scale
+    );
 
     return {
       scale,
@@ -1722,8 +2447,14 @@ export default function MatPreviewCanvas({
       bevelInset,
       apertureWidth,
       apertureHeight,
+      artworkLeft,
+      artworkTop,
     };
   }, [
+    artworkReveal?.bottom,
+    artworkReveal?.left,
+    artworkReveal?.right,
+    artworkReveal?.top,
     artworkSize,
     bevelProfile.physicalWidth,
     canvasSize.height,
@@ -1773,6 +2504,89 @@ export default function MatPreviewCanvas({
     maxOffsetY.value = bounds.maxOffsetY;
   }, [maxOffsetX, maxOffsetY, openingSize, outerMatSize, previewGeometry?.scale, previewScale]);
 
+  const clearMatOpeningGuides = useCallback(() => {
+    const emptyKey = getMatOpeningGuideSnapshotKey(EMPTY_MAT_OPENING_GUIDE_SNAPSHOT);
+
+    lastMatOpeningGuideKeyRef.current = emptyKey;
+    lastMatOpeningLockedGuideRef.current = null;
+    lastMatOpeningHapticGuideRef.current = null;
+    setMatOpeningGuideSnapshot(EMPTY_MAT_OPENING_GUIDE_SNAPSHOT);
+  }, []);
+
+  useEffect(() => {
+    if (!matOpeningGuidesEnabled || !previewGeometry) {
+      clearMatOpeningGuides();
+    }
+  }, [clearMatOpeningGuides, matOpeningGuidesEnabled, previewGeometry]);
+
+  const updateMatOpeningGuides = useCallback(
+    (nextOffsetX: number, nextOffsetY: number) => {
+      if (!matOpeningGuidesEnabled || !previewGeometry) {
+        return;
+      }
+
+      const activeLockedGuideId = lastMatOpeningLockedGuideRef.current;
+      const exitThresholdPx = matOpeningGuideThresholdPx + MAT_OPENING_GUIDE_EXIT_THRESHOLD_EXTRA_PX;
+      const exitMeasurementThreshold =
+        matOpeningGuideMeasurementThreshold * MAT_OPENING_GUIDE_EXIT_MEASUREMENT_MULTIPLIER;
+      const lockedSnapshot = activeLockedGuideId
+        ? getMatOpeningGuideSnapshot({
+            offsetX: nextOffsetX,
+            offsetY: nextOffsetY,
+            scale: previewGeometry.scale,
+            targets: matOpeningGuideTargets,
+            thresholdPx: exitThresholdPx,
+            measurementThreshold: exitMeasurementThreshold,
+            preferredPrimaryGuideId: activeLockedGuideId,
+          })
+        : EMPTY_MAT_OPENING_GUIDE_SNAPSHOT;
+      const snapshot =
+        activeLockedGuideId && lockedSnapshot.primaryGuideId === activeLockedGuideId
+          ? lockedSnapshot
+          : getMatOpeningGuideSnapshot({
+              offsetX: nextOffsetX,
+              offsetY: nextOffsetY,
+              scale: previewGeometry.scale,
+              targets: matOpeningGuideTargets,
+              thresholdPx: matOpeningGuideThresholdPx,
+              measurementThreshold: matOpeningGuideMeasurementThreshold,
+            });
+      const snapshotKey = getMatOpeningGuideSnapshotKey(snapshot);
+
+      if (snapshotKey !== lastMatOpeningGuideKeyRef.current) {
+        lastMatOpeningGuideKeyRef.current = snapshotKey;
+        setMatOpeningGuideSnapshot(snapshot);
+      }
+
+      if (!snapshot.primaryGuideId) {
+        lastMatOpeningLockedGuideRef.current = null;
+        lastMatOpeningHapticGuideRef.current = null;
+        return;
+      }
+
+      lastMatOpeningLockedGuideRef.current = snapshot.primaryGuideId;
+
+      const now = Date.now();
+      if (
+        snapshot.primaryGuideId === lastMatOpeningHapticGuideRef.current ||
+        now - lastMatOpeningHapticAtRef.current < 180
+      ) {
+        return;
+      }
+
+      lastMatOpeningHapticGuideRef.current = snapshot.primaryGuideId;
+      lastMatOpeningHapticAtRef.current = now;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
+    [
+      matOpeningGuideTargets,
+      matOpeningGuideMeasurementThreshold,
+      matOpeningGuideThresholdPx,
+      matOpeningGuidesEnabled,
+      previewGeometry,
+    ]
+  );
+
   const flushLiveOffsets = useCallback(() => {
     liveOffsetsFrameRef.current = null;
 
@@ -1788,6 +2602,7 @@ export default function MatPreviewCanvas({
   const queueLiveOffsets = useCallback(
     (offsetX: number, offsetY: number) => {
       pendingLiveOffsetsRef.current = { offsetX, offsetY };
+      updateMatOpeningGuides(offsetX, offsetY);
 
       if (liveOffsetsFrameRef.current !== null) {
         return;
@@ -1797,14 +2612,15 @@ export default function MatPreviewCanvas({
         flushLiveOffsets();
       });
     },
-    [flushLiveOffsets]
+    [flushLiveOffsets, updateMatOpeningGuides]
   );
 
   const beginDrag = useCallback((nextOffsetX: number, nextOffsetY: number) => {
     isDraggingRef.current = true;
     latestOffsetsRef.current = { offsetX: nextOffsetX, offsetY: nextOffsetY };
+    updateMatOpeningGuides(nextOffsetX, nextOffsetY);
     onDragStateChange?.(true);
-  }, [onDragStateChange]);
+  }, [onDragStateChange, updateMatOpeningGuides]);
 
   const commitDrag = useCallback(
     (nextOffsetX: number, nextOffsetY: number) => {
@@ -1818,9 +2634,10 @@ export default function MatPreviewCanvas({
       latestOffsetsRef.current = { offsetX: nextOffsetX, offsetY: nextOffsetY };
       onLiveOffsetsChange?.(nextOffsetX, nextOffsetY);
       onAdjustOffsets(nextOffsetX, nextOffsetY);
+      clearMatOpeningGuides();
       onDragStateChange?.(false);
     },
-    [onAdjustOffsets, onDragStateChange, onLiveOffsetsChange]
+    [clearMatOpeningGuides, onAdjustOffsets, onDragStateChange, onLiveOffsetsChange]
   );
 
   const cancelDrag = useCallback(
@@ -1834,9 +2651,10 @@ export default function MatPreviewCanvas({
       isDraggingRef.current = false;
       latestOffsetsRef.current = { offsetX: nextOffsetX, offsetY: nextOffsetY };
       onLiveOffsetsChange?.(nextOffsetX, nextOffsetY);
+      clearMatOpeningGuides();
       onDragStateChange?.(false);
     },
-    [onDragStateChange, onLiveOffsetsChange]
+    [clearMatOpeningGuides, onDragStateChange, onLiveOffsetsChange]
   );
 
   const openingOffsetAnimatedStyle = useAnimatedStyle(() => ({
@@ -1981,6 +2799,149 @@ export default function MatPreviewCanvas({
     );
   }, [artworkImageUri, artworkSourceMode, importedArtworkMetrics, previewGeometry]);
 
+  const matOpeningGuideOverlay = useMemo(() => {
+    if (!previewGeometry || !matOpeningGuidesEnabled || !matOpeningGuideSnapshot.primaryGuideId) {
+      return null;
+    }
+
+    const lineColor = colors.accent;
+    const lineOpacity = 0.52;
+    const lineThickness = 1;
+    const verticalCenterX = roundToPixel(previewGeometry.matWidth / 2 - lineThickness / 2);
+    const horizontalCenterY = roundToPixel(previewGeometry.matHeight / 2 - lineThickness / 2);
+    const weightedTarget = matOpeningGuideTargets.find(
+      (target) => target.id === matOpeningGuideSnapshot.weightedTargetId
+    );
+    const weightedGuideY = weightedTarget
+      ? roundToPixel(
+          previewGeometry.matHeight / 2 -
+            (weightedTarget.bottomWeightDelta * previewGeometry.scale) / 2 -
+            lineThickness / 2
+        )
+      : null;
+    const guideLabel =
+      matOpeningGuideSnapshot.verticalCenter && matOpeningGuideSnapshot.horizontalCenter
+        ? "Perfectly centered"
+        : matOpeningGuideSnapshot.weightedTargetLabel ??
+          (matOpeningGuideSnapshot.horizontalCenter
+            ? "Equal reveal"
+            : matOpeningGuideSnapshot.verticalCenter
+              ? "Vertical center"
+              : null);
+    const labelWidth = 154;
+    const labelLeft = roundToPixel(
+      clamp(previewGeometry.matWidth / 2 - labelWidth / 2, 8, previewGeometry.matWidth - labelWidth - 8)
+    );
+    const labelTop = roundToPixel(
+      clamp(
+        (weightedGuideY ?? (matOpeningGuideSnapshot.horizontalCenter ? horizontalCenterY : 8)) - 30,
+        8,
+        previewGeometry.matHeight - 34
+      )
+    );
+
+    return (
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: previewGeometry.matWidth,
+          height: previewGeometry.matHeight,
+          zIndex: 8,
+        }}
+      >
+        {matOpeningGuideSnapshot.verticalCenter ? (
+          <View
+            style={{
+              position: "absolute",
+              left: verticalCenterX,
+              top: 0,
+              width: lineThickness,
+              height: previewGeometry.matHeight,
+              backgroundColor: lineColor,
+              opacity: lineOpacity,
+            }}
+          />
+        ) : null}
+        {matOpeningGuideSnapshot.horizontalCenter ? (
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              top: horizontalCenterY,
+              width: previewGeometry.matWidth,
+              height: lineThickness,
+              backgroundColor: lineColor,
+              opacity: lineOpacity,
+            }}
+          />
+        ) : null}
+        {weightedGuideY !== null ? (
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              top: weightedGuideY,
+              width: previewGeometry.matWidth,
+              height: lineThickness,
+              backgroundColor: lineColor,
+              opacity: 0.6,
+            }}
+          />
+        ) : null}
+        {guideLabel ? (
+          <View
+            style={{
+              position: "absolute",
+              left: labelLeft,
+              top: labelTop,
+              width: labelWidth,
+              minHeight: 24,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              backgroundColor: colors.headerBackground,
+              alignItems: "center",
+              justifyContent: "center",
+              paddingHorizontal: 10,
+              shadowColor: "#000",
+              shadowOpacity: 0.18,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 6,
+            }}
+          >
+            <Text
+              numberOfLines={1}
+              style={{
+                color: colors.textPrimary,
+                fontSize: 11,
+                fontWeight: "700",
+              }}
+            >
+              {guideLabel}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  }, [
+    colors.accent,
+    colors.borderStrong,
+    colors.headerBackground,
+    colors.textPrimary,
+    matOpeningGuideSnapshot.horizontalCenter,
+    matOpeningGuideSnapshot.primaryGuideId,
+    matOpeningGuideSnapshot.verticalCenter,
+    matOpeningGuideSnapshot.weightedTargetId,
+    matOpeningGuideSnapshot.weightedTargetLabel,
+    matOpeningGuideTargets,
+    matOpeningGuidesEnabled,
+    previewGeometry,
+  ]);
+
   const bevelOpeningContent = previewGeometry ? (
     <GestureDetector gesture={panGesture}>
       <Animated.View
@@ -2013,13 +2974,31 @@ export default function MatPreviewCanvas({
             height: previewGeometry.apertureHeight,
             backgroundColor: mountingBoardColor,
             overflow: "hidden",
-            borderWidth: 1,
-            borderColor: apertureEdgeColor,
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          {renderArtworkContent()}
+          <View
+            style={{
+              position: "absolute",
+              left: previewGeometry.artworkLeft,
+              top: previewGeometry.artworkTop,
+            }}
+          >
+            {renderArtworkContent()}
+          </View>
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              borderWidth: 1,
+              borderColor: apertureEdgeColor,
+            }}
+          />
         </View>
       </Animated.View>
     </GestureDetector>
@@ -2080,7 +3059,9 @@ export default function MatPreviewCanvas({
                 width: previewGeometry.frameOuterWidth,
                 height: previewGeometry.frameOuterHeight,
                 backgroundColor:
-                  previewGeometry.frameThickness > 0 ? frameFinishPalette.base : "transparent",
+                  previewGeometry.frameThickness > 0 && !isImageProfileFrameActive
+                    ? frameFinishPalette.base
+                    : "transparent",
                 overflow: "hidden",
                 shadowColor: "#000",
                 shadowOpacity: isDark ? 0.2 : 0.12,
@@ -2090,12 +3071,13 @@ export default function MatPreviewCanvas({
             >
               {previewGeometry.frameThickness > 0 ? (
                 <>
-                  <FrameFaceOverlay
+                  <FrameFaceRenderer
                     width={previewGeometry.frameOuterWidth}
                     height={previewGeometry.frameOuterHeight}
                     thickness={previewGeometry.frameThickness}
                     palette={frameFinishPalette}
                     renderStyle={frameProfile.renderStyle}
+                    textureAssetKey={frameProfile.textureAssetKey}
                   />
                   <View
                     style={{
@@ -2109,6 +3091,7 @@ export default function MatPreviewCanvas({
                     }}
                   >
                     {bevelOpeningContent}
+                    {matOpeningGuideOverlay}
                   </View>
                 </>
               ) : (
@@ -2121,6 +3104,7 @@ export default function MatPreviewCanvas({
                   }}
                 >
                   {bevelOpeningContent}
+                  {matOpeningGuideOverlay}
                 </View>
               )}
             </View>

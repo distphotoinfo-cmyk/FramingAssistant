@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActionSheetIOS,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
   Text,
   useWindowDimensions,
   View,
+  type ImageSourcePropType,
   type LayoutChangeEvent,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
@@ -47,10 +49,11 @@ import { importArtworkFromCamera, importArtworkFromLibrary } from "../utils/artw
 import {
   getDefaultFinishForProfile,
   getFinishOptionsForProfile,
+  getFinishColorHex,
   getFrameProfile,
   resolveFrameColorHex,
 } from "../utils/frameProfiles";
-import { buildDerivedGeometry, calculateMargins } from "../utils/framingGeometry";
+import { buildDerivedGeometry, calculateMargins, getOffsetBounds } from "../utils/framingGeometry";
 import {
   formatMeasurement,
   getSnapIncrement,
@@ -71,6 +74,19 @@ const PREVIEW_ADJUST_SHEET_GUIDANCE_TARGET_IDS = new Set([
   "preview-adjust-options-card",
   "preview-adjust-live-margins-card",
 ]);
+const CLASSIC_BOTTOM_WEIGHT_DELTA_INCHES = 0.5;
+const MAT_OPENING_WEIGHTED_GUIDE_TARGETS_INCHES = [
+  { id: "slight-bottom-weight", label: "Slight bottom weight", bottomWeightDeltaInches: 0.25 },
+  {
+    id: "classic-bottom-weight",
+    label: "Classic bottom weight",
+    bottomWeightDeltaInches: CLASSIC_BOTTOM_WEIGHT_DELTA_INCHES,
+  },
+];
+const PHONE_MAT_OPENING_GUIDE_THRESHOLD_PX = 2;
+const TABLET_MAT_OPENING_GUIDE_THRESHOLD_PX = 3;
+const PHONE_MAT_OPENING_GUIDE_THRESHOLD_INCHES = 1 / 64;
+const TABLET_MAT_OPENING_GUIDE_THRESHOLD_INCHES = 1 / 32;
 
 type FrameStyleOptionId = "none" | FrameFamily;
 type FrameProfilePickerValue = FrameProfileId | "notApplicable";
@@ -85,6 +101,7 @@ const FRAME_STYLE_OPTIONS: { label: string; value: FrameStyleOptionId }[] = [
   { label: "Basic", value: "basic" },
   { label: "Nielsen Florentine", value: "nielsenFlorentine" },
   { label: "Nielsen Monochrome", value: "nielsenMonochrome" },
+  { label: "Larson-Juhl Collection", value: "lars" },
 ];
 
 const FRAME_PROFILE_OPTIONS_BY_STYLE: Record<
@@ -99,9 +116,173 @@ const FRAME_PROFILE_OPTIONS_BY_STYLE: Record<
     { label: "Profile 93 - 7/16 in", value: "nielsenFlorentine93" },
   ],
   nielsenMonochrome: [
-  { label: "Profile 97 - 7/8 in", value: "nielsenMonochrome97" },
+    { label: "Profile 97 - 7/8 in", value: "nielsenMonochrome97" },
+  ],
+  lars: [
+    { label: "Lars Panel Silver & Black - 3 9/16 in", value: "larsPanelSilverBlack" },
+    { label: "Lars Panel Silver & Black Slim - 2 1/16 in", value: "larsPanelSilverBlackSlim" },
+    { label: "Andover Suede 2 11/16 - 2 11/16 in", value: "andoverSuede21116" },
+    { label: "Alto White 1 15/16 - 1 15/16 in", value: "altoWhite11516" },
+    { label: "Alto Black 1 15/16 - 1 15/16 in", value: "altoBlack11516" },
   ],
 };
+
+const FRAME_STYLE_PREVIEW_PROFILE_IDS: Record<FrameStyleOptionId, FrameProfileId | null> = {
+  none: "basicNone",
+  basic: "basicGallery",
+  nielsenFlorentine: "nielsenFlorentine93",
+  nielsenMonochrome: "nielsenMonochrome97",
+  lars: "larsPanelSilverBlack",
+};
+
+const FRAME_PROFILE_THUMBNAIL_ASSETS: Record<string, ImageSourcePropType> = {
+  larsPanelSilverBlack: require("../../assets/frame-profiles/lars-panel-silver-black/edge-vertical.png"),
+  larsPanelSilverBlackSlim: require("../../assets/frame-profiles/lars-panel-silver-black-slim/edge-vertical.png"),
+  andoverSuede21116: require("../../assets/frame-profiles/andover-suede-2-11-16/rail.png"),
+  altoWhite11516: require("../../assets/frame-profiles/alto-white-1-15-16/rail.png"),
+  altoBlack11516: require("../../assets/frame-profiles/alto-black-1-15-16/rail.png"),
+};
+
+function FrameOptionThumbnail({
+  profileId,
+  active = false,
+}: {
+  profileId: FrameProfileId | null;
+  active?: boolean;
+}) {
+  const { colors, radii } = useAppTheme();
+  const profile = profileId ? getFrameProfile(profileId) : null;
+  const frameColorHex =
+    profile && profileId
+      ? resolveFrameColorHex(profileId, profile.defaultFinishId, "#050505")
+      : "transparent";
+  const textureSource =
+    profile?.renderStyle === "imageProfile" && profile.textureAssetKey
+      ? FRAME_PROFILE_THUMBNAIL_ASSETS[profile.textureAssetKey]
+      : null;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        width: 44,
+        height: 26,
+        borderRadius: radii.sm,
+        borderWidth: 1,
+        borderColor: active ? colors.accent : colors.borderStrong,
+        backgroundColor: colors.backgroundMuted,
+        overflow: "hidden",
+      }}
+    >
+      {textureSource ? (
+        <Image
+          source={textureSource}
+          resizeMode="cover"
+          style={{ width: "100%", height: "100%" }}
+        />
+      ) : profile?.renderStyle === "none" ? (
+        <View
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.backgroundInput,
+          }}
+        >
+          <View
+            style={{
+              width: 22,
+              height: 12,
+              borderWidth: 1,
+              borderColor: colors.borderStrong,
+              borderRadius: 2,
+            }}
+          />
+        </View>
+      ) : (
+        <View style={{ flex: 1, backgroundColor: frameColorHex, padding: 5 }}>
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 5,
+              backgroundColor: colors.white,
+              opacity: 0.18,
+            }}
+          />
+          <View
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 5,
+              backgroundColor: "#000000",
+              opacity: 0.2,
+            }}
+          />
+          <View
+            style={{
+              flex: 1,
+              borderRadius: 2,
+              borderWidth: 1,
+              borderColor: colors.borderSubtle,
+              backgroundColor: colors.backgroundInput,
+            }}
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
+function FrameStyleThumbnail({
+  frameStyle,
+  active = false,
+}: {
+  frameStyle: FrameStyleOptionId;
+  active?: boolean;
+}) {
+  return <FrameOptionThumbnail profileId={FRAME_STYLE_PREVIEW_PROFILE_IDS[frameStyle]} active={active} />;
+}
+
+function FrameFinishThumbnail({
+  finishId,
+  active = false,
+}: {
+  finishId: FrameFinishId | null;
+  active?: boolean;
+}) {
+  const { colors, radii } = useAppTheme();
+  const colorHex = finishId ? getFinishColorHex(finishId) ?? "#050505" : "transparent";
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        width: 44,
+        height: 26,
+        borderRadius: radii.sm,
+        borderWidth: 1,
+        borderColor: active ? colors.accent : colors.borderStrong,
+        backgroundColor: colors.backgroundMuted,
+        padding: 4,
+      }}
+    >
+      <View
+        style={{
+          flex: 1,
+          borderRadius: radii.sm - 3,
+          backgroundColor: colorHex,
+          borderWidth: colorHex === "transparent" ? 1 : 0,
+          borderColor: colors.borderSubtle,
+        }}
+      />
+    </View>
+  );
+}
 
 function DimensionChip({
   label,
@@ -163,6 +344,84 @@ function FloatingPositionIconButton({
       })}
     >
       <Ionicons name={icon} size={20} color={color ?? colors.textPrimary} />
+    </Pressable>
+  );
+}
+
+function ClassicBottomWeightIcon() {
+  const { colors } = useAppTheme();
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        width: 22,
+        height: 24,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          width: 17,
+          height: 21,
+          borderWidth: 1.6,
+          borderColor: colors.textPrimary,
+          borderRadius: 2,
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          left: 7,
+          right: 7,
+          top: 6,
+          bottom: 9,
+          borderWidth: 1.2,
+          borderColor: colors.textPrimary,
+          borderRadius: 1,
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          left: 6,
+          right: 6,
+          bottom: 4,
+          height: 2,
+          borderRadius: 1,
+          backgroundColor: colors.accent,
+        }}
+      />
+    </View>
+  );
+}
+
+function FloatingPositionClassicBottomWeightButton({
+  onPress,
+  accessibilityLabel,
+}: {
+  onPress: () => void;
+  accessibilityLabel: string;
+}) {
+  const { colors } = useAppTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={6}
+      style={({ pressed }) => ({
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: pressed ? colors.backgroundMuted : "transparent",
+        alignItems: "center",
+        justifyContent: "center",
+      })}
+    >
+      <ClassicBottomWeightIcon />
     </Pressable>
   );
 }
@@ -368,6 +627,7 @@ export default function PreviewAdjustScreen() {
   const setPreview = useFramingFlowStore((state) => state.setPreview);
   const { colors, layout, radii, spacing, typography } = useAppTheme();
   const [liveDragOffsets, setLiveDragOffsets] = useState<{ offsetX: number; offsetY: number } | null>(null);
+  const [isOpeningDragging, setIsOpeningDragging] = useState(false);
   const [artworkSourceSheetVisible, setArtworkSourceSheetVisible] = useState(false);
   const [artworkFrameSheetVisible, setArtworkFrameSheetVisible] = useState(false);
   const [guidanceIndex, setGuidanceIndex] = useState(0);
@@ -393,6 +653,30 @@ export default function PreviewAdjustScreen() {
   const derived = buildDerivedGeometry(draft);
   const artworkAspectRatio = getArtworkAspectRatio(derived.artworkSize);
   const snapIncrement = getSnapIncrement(unit, previewSnapIncrementInches);
+  const matOpeningGuideTargets = useMemo(
+    () =>
+      MAT_OPENING_WEIGHTED_GUIDE_TARGETS_INCHES.map((target) => ({
+        id: target.id,
+        label: target.label,
+        bottomWeightDelta: unit === "cm"
+          ? target.bottomWeightDeltaInches * 2.54
+          : target.bottomWeightDeltaInches,
+      })),
+    [unit]
+  );
+  const classicBottomWeightDelta =
+    unit === "cm" ? CLASSIC_BOTTOM_WEIGHT_DELTA_INCHES * 2.54 : CLASSIC_BOTTOM_WEIGHT_DELTA_INCHES;
+  const matOpeningGuideThresholdPx = isPhoneWorkspace
+    ? PHONE_MAT_OPENING_GUIDE_THRESHOLD_PX
+    : TABLET_MAT_OPENING_GUIDE_THRESHOLD_PX;
+  const matOpeningGuideMeasurementThreshold =
+    unit === "cm"
+      ? (isPhoneWorkspace
+          ? PHONE_MAT_OPENING_GUIDE_THRESHOLD_INCHES
+          : TABLET_MAT_OPENING_GUIDE_THRESHOLD_INCHES) * 2.54
+      : isPhoneWorkspace
+        ? PHONE_MAT_OPENING_GUIDE_THRESHOLD_INCHES
+        : TABLET_MAT_OPENING_GUIDE_THRESHOLD_INCHES;
   const visibleOffsets = liveDragOffsets ?? {
     offsetX: preview.offsetX,
     offsetY: preview.offsetY,
@@ -407,8 +691,23 @@ export default function PreviewAdjustScreen() {
       ),
     [derived.openingSize, derived.outerMatSize, visibleOffsets.offsetX, visibleOffsets.offsetY]
   );
-  const marginValue = (value: number | undefined) =>
-    value === undefined ? "Not set" : formatMeasurement(value, unit, imperialPrecision);
+  const marginValue = useCallback(
+    (value: number | undefined) =>
+      value === undefined ? "Not set" : formatMeasurement(value, unit, imperialPrecision),
+    [imperialPrecision, unit]
+  );
+  const liveRevealMeasurementItems = useMemo(
+    () =>
+      liveMargins
+        ? [
+            { label: "Top reveal", value: marginValue(liveMargins.top) },
+            { label: "Bottom reveal", value: marginValue(liveMargins.bottom) },
+            { label: "Left reveal", value: marginValue(liveMargins.left) },
+            { label: "Right reveal", value: marginValue(liveMargins.right) },
+          ]
+        : [],
+    [liveMargins, marginValue]
+  );
   const usingImportedArtwork =
     preview.artworkSourceMode === "import" && Boolean(preview.artworkImageUri);
   const artworkCanvasActionLabel = usingImportedArtwork ? "Change Artwork" : "Upload Artwork";
@@ -565,6 +864,37 @@ export default function PreviewAdjustScreen() {
     [setPreview]
   );
 
+  const handleClassicBottomWeight = useCallback(() => {
+    if (!derived.outerMatSize || !derived.openingSize) {
+      return;
+    }
+
+    const bounds = getOffsetBounds(derived.outerMatSize, derived.openingSize);
+    const nextOffsetY = Math.max(
+      -bounds.maxOffsetY,
+      Math.min(bounds.maxOffsetY, -classicBottomWeightDelta / 2)
+    );
+    const preserveHorizontalOffset =
+      Math.abs(preview.offsetX * 2) > matOpeningGuideMeasurementThreshold;
+    const nextOffsetX = preserveHorizontalOffset
+      ? Math.max(-bounds.maxOffsetX, Math.min(bounds.maxOffsetX, preview.offsetX))
+      : 0;
+
+    setLiveDragOffsets(null);
+    setPreview({ offsetX: nextOffsetX, offsetY: nextOffsetY });
+  }, [
+    classicBottomWeightDelta,
+    derived.openingSize,
+    derived.outerMatSize,
+    matOpeningGuideMeasurementThreshold,
+    preview.offsetX,
+    setPreview,
+  ]);
+
+  const handleOpeningDragStateChange = useCallback((isDragging: boolean) => {
+    setIsOpeningDragging(isDragging);
+  }, []);
+
   const openCropEditor = useCallback(
     (
       imageUri: string,
@@ -678,7 +1008,9 @@ export default function PreviewAdjustScreen() {
             : "basicThin"
           : frameStyle === "nielsenFlorentine"
             ? "nielsenFlorentine93"
-            : "nielsenMonochrome97";
+            : frameStyle === "nielsenMonochrome"
+              ? "nielsenMonochrome97"
+              : "larsPanelSilverBlack";
 
       handleFramePresetChange(nextProfileId);
     },
@@ -787,6 +1119,10 @@ export default function PreviewAdjustScreen() {
           accessibilityLabel="Re-center all"
           onPress={() => setPreview({ offsetX: 0, offsetY: 0 })}
         />
+        <FloatingPositionClassicBottomWeightButton
+          accessibilityLabel="Classic Bottom Weight"
+          onPress={handleClassicBottomWeight}
+        />
         {usingImportedArtwork ? (
           <FloatingPositionIconButton
             icon="crop-outline"
@@ -798,6 +1134,79 @@ export default function PreviewAdjustScreen() {
       </View>
     </GuidanceAnchor>
   );
+
+  const liveRevealMeasurementOverlay =
+    isOpeningDragging && liveRevealMeasurementItems.length > 0 ? (
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: spacing.md,
+          right: spacing.md,
+          top: spacing.md,
+          zIndex: 7,
+          alignItems: "center",
+        }}
+      >
+        <View
+          style={{
+            maxWidth: isPhoneWorkspace ? 330 : 520,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            borderRadius: radii.lg,
+            backgroundColor: colors.headerBackground,
+            paddingHorizontal: spacing.sm,
+            paddingVertical: spacing.xs,
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 6,
+            shadowColor: "#000",
+            shadowOpacity: 0.18,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 7,
+          }}
+        >
+          {liveRevealMeasurementItems.map((item) => (
+            <View
+              key={item.label}
+              style={{
+                minWidth: isPhoneWorkspace ? "46%" : 116,
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                borderRadius: radii.md,
+                backgroundColor: colors.backgroundInput,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 9,
+                  fontWeight: "800",
+                  textTransform: "uppercase",
+                  letterSpacing: 0,
+                }}
+              >
+                {item.label}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: colors.textPrimary,
+                  fontSize: 13,
+                  fontWeight: "800",
+                  marginTop: 1,
+                }}
+              >
+                {item.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    ) : null;
 
   const previewCanvasSection = (
     <GuidanceAnchor
@@ -818,6 +1227,7 @@ export default function PreviewAdjustScreen() {
             artworkSize={derived.artworkSize}
             openingSize={derived.openingSize}
             outerMatSize={derived.outerMatSize}
+            artworkReveal={derived.visibleReveal}
             frameProfileId={preview.frameProfileId}
             frameColorHex={resolvedFrameColorHex}
             matThicknessPly={preview.matThicknessPly}
@@ -832,9 +1242,15 @@ export default function PreviewAdjustScreen() {
             artworkCrop={preview.artworkCrop}
             onAdjustOffsets={handleCommittedOffsets}
             onLiveOffsetsChange={handleLiveOffsetsChange}
+            onDragStateChange={handleOpeningDragStateChange}
+            matOpeningGuidesEnabled
+            matOpeningGuideTargets={matOpeningGuideTargets}
+            matOpeningGuideThresholdPx={matOpeningGuideThresholdPx}
+            matOpeningGuideMeasurementThreshold={matOpeningGuideMeasurementThreshold}
             canvasHeight={previewCanvasHeight}
             layoutVariant="workspace"
           />
+          {liveRevealMeasurementOverlay}
           <CanvasBackgroundColorPicker compact={isPhoneWorkspace} />
           <ArtworkCanvasActionOverlay
             guidanceId="preview-adjust-upload-artwork"
@@ -927,6 +1343,9 @@ export default function PreviewAdjustScreen() {
           value={selectedFrameStyleValue}
           onChange={handleFrameStyleChange}
           options={FRAME_STYLE_OPTIONS}
+          renderOptionPreview={(option, active) => (
+            <FrameStyleThumbnail frameStyle={option.value} active={active} />
+          )}
         />
       </PanelControlRow>
 
@@ -944,6 +1363,12 @@ export default function PreviewAdjustScreen() {
           }}
           options={frameProfilePickerOptions}
           disabled={selectedFrameStyleValue === "none"}
+          renderOptionPreview={(option, active) => (
+            <FrameOptionThumbnail
+              profileId={option.value === "notApplicable" ? "basicNone" : option.value}
+              active={active}
+            />
+          )}
         />
       </PanelControlRow>
 
@@ -961,6 +1386,12 @@ export default function PreviewAdjustScreen() {
           }}
           options={frameColorPickerOptions}
           disabled={selectedFrameStyleValue === "none"}
+          renderOptionPreview={(option, active) => (
+            <FrameFinishThumbnail
+              finishId={option.value === "notApplicable" ? null : (option.value as FrameFinishId)}
+              active={active}
+            />
+          )}
         />
       </PanelControlRow>
     </>

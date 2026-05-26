@@ -84,6 +84,19 @@ interface RoomRealismProfilePreset {
   sliderLimits: RoomRealismSliderLimits;
 }
 
+interface RoomSceneRealismTuning {
+  shadowStrength?: number;
+  shadowSoftness?: number;
+  shadowDistance?: number;
+  shadowDirection?: RoomViewPoint;
+  frameDepth?: number;
+  matBevelDepth?: number;
+  matBevelSoftness?: number;
+  innerLipContrast?: number;
+  artworkBrightness?: number;
+  sliderLimits?: Partial<RoomRealismSliderLimits>;
+}
+
 const DEFAULT_WALL_BRIGHTNESS = 0.62;
 const DEFAULT_WARMTH = 0;
 const DEFAULT_AMBIENT_LIGHT = 0.6;
@@ -93,8 +106,8 @@ const DEFAULT_EDGE_BLEND = 0.35;
 const DEFAULT_SHADOW_DIRECTION: RoomViewPoint = { x: 0.58, y: 0.82 };
 
 const BASE_SLIDER_LIMITS: RoomRealismSliderLimits = {
-  shadowStrength: { min: 0, max: 0.46, step: 0.01 },
-  shadowSoftness: { min: 4, max: 64, step: 1 },
+  shadowStrength: { min: 0, max: 0.82, step: 0.01 },
+  shadowSoftness: { min: 0, max: 10, step: 1 },
   shadowDistance: { min: 0, max: 48, step: 1 },
   frameDepth: { min: 0.55, max: 1.55, step: 0.01 },
   matBevelDepth: { min: 0.35, max: 1.35, step: 0.01 },
@@ -104,29 +117,43 @@ const BASE_SLIDER_LIMITS: RoomRealismSliderLimits = {
   reflectionStrength: { min: 0, max: 0.38, step: 0.01 },
 };
 
+const RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS = {
+  strength: 0.35,
+  softness: 5.25,
+  distance: 10.5,
+};
+
+const RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS = {
+  frameDepth: 1,
+  matBevelDepth: 0.8,
+  matBevelSoftness: 0.475,
+  innerLipContrast: 1.2,
+  artworkBrightness: 0.95,
+};
+
 const PROFILE_PRESETS: Record<RoomRealismProfileId, RoomRealismProfilePreset> = {
   brightLivingRoom: {
-    shadowStrength: 0.24,
-    shadowSoftness: 30,
-    shadowDistance: 24,
-    frameDepth: 0.92,
-    matBevelDepth: 0.56,
-    matBevelSoftness: 0.5,
-    innerLipContrast: 1.05,
-    artworkBrightness: 1,
+    shadowStrength: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.strength,
+    shadowSoftness: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.softness,
+    shadowDistance: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.distance,
+    frameDepth: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.frameDepth,
+    matBevelDepth: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.matBevelDepth,
+    matBevelSoftness: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.matBevelSoftness,
+    innerLipContrast: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.innerLipContrast,
+    artworkBrightness: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.artworkBrightness,
     glassEnabled: false,
     reflectionStrength: 0.12,
     sliderLimits: {
       ...BASE_SLIDER_LIMITS,
-      shadowStrength: { min: 0, max: 0.42, step: 0.01 },
-      shadowSoftness: { min: 6, max: 56, step: 1 },
-      shadowDistance: { min: 0, max: 42, step: 1 },
+      shadowStrength: { min: 0, max: 0.74, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 32, step: 1 },
     },
   },
   warmLampDarkWall: {
     shadowStrength: 0.34,
-    shadowSoftness: 38,
-    shadowDistance: 28,
+    shadowSoftness: 10,
+    shadowDistance: 16,
     frameDepth: 1.08,
     matBevelDepth: 0.76,
     matBevelSoftness: 0.52,
@@ -136,16 +163,16 @@ const PROFILE_PRESETS: Record<RoomRealismProfileId, RoomRealismProfilePreset> = 
     reflectionStrength: 0.18,
     sliderLimits: {
       ...BASE_SLIDER_LIMITS,
-      shadowStrength: { min: 0.04, max: 0.56, step: 0.01 },
-      shadowSoftness: { min: 10, max: 72, step: 1 },
-      shadowDistance: { min: 2, max: 54, step: 1 },
+      shadowStrength: { min: 0.04, max: 0.9, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 2, max: 36, step: 1 },
       reflectionStrength: { min: 0, max: 0.42, step: 0.01 },
     },
   },
   coolIndustrialGallery: {
     shadowStrength: 0.32,
-    shadowSoftness: 34,
-    shadowDistance: 22,
+    shadowSoftness: 10,
+    shadowDistance: 14,
     frameDepth: 1.04,
     matBevelDepth: 0.7,
     matBevelSoftness: 0.46,
@@ -155,29 +182,29 @@ const PROFILE_PRESETS: Record<RoomRealismProfileId, RoomRealismProfilePreset> = 
     reflectionStrength: 0.16,
     sliderLimits: {
       ...BASE_SLIDER_LIMITS,
-      shadowStrength: { min: 0.04, max: 0.52, step: 0.01 },
-      shadowSoftness: { min: 8, max: 64, step: 1 },
-      shadowDistance: { min: 0, max: 46, step: 1 },
+      shadowStrength: { min: 0.04, max: 0.84, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 34, step: 1 },
       matBevelSoftness: { min: 0.2, max: 0.68, step: 0.01 },
     },
   },
   softNeutralGallery: {
-    shadowStrength: 0.22,
-    shadowSoftness: 32,
-    shadowDistance: 20,
-    frameDepth: 0.96,
-    matBevelDepth: 0.62,
-    matBevelSoftness: 0.5,
-    innerLipContrast: 1.1,
-    artworkBrightness: 1,
+    shadowStrength: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.strength,
+    shadowSoftness: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.softness,
+    shadowDistance: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.distance,
+    frameDepth: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.frameDepth,
+    matBevelDepth: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.matBevelDepth,
+    matBevelSoftness: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.matBevelSoftness,
+    innerLipContrast: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.innerLipContrast,
+    artworkBrightness: RESIDENTIAL_LAUNCH_MATERIAL_DEFAULTS.artworkBrightness,
     glassEnabled: false,
     reflectionStrength: 0.13,
     sliderLimits: BASE_SLIDER_LIMITS,
   },
   myWallNeutral: {
     shadowStrength: 0.18,
-    shadowSoftness: 24,
-    shadowDistance: 16,
+    shadowSoftness: 6,
+    shadowDistance: 10,
     frameDepth: 0.9,
     matBevelDepth: 0.55,
     matBevelSoftness: 0.48,
@@ -187,9 +214,117 @@ const PROFILE_PRESETS: Record<RoomRealismProfileId, RoomRealismProfilePreset> = 
     reflectionStrength: 0.1,
     sliderLimits: {
       ...BASE_SLIDER_LIMITS,
-      shadowStrength: { min: 0, max: 0.42, step: 0.01 },
-      shadowSoftness: { min: 4, max: 54, step: 1 },
-      shadowDistance: { min: 0, max: 40, step: 1 },
+      shadowStrength: { min: 0, max: 0.74, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 28, step: 1 },
+    },
+  },
+};
+
+const SCENE_REALISM_TUNING: Record<string, RoomSceneRealismTuning> = {
+  "calm-cozy-modern-living-room-landscape": {
+    shadowStrength: 0.25,
+    shadowSoftness: 3.75,
+    shadowDistance: 4.5,
+    shadowDirection: { x: 0.86, y: 0.5 },
+    frameDepth: 0.65,
+    matBevelDepth: 0.8,
+    matBevelSoftness: 0.475,
+    innerLipContrast: 0.85,
+    artworkBrightness: 0.95,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.5, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 22, step: 1 },
+    },
+  },
+  "serene-minimalist-interior-landscape": {
+    shadowStrength: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.strength,
+    shadowSoftness: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.softness,
+    shadowDistance: RESIDENTIAL_LAUNCH_SHADOW_DEFAULTS.distance,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.5, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 22, step: 1 },
+    },
+  },
+  "minimalist-still-life-soft-lighting-landscape": {
+    shadowStrength: 0.75,
+    shadowSoftness: 11.25,
+    shadowDistance: 22.5,
+    frameDepth: 1.55,
+    matBevelDepth: 0.8,
+    matBevelSoftness: 0.475,
+    innerLipContrast: 1.75,
+    artworkBrightness: 0.9,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.75, step: 0.01 },
+      shadowSoftness: { min: 0, max: 15, step: 1 },
+      shadowDistance: { min: 0, max: 30, step: 1 },
+    },
+  },
+  "minimalist-industrial-gallery-interior-landscape": {
+    shadowStrength: 1,
+    shadowSoftness: 6,
+    shadowDistance: 15,
+    shadowDirection: { x: 0, y: 1 },
+    frameDepth: 1.55,
+    matBevelDepth: 1.35,
+    matBevelSoftness: 0.296,
+    innerLipContrast: 1.75,
+    artworkBrightness: 0.96,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 1, step: 0.01 },
+      shadowSoftness: { min: 0, max: 15, step: 1 },
+      shadowDistance: { min: 0, max: 30, step: 1 },
+    },
+  },
+  "serene-minimalist-living-room-portrait": {
+    shadowStrength: 0.25,
+    shadowSoftness: 3,
+    shadowDistance: 4.5,
+    shadowDirection: { x: 0.53, y: 0.85 },
+    frameDepth: 1,
+    matBevelDepth: 0.8,
+    matBevelSoftness: 0.475,
+    innerLipContrast: 1.2,
+    artworkBrightness: 0.96,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.5, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 22, step: 1 },
+    },
+  },
+  "serene-minimalist-sideboard-portrait": {
+    shadowStrength: 0.35,
+    shadowSoftness: 6,
+    shadowDistance: 9,
+    shadowDirection: { x: 0.53, y: 0.85 },
+    frameDepth: 1,
+    matBevelDepth: 0.8,
+    matBevelSoftness: 0.475,
+    innerLipContrast: 1.2,
+    artworkBrightness: 0.95,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.52, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 24, step: 1 },
+    },
+  },
+  "modern-slate-interior-portrait": {
+    shadowStrength: 0.4,
+    shadowSoftness: 8.25,
+    shadowDistance: 7.5,
+    shadowDirection: { x: 0.53, y: 0.85 },
+    frameDepth: 1.05,
+    matBevelDepth: 0.7,
+    matBevelSoftness: 0.488,
+    innerLipContrast: 1.2,
+    artworkBrightness: 0.96,
+    sliderLimits: {
+      shadowStrength: { min: 0, max: 0.6, step: 0.01 },
+      shadowSoftness: { min: 0, max: 10, step: 1 },
+      shadowDistance: { min: 0, max: 24, step: 1 },
     },
   },
 };
@@ -204,6 +339,20 @@ function resolveNumber(value: number | undefined, fallback: number, min: number,
 
 function clampToLimit(value: number, limit: RoomRealismSliderLimit) {
   return clamp(value, limit.min, limit.max);
+}
+
+function getSceneRealismTuning(scene: RoomPresetScene | null | undefined) {
+  return scene?.id ? SCENE_REALISM_TUNING[scene.id] ?? null : null;
+}
+
+function resolveSliderLimits(
+  preset: RoomRealismProfilePreset,
+  sceneTuning: RoomSceneRealismTuning | null
+): RoomRealismSliderLimits {
+  return {
+    ...preset.sliderLimits,
+    ...(sceneTuning?.sliderLimits ?? {}),
+  };
 }
 
 function normalizeDirection(direction: RoomViewPoint): RoomViewPoint {
@@ -322,30 +471,37 @@ function chooseRoomRealismProfileId(
 function resolveShadowProfile(
   scene: RoomPresetScene | null | undefined,
   preset: RoomRealismProfilePreset,
-  metadata: ReturnType<typeof resolveMetadataSignals>
+  metadata: ReturnType<typeof resolveMetadataSignals>,
+  sliderLimits: RoomRealismSliderLimits,
+  sceneTuning: RoomSceneRealismTuning | null
 ): RoomRealismShadowProfile {
   const defaultShadow = scene?.defaultShadow;
   const defaultDistance = defaultShadow
     ? Math.hypot(defaultShadow.offsetX, defaultShadow.offsetY)
     : preset.shadowDistance;
   const darkness = 1 - metadata.wallBrightness;
-  const direction = getShadowDirection(scene);
+  const direction = sceneTuning?.shadowDirection
+    ? normalizeDirection(sceneTuning.shadowDirection)
+    : getShadowDirection(scene);
   const strength = clampToLimit(
-    (defaultShadow?.opacity ?? preset.shadowStrength) +
-      (darkness - 0.38) * 0.08 +
-      (metadata.contrast - 0.55) * 0.06 -
-      (metadata.ambientLight - 0.6) * 0.04,
-    preset.sliderLimits.shadowStrength
+    sceneTuning?.shadowStrength ??
+      ((defaultShadow?.opacity ?? preset.shadowStrength) +
+        (darkness - 0.38) * 0.08 +
+        (metadata.contrast - 0.55) * 0.06 -
+        (metadata.ambientLight - 0.6) * 0.04),
+    sliderLimits.shadowStrength
   );
   const softness = clampToLimit(
-    (defaultShadow?.blurRadius ?? preset.shadowSoftness) +
-      metadata.edgeBlend * 4 +
-      Math.max(0, metadata.ambientLight - 0.6) * 8,
-    preset.sliderLimits.shadowSoftness
+    sceneTuning?.shadowSoftness ??
+      ((defaultShadow?.blurRadius ?? preset.shadowSoftness) +
+        metadata.edgeBlend * 4 +
+        Math.max(0, metadata.ambientLight - 0.6) * 8),
+    sliderLimits.shadowSoftness
   );
   const distance = clampToLimit(
-    defaultDistance + (darkness - 0.38) * 5 + (metadata.contrast - 0.55) * 4,
-    preset.sliderLimits.shadowDistance
+    sceneTuning?.shadowDistance ??
+      (defaultDistance + (darkness - 0.38) * 5 + (metadata.contrast - 0.55) * 4),
+    sliderLimits.shadowDistance
   );
 
   return {
@@ -361,33 +517,42 @@ function resolveShadowProfile(
 function resolveMaterialProfile(
   preset: RoomRealismProfilePreset,
   metadata: ReturnType<typeof resolveMetadataSignals>,
-  lightingZoneIntensity: number
+  lightingZoneIntensity: number,
+  sliderLimits: RoomRealismSliderLimits,
+  sceneTuning: RoomSceneRealismTuning | null
 ): RoomRealismMaterialProfile {
   const darkness = 1 - metadata.wallBrightness;
   const contrastLift = metadata.contrast - DEFAULT_CONTRAST;
 
   return {
     frameDepth: clampToLimit(
-      preset.frameDepth + Math.max(0, darkness - 0.38) * 0.1 + contrastLift * 0.08,
-      preset.sliderLimits.frameDepth
+      sceneTuning?.frameDepth ??
+        (preset.frameDepth + Math.max(0, darkness - 0.38) * 0.1 + contrastLift * 0.08),
+      sliderLimits.frameDepth
     ),
     matBevelDepth: clampToLimit(
-      preset.matBevelDepth + Math.max(0, darkness - 0.38) * 0.08 + contrastLift * 0.12,
-      preset.sliderLimits.matBevelDepth
+      sceneTuning?.matBevelDepth ??
+        (preset.matBevelDepth + Math.max(0, darkness - 0.38) * 0.08 + contrastLift * 0.12),
+      sliderLimits.matBevelDepth
     ),
     matBevelSoftness: clampToLimit(
-      preset.matBevelSoftness + metadata.edgeBlend * 0.03 - Math.max(0, metadata.contrast - 0.7) * 0.04,
-      preset.sliderLimits.matBevelSoftness
+      sceneTuning?.matBevelSoftness ??
+        (preset.matBevelSoftness +
+          metadata.edgeBlend * 0.03 -
+          Math.max(0, metadata.contrast - 0.7) * 0.04),
+      sliderLimits.matBevelSoftness
     ),
     innerLipContrast: clampToLimit(
-      preset.innerLipContrast + Math.max(0, darkness - 0.4) * 0.12 + contrastLift * 0.12,
-      preset.sliderLimits.innerLipContrast
+      sceneTuning?.innerLipContrast ??
+        (preset.innerLipContrast + Math.max(0, darkness - 0.4) * 0.12 + contrastLift * 0.12),
+      sliderLimits.innerLipContrast
     ),
     artworkBrightness: clampToLimit(
-      preset.artworkBrightness +
-        (metadata.ambientLight - DEFAULT_AMBIENT_LIGHT) * 0.04 +
-        lightingZoneIntensity * 0.03,
-      preset.sliderLimits.artworkBrightness
+      sceneTuning?.artworkBrightness ??
+        (preset.artworkBrightness +
+          (metadata.ambientLight - DEFAULT_AMBIENT_LIGHT) * 0.04 +
+          lightingZoneIntensity * 0.03),
+      sliderLimits.artworkBrightness
     ),
     glassEnabled: preset.glassEnabled,
     reflectionStrength: clampToLimit(
@@ -409,6 +574,8 @@ export function resolveRoomRealismProfile(
   const metadataSignals = resolveMetadataSignals(scene);
   const profileId = chooseRoomRealismProfileId(scene, sourceMode, metadataSignals);
   const preset = PROFILE_PRESETS[profileId];
+  const sceneTuning = getSceneRealismTuning(scene);
+  const sliderLimits = resolveSliderLimits(preset, sceneTuning);
   const lightingZoneIntensity = getPositiveLightingIntensity(scene?.sceneLightingZones);
 
   return {
@@ -416,10 +583,15 @@ export function resolveRoomRealismProfile(
     sourceMode,
     isRoomDriven: sourceMode === "presetRoom" && Boolean(scene),
     sceneId: scene?.id ?? null,
-    shadow: resolveShadowProfile(scene, preset, metadataSignals),
-    material: resolveMaterialProfile(preset, metadataSignals, lightingZoneIntensity),
-    sliderLimits: preset.sliderLimits,
+    shadow: resolveShadowProfile(scene, preset, metadataSignals, sliderLimits, sceneTuning),
+    material: resolveMaterialProfile(
+      preset,
+      metadataSignals,
+      lightingZoneIntensity,
+      sliderLimits,
+      sceneTuning
+    ),
+    sliderLimits,
     metadataSignals,
   };
 }
-

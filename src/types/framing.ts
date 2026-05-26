@@ -5,14 +5,19 @@ export type OpeningEdgeMode = "overlap" | "border";
 export type FractionDenominator = 8 | 16 | 32;
 export type MatThicknessPly = 2 | 4 | 6 | 8;
 export type MatCoreColor = "white" | "black";
-export type FrameFamily = "basic" | "nielsenFlorentine" | "nielsenMonochrome";
+export type FrameFamily = "basic" | "nielsenFlorentine" | "nielsenMonochrome" | "lars";
 export type FrameProfileId =
   | "basicNone"
   | "basicThin"
   | "basicGallery"
   | "nielsenFlorentine93"
   | "nielsenMonochrome95"
-  | "nielsenMonochrome97";
+  | "nielsenMonochrome97"
+  | "larsPanelSilverBlack"
+  | "larsPanelSilverBlackSlim"
+  | "andoverSuede21116"
+  | "altoWhite11516"
+  | "altoBlack11516";
 export type FrameFinishId =
   | "basicBlack"
   | "basicGrey"
@@ -21,7 +26,11 @@ export type FrameFinishId =
   | "florentineGrey"
   | "florentineSilver"
   | "monochromeMatteWhite"
-  | "monochromePaintedBlack";
+  | "monochromePaintedBlack"
+  | "larsSilverBlack"
+  | "andoverSuede"
+  | "altoWhite"
+  | "altoBlack";
 export type ArtworkPreviewSourceMode = "placeholder" | "import";
 export type RoomViewSourceMode = "myWall" | "presetRoom";
 export type RoomPresetSceneOrientation = "landscape" | "portrait";

@@ -16,6 +16,7 @@ interface CompactOptionPickerProps<T extends string> {
   options: CompactOption<T>[];
   onChange: (value: T) => void;
   disabled?: boolean;
+  renderOptionPreview?: (option: CompactOption<T>, active: boolean) => React.ReactNode;
 }
 
 export default function CompactOptionPicker<T extends string>({
@@ -25,14 +26,16 @@ export default function CompactOptionPicker<T extends string>({
   options,
   onChange,
   disabled = false,
+  renderOptionPreview,
 }: CompactOptionPickerProps<T>) {
   const { colors, radii, spacing, typography } = useAppTheme();
   const [visible, setVisible] = useState(false);
 
-  const selectedLabel = useMemo(
-    () => options.find((option) => option.value === value)?.label ?? "",
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) ?? null,
     [options, value]
   );
+  const selectedLabel = selectedOption?.label ?? "";
 
   return (
     <View style={{ width: "100%", gap: spacing.xs }}>
@@ -62,6 +65,7 @@ export default function CompactOptionPicker<T extends string>({
           gap: spacing.sm,
         }}
       >
+        {selectedOption && renderOptionPreview ? renderOptionPreview(selectedOption, true) : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontSize: 15, fontWeight: "600", color: colors.textPrimary }} numberOfLines={1}>
             {selectedLabel}
@@ -91,17 +95,24 @@ export default function CompactOptionPicker<T extends string>({
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
+                gap: spacing.sm,
               }}
             >
-              <Text
-                style={{
-                  fontSize: 15,
-                  fontWeight: active ? "600" : "500",
-                  color: colors.textPrimary,
-                }}
-              >
-                {option.label}
-              </Text>
+              <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                {renderOptionPreview ? renderOptionPreview(option, active) : null}
+                <Text
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: 15,
+                    fontWeight: active ? "600" : "500",
+                    color: colors.textPrimary,
+                  }}
+                  numberOfLines={2}
+                >
+                  {option.label}
+                </Text>
+              </View>
               {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
             </Pressable>
           );

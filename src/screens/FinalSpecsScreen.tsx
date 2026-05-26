@@ -396,6 +396,7 @@ function FinalCutDiagram({
               artworkSize={derived.artworkSize}
               openingSize={derived.openingSize}
               outerMatSize={derived.outerMatSize}
+              artworkReveal={derived.visibleReveal}
               frameProfileId={draft.preview.frameProfileId}
               frameColorHex={draft.preview.frameColorHex}
               matThicknessPly={draft.preview.matThicknessPly}
@@ -408,6 +409,7 @@ function FinalCutDiagram({
               artworkImageUri={draft.preview.artworkImageUri}
               artworkCrop={draft.preview.artworkCrop}
               physicalScale={physicalScale}
+              enableImageProfileFrames
               showShadow
               style={{
                 position: "absolute",

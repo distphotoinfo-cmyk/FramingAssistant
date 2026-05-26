@@ -38,13 +38,14 @@ import { useStepNavigation } from "../hooks/useStepNavigation";
 import { useAppSettingsStore } from "../state/appSettingsStore";
 import { createInitialPreviewDraft, useFramingFlowStore } from "../state/framingFlowStore";
 import { useAppTheme } from "../theme/AppThemeProvider";
-import type { MeasurementUnit, SizeInput } from "../types/framing";
+import type { EdgeMeasurements, MeasurementUnit, SizeInput } from "../types/framing";
 import type { FramingRootStackParamList } from "../types/navigation";
 import { getArtworkAspectRatio } from "../utils/artworkCrop";
 import { importArtworkFromCamera, importArtworkFromLibrary } from "../utils/artworkImport";
 import { resolveFrameColorHex } from "../utils/frameProfiles";
 import { parseMeasurement } from "../utils/formatters";
 import {
+  calculateVisibleReveal,
   calculateOpeningSize,
   type NumericSize,
   getDefaultOpeningAmount,
@@ -66,6 +67,16 @@ const SETUP_SHEET_GUIDANCE_TARGET_IDS = new Set([
   "setup-visible-border",
   "setup-outer-mat-size",
 ]);
+const BORDER_SIDE_FIELDS: {
+  key: keyof EdgeMeasurements;
+  label: string;
+  title: string;
+}[] = [
+  { key: "top", label: "Top", title: "Top visible border" },
+  { key: "bottom", label: "Bottom", title: "Bottom visible border" },
+  { key: "left", label: "Left", title: "Left visible border" },
+  { key: "right", label: "Right", title: "Right visible border" },
+];
 
 function resolvePreviewSize(size: SizeInput, fallback: NumericSize): NumericSize {
   return {
@@ -87,6 +98,41 @@ function buildStepOnePreviewOuterMatSize(
     width: baseWidth + outerMargin * 2,
     height: baseHeight + outerMargin * 2,
   };
+}
+
+function normalizeEdgeMeasurements(
+  edges: EdgeMeasurements | undefined,
+  fallback: string
+): EdgeMeasurements {
+  const fallbackValue = fallback.trim() || "0";
+
+  return {
+    top: edges?.top?.trim() || fallbackValue,
+    right: edges?.right?.trim() || fallbackValue,
+    bottom: edges?.bottom?.trim() || fallbackValue,
+    left: edges?.left?.trim() || fallbackValue,
+  };
+}
+
+function buildUniformEdgeMeasurements(value: string): EdgeMeasurements {
+  return {
+    top: value,
+    right: value,
+    bottom: value,
+    left: value,
+  };
+}
+
+function edgeMeasurementsAreUniform(edges: EdgeMeasurements) {
+  const parsedValues = [edges.top, edges.right, edges.bottom, edges.left].map(parseMeasurement);
+
+  if (parsedValues.some((value) => value === null)) {
+    return edges.top === edges.right && edges.top === edges.bottom && edges.top === edges.left;
+  }
+
+  const [firstValue] = parsedValues;
+
+  return parsedValues.every((value) => Math.abs((value ?? 0) - (firstValue ?? 0)) < 0.0001);
 }
 
 type SetupOptionRowProps = {
@@ -297,6 +343,7 @@ export default function SetupScreen() {
   const setReveal = useFramingFlowStore((state) => state.setReveal);
   const setOuterMat = useFramingFlowStore((state) => state.setOuterMat);
   const [borderPickerOpenSignal, setBorderPickerOpenSignal] = useState(0);
+  const [customBorderValuesEnabled, setCustomBorderValuesEnabled] = useState(false);
   const [guidanceIndex, setGuidanceIndex] = useState(0);
   const [setupSheetVisible, setSetupSheetVisible] = useState(false);
   const [readyGuidanceTargetId, setReadyGuidanceTargetId] = useState<string | null>(null);
@@ -305,6 +352,26 @@ export default function SetupScreen() {
   const fractionStep = unit === "in" ? imperialPrecision : undefined;
   const artworkSize = parseSizeInput(draft.artwork.artworkSize);
   const openingAmount = draft.reveal.openingAmount || getDefaultOpeningAmount(unit);
+  const visibleBorderValues = useMemo(
+    () => normalizeEdgeMeasurements(draft.reveal.visibleReveal, openingAmount),
+    [draft.reveal.visibleReveal, openingAmount]
+  );
+  const hasCustomBorderValues = useMemo(
+    () => !edgeMeasurementsAreUniform(visibleBorderValues),
+    [visibleBorderValues]
+  );
+  const customBorderValuesActive =
+    draft.reveal.openingBehavior === "border" &&
+    (customBorderValuesEnabled || hasCustomBorderValues);
+  const activeVisibleReveal = useMemo(() => {
+    if (draft.reveal.openingBehavior === "overlap") {
+      return buildUniformEdgeMeasurements("0");
+    }
+
+    return customBorderValuesActive
+      ? visibleBorderValues
+      : buildUniformEdgeMeasurements(openingAmount);
+  }, [customBorderValuesActive, draft.reveal.openingBehavior, openingAmount, visibleBorderValues]);
   const tabletWorkspaceMode = getTabletWorkspaceMode(windowWidth, windowHeight);
   const isTabletScreen = Math.min(windowWidth, windowHeight) >= TABLET_WORKSPACE_BREAKPOINT;
   const isPhoneWorkspace = tabletWorkspaceMode === "phone";
@@ -340,6 +407,12 @@ export default function SetupScreen() {
         preferredPlacement: "bottom",
       },
       {
+        id: "setup-outer-mat-size-bubble",
+        targetId: "setup-outer-mat-size",
+        text: "Enter the outer dimensions of your full mat size.",
+        preferredPlacement: "top",
+      },
+      {
         id: "setup-mat-window-opening-bubble",
         targetId: "setup-mat-window-opening",
         text: "Select whether you want the mat to cover the artwork or show a border around it, then enter the coverage or border amount.",
@@ -349,12 +422,6 @@ export default function SetupScreen() {
         id: "setup-visible-border-bubble",
         targetId: "setup-visible-border",
         text: "Set the visible border or overlap amount. This value updates the mat window in the preview.",
-        preferredPlacement: "top",
-      },
-      {
-        id: "setup-outer-mat-size-bubble",
-        targetId: "setup-outer-mat-size",
-        text: "Enter the outer dimensions of your full mat size.",
         preferredPlacement: "top",
       },
       {
@@ -391,8 +458,14 @@ export default function SetupScreen() {
   const guidanceOverlayVisible =
     shouldShowSetupGuidance && readyGuidanceTargetId === activeGuidanceTargetId;
   const openingSize = useMemo(
-    () => calculateOpeningSize(artworkSize, draft.reveal.openingBehavior, openingAmount),
-    [artworkSize, draft.reveal.openingBehavior, openingAmount]
+    () =>
+      calculateOpeningSize(
+        artworkSize,
+        draft.reveal.openingBehavior,
+        openingAmount,
+        activeVisibleReveal
+      ),
+    [activeVisibleReveal, artworkSize, draft.reveal.openingBehavior, openingAmount]
   );
   const artworkAspectRatio = useMemo(() => getArtworkAspectRatio(artworkSize), [artworkSize]);
   const hasImportedArtwork =
@@ -404,8 +477,18 @@ export default function SetupScreen() {
     [draft.artwork.artworkSize, unit]
   );
   const previewOpeningSize = useMemo(
-    () => calculateOpeningSize(previewArtworkSize, draft.reveal.openingBehavior, openingAmount),
-    [draft.reveal.openingBehavior, openingAmount, previewArtworkSize]
+    () =>
+      calculateOpeningSize(
+        previewArtworkSize,
+        draft.reveal.openingBehavior,
+        openingAmount,
+        activeVisibleReveal
+      ),
+    [activeVisibleReveal, draft.reveal.openingBehavior, openingAmount, previewArtworkSize]
+  );
+  const previewArtworkReveal = useMemo(
+    () => calculateVisibleReveal(draft.reveal.openingBehavior, openingAmount, activeVisibleReveal),
+    [activeVisibleReveal, draft.reveal.openingBehavior, openingAmount]
   );
   const previewOuterMatFallback = useMemo(
     () => buildStepOnePreviewOuterMatSize(previewOpeningSize, previewArtworkSize, unit),
@@ -434,24 +517,22 @@ export default function SetupScreen() {
   }, []);
 
   useEffect(() => {
-    const nextVisibleRevealAmount = draft.reveal.openingBehavior === "border" ? openingAmount : "0";
-    const nextVisibleReveal = {
-      top: nextVisibleRevealAmount,
-      right: nextVisibleRevealAmount,
-      bottom: nextVisibleRevealAmount,
-      left: nextVisibleRevealAmount,
-    };
+    if (draft.reveal.openingBehavior === "border" && hasCustomBorderValues) {
+      setCustomBorderValuesEnabled(true);
+    }
+  }, [draft.reveal.openingBehavior, hasCustomBorderValues]);
 
+  useEffect(() => {
     const nextMountStyle = draft.reveal.openingBehavior === "overlap" ? "window" : "float";
     const nextOpeningSize = toStoredSize(openingSize);
 
     const needsUpdate =
       draft.reveal.mountStyle !== nextMountStyle ||
       draft.reveal.openingAmount !== openingAmount ||
-      draft.reveal.visibleReveal.top !== nextVisibleReveal.top ||
-      draft.reveal.visibleReveal.right !== nextVisibleReveal.right ||
-      draft.reveal.visibleReveal.bottom !== nextVisibleReveal.bottom ||
-      draft.reveal.visibleReveal.left !== nextVisibleReveal.left ||
+      draft.reveal.visibleReveal.top !== activeVisibleReveal.top ||
+      draft.reveal.visibleReveal.right !== activeVisibleReveal.right ||
+      draft.reveal.visibleReveal.bottom !== activeVisibleReveal.bottom ||
+      draft.reveal.visibleReveal.left !== activeVisibleReveal.left ||
       draft.reveal.matOpeningSize.width !== nextOpeningSize.width ||
       draft.reveal.matOpeningSize.height !== nextOpeningSize.height;
 
@@ -462,10 +543,11 @@ export default function SetupScreen() {
     setReveal({
       mountStyle: nextMountStyle,
       openingAmount,
-      visibleReveal: nextVisibleReveal,
+      visibleReveal: activeVisibleReveal,
       matOpeningSize: nextOpeningSize,
     });
   }, [
+    activeVisibleReveal,
     draft.reveal.matOpeningSize.height,
     draft.reveal.matOpeningSize.width,
     draft.reveal.mountStyle,
@@ -556,6 +638,52 @@ export default function SetupScreen() {
     );
   }, [artworkAspectRatio, colors.background, handlePickFromLibrary, handleTakePhoto]);
 
+  const handleUniformBorderChange = useCallback(
+    (value: string) =>
+      setReveal({
+        openingAmount: value,
+        visibleReveal: buildUniformEdgeMeasurements(value),
+      }),
+    [setReveal]
+  );
+
+  const handleEnableCustomBorderValues = useCallback(() => {
+    setCustomBorderValuesEnabled(true);
+    setReveal({
+      openingBehavior: "border",
+      visibleReveal: visibleBorderValues,
+    });
+  }, [setReveal, visibleBorderValues]);
+
+  const handleDisableCustomBorderValues = useCallback(() => {
+    const uniformReveal = buildUniformEdgeMeasurements(openingAmount);
+
+    setCustomBorderValuesEnabled(false);
+    setReveal({
+      openingBehavior: "border",
+      visibleReveal: uniformReveal,
+    });
+  }, [openingAmount, setReveal]);
+
+  const handleCustomBorderSideChange = useCallback(
+    (side: keyof EdgeMeasurements, value: string) => {
+      const nextVisibleReveal = {
+        ...visibleBorderValues,
+        [side]: value,
+      };
+      const nextOpeningAmount = edgeMeasurementsAreUniform(nextVisibleReveal)
+        ? value
+        : openingAmount;
+
+      setReveal({
+        openingBehavior: "border",
+        openingAmount: nextOpeningAmount,
+        visibleReveal: nextVisibleReveal,
+      });
+    },
+    [openingAmount, setReveal, visibleBorderValues]
+  );
+
   const renderStepOnePreview = useCallback(
     (layoutVariant: "default" | "workspace", canvasHeight?: number) => (
       <View style={{ position: "relative" }}>
@@ -564,6 +692,7 @@ export default function SetupScreen() {
             artworkSize={previewArtworkSize}
             openingSize={previewOpeningSize}
             outerMatSize={previewOuterMatSize}
+            artworkReveal={previewArtworkReveal}
             frameProfileId={preview.frameProfileId}
             frameColorHex={resolvedFrameColorHex}
             matThicknessPly={preview.matThicknessPly}
@@ -610,6 +739,7 @@ export default function SetupScreen() {
       preview.mountingBoardColorHex,
       previewOpeningSize,
       previewOuterMatSize,
+      previewArtworkReveal,
       previewArtworkSize,
       resolvedFrameColorHex,
       showStepOneArtworkOverlay,
@@ -704,16 +834,20 @@ export default function SetupScreen() {
                 compact={setupSheetCompact}
                 onPress={() => {
                   const isSwitchingModes = draft.reveal.openingBehavior !== "border";
+                  const nextOpeningAmount = isSwitchingModes
+                    ? getDefaultOpeningAmount(unit)
+                    : openingAmount;
 
                   setReveal({
                     openingBehavior: "border",
-                    openingAmount:
-                      draft.reveal.openingBehavior === "border"
-                        ? openingAmount
-                        : getDefaultOpeningAmount(unit),
+                    openingAmount: nextOpeningAmount,
+                    visibleReveal: isSwitchingModes
+                      ? buildUniformEdgeMeasurements(nextOpeningAmount)
+                      : activeVisibleReveal,
                   });
 
                   if (isSwitchingModes) {
+                    setCustomBorderValuesEnabled(false);
                     setBorderPickerOpenSignal((current) => current + 1);
                   }
                 }}
@@ -736,19 +870,97 @@ export default function SetupScreen() {
                 fractionStep={fractionStep}
                 variant="compact"
               />
-            ) : (
+            ) : customBorderValuesActive ? null : (
               <MeasurementWheelField
                 label="Visible border"
                 title="Visible border amount"
                 unitLabel={unit}
                 value={openingAmount}
-                onChange={(value) => setReveal({ openingAmount: value })}
+                onChange={handleUniformBorderChange}
                 maxWhole={unit === "in" ? 4 : 10}
                 fractionStep={fractionStep}
                 variant="compact"
                 openSignal={borderPickerOpenSignal}
               />
             )}
+            {draft.reveal.openingBehavior === "border" ? (
+              <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    customBorderValuesActive
+                      ? "Use one visible border value"
+                      : "Set custom border values"
+                  }
+                  onPress={
+                    customBorderValuesActive
+                      ? handleDisableCustomBorderValues
+                      : handleEnableCustomBorderValues
+                  }
+                  style={{
+                    borderWidth: 1,
+                    borderColor: customBorderValuesActive ? colors.accent : colors.borderStrong,
+                    backgroundColor: customBorderValuesActive
+                      ? colors.accentSoft
+                      : colors.backgroundInput,
+                    borderRadius: radii.md,
+                    paddingHorizontal: spacing.md,
+                    paddingVertical: spacing.sm,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: spacing.sm,
+                  }}
+                >
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: customBorderValuesActive ? colors.accent : colors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {customBorderValuesActive ? "Use one border value" : "Custom border values"}
+                  </Text>
+                  <Ionicons
+                    name={customBorderValuesActive ? "remove-circle-outline" : "add-circle-outline"}
+                    size={18}
+                    color={customBorderValuesActive ? colors.accent : colors.textSecondary}
+                  />
+                </Pressable>
+
+                {customBorderValuesActive ? (
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: spacing.sm,
+                    }}
+                  >
+                    {BORDER_SIDE_FIELDS.map((field) => (
+                      <View
+                        key={field.key}
+                        style={{
+                          width: setupSheetCompact ? "48%" : "100%",
+                          flexGrow: 1,
+                        }}
+                      >
+                        <MeasurementWheelField
+                          label={field.label}
+                          title={field.title}
+                          unitLabel={unit}
+                          value={visibleBorderValues[field.key]}
+                          onChange={(value) => handleCustomBorderSideChange(field.key, value)}
+                          maxWhole={unit === "in" ? 4 : 10}
+                          fractionStep={fractionStep}
+                          variant="compact"
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </GuidanceAnchor>
         </AppCard>
       </GuidanceAnchor>

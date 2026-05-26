@@ -125,6 +125,12 @@ import {
   resolveRoomMaterialRealism,
   type ResolvedRoomMaterialRealism,
 } from "../utils/roomRealism";
+import {
+  resolveRoomRealismProfile,
+  type ResolvedRoomRealismProfile,
+  type RoomRealismSliderLimit,
+  type RoomRealismSliderLimits,
+} from "../utils/roomRealismProfiles";
 import { resolveSceneLightingEffect } from "../utils/sceneLighting";
 import { prepareDraftForSavedArtwork } from "../utils/persistentArtworkImages";
 
@@ -137,8 +143,6 @@ const MAX_EXPORT_WIDTH = 1800;
 const TABLET_WIDTH_BREAKPOINT = 768;
 const LANDSCAPE_WORKSPACE_CONTENT_MAX_WIDTH = 1180;
 const LANDSCAPE_CONTROLS_COLUMN_WIDTH = 408;
-const WALL_SHADOW_MAX_SOFTNESS = 160;
-const WALL_SHADOW_FEATHER_STEPS = 18;
 const ROOM_REALISM_CONTROL_CONTENT_HEIGHT = 158;
 const ROOM_ALIGNMENT_GUIDE_PHONE_THRESHOLD_PIXELS = 5;
 const ROOM_ALIGNMENT_GUIDE_TABLET_THRESHOLD_PIXELS = 6;
@@ -194,6 +198,264 @@ function clampNumber(value: number, min: number, max: number) {
 
 function roundToStep(value: number, step: number) {
   return Number((Math.round(value / step) * step).toFixed(4));
+}
+
+function hasSourceRealismOverride<T>(
+  record: Record<string, T> | null | undefined,
+  sourceId: string
+) {
+  return Boolean(record && Object.prototype.hasOwnProperty.call(record, sourceId));
+}
+
+function clampToSliderLimit(value: number, limit: RoomRealismSliderLimit) {
+  return clampNumber(value, limit.min, limit.max);
+}
+
+const WALL_REALISM_USER_CONTROL_LIMIT: RoomRealismSliderLimit = {
+  min: 0,
+  max: 10,
+  step: 0.5,
+};
+const WALL_REALISM_COMPRESSED_RANGE_MAX = 6;
+const WALL_REALISM_STRENGTH_MAX_MULTIPLIER = 2;
+const WALL_REALISM_SOFTNESS_CONTROL_MAX = 15;
+const WALL_REALISM_DISTANCE_CONTROL_MAX = 30;
+
+function compressWallRealismControlLimit(limit: RoomRealismSliderLimit) {
+  return {
+    ...limit,
+    min: 0,
+    max: WALL_REALISM_DISTANCE_CONTROL_MAX,
+  };
+}
+
+function expandWallStrengthControlLimit(limit: RoomRealismSliderLimit) {
+  const minimumStrength = 0;
+
+  return {
+    ...limit,
+    min: minimumStrength,
+    max: clampNumber(
+      limit.max * WALL_REALISM_STRENGTH_MAX_MULTIPLIER,
+      minimumStrength,
+      1
+    ),
+  };
+}
+
+function expandWallSoftnessControlLimit(limit: RoomRealismSliderLimit) {
+  return {
+    ...limit,
+    min: 0,
+    max: WALL_REALISM_SOFTNESS_CONTROL_MAX,
+  };
+}
+
+function mapWallRealismRawValueToUserScale(value: number, limit: RoomRealismSliderLimit) {
+  if (limit.max <= limit.min) {
+    return WALL_REALISM_USER_CONTROL_LIMIT.min;
+  }
+
+  const clampedValue = clampToSliderLimit(value, limit);
+  const percent = (clampedValue - limit.min) / (limit.max - limit.min);
+
+  return roundToStep(
+    WALL_REALISM_USER_CONTROL_LIMIT.min +
+      percent *
+        (WALL_REALISM_USER_CONTROL_LIMIT.max - WALL_REALISM_USER_CONTROL_LIMIT.min),
+    WALL_REALISM_USER_CONTROL_LIMIT.step
+  );
+}
+
+function mapWallRealismUserScaleToRawValue(value: number, limit: RoomRealismSliderLimit) {
+  if (limit.max <= limit.min) {
+    return limit.min;
+  }
+
+  const clampedValue = clampNumber(
+    value,
+    WALL_REALISM_USER_CONTROL_LIMIT.min,
+    WALL_REALISM_USER_CONTROL_LIMIT.max
+  );
+  const percent =
+    (clampedValue - WALL_REALISM_USER_CONTROL_LIMIT.min) /
+    (WALL_REALISM_USER_CONTROL_LIMIT.max - WALL_REALISM_USER_CONTROL_LIMIT.min);
+
+  return roundToStep(limit.min + percent * (limit.max - limit.min), limit.step);
+}
+
+function formatWallRealismUserScaleValue(value: number) {
+  const roundedValue = roundToStep(value, WALL_REALISM_USER_CONTROL_LIMIT.step);
+
+  return Number.isInteger(roundedValue) ? `${roundedValue}` : roundedValue.toFixed(1);
+}
+
+const FRAME_MAT_REALISM_USER_CONTROL_LIMIT: RoomRealismSliderLimit = {
+  min: 0,
+  max: 10,
+  step: 0.5,
+};
+const ARTWORK_BRIGHTNESS_CONTROL_LIMIT: RoomRealismSliderLimit = {
+  min: 0.75,
+  max: 1.1,
+  step: 0.01,
+};
+
+function mapFrameMatRealismRawValueToUserScale(
+  value: number,
+  limit: RoomRealismSliderLimit
+) {
+  if (limit.max <= limit.min) {
+    return FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min;
+  }
+
+  const clampedValue = clampToSliderLimit(value, limit);
+  const percent = (clampedValue - limit.min) / (limit.max - limit.min);
+
+  return roundToStep(
+    FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min +
+      percent *
+        (FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max -
+          FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min),
+    FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step
+  );
+}
+
+function mapFrameMatRealismUserScaleToRawValue(
+  value: number,
+  limit: RoomRealismSliderLimit
+) {
+  if (limit.max <= limit.min) {
+    return limit.min;
+  }
+
+  const clampedValue = clampNumber(
+    value,
+    FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min,
+    FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max
+  );
+  const percent =
+    (clampedValue - FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min) /
+    (FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max -
+      FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min);
+
+  return roundToStep(limit.min + percent * (limit.max - limit.min), limit.step);
+}
+
+function formatFrameMatRealismUserScaleValue(value: number) {
+  const roundedValue = roundToStep(value, FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step);
+
+  return Number.isInteger(roundedValue) ? `${roundedValue}` : roundedValue.toFixed(1);
+}
+
+function mapArtworkBrightnessRawValueToPercent(
+  value: number,
+  limit: RoomRealismSliderLimit
+) {
+  const percentStep = limit.step * 100;
+
+  return roundToStep(clampToSliderLimit(value, limit) * 100, percentStep);
+}
+
+function mapArtworkBrightnessPercentToRawValue(
+  value: number,
+  limit: RoomRealismSliderLimit
+) {
+  const clampedPercent = clampNumber(value, limit.min * 100, limit.max * 100);
+
+  return roundToStep(clampedPercent / 100, limit.step);
+}
+
+function formatArtworkBrightnessPercentValue(value: number) {
+  const roundedValue = roundToStep(value, 1);
+
+  return Number.isInteger(roundedValue)
+    ? `${roundedValue}%`
+    : `${roundedValue.toFixed(1)}%`;
+}
+
+function resolveProfileWallShadow(profile: ResolvedRoomRealismProfile): ResolvedWallShadow {
+  return {
+    opacity: profile.shadow.strength,
+    offsetX: profile.shadow.offsetX,
+    offsetY: profile.shadow.offsetY,
+    blurRadius: profile.shadow.softness,
+  };
+}
+
+function clampWallShadowToSliderLimits(
+  shadow: ResolvedWallShadow,
+  sliderLimits: RoomRealismSliderLimits
+): ResolvedWallShadow {
+  const strengthLimit = expandWallStrengthControlLimit(sliderLimits.shadowStrength);
+  const softnessLimit = expandWallSoftnessControlLimit(sliderLimits.shadowSoftness);
+
+  return {
+    ...shadow,
+    opacity: clampToSliderLimit(shadow.opacity, strengthLimit),
+    blurRadius: clampToSliderLimit(shadow.blurRadius, softnessLimit),
+  };
+}
+
+function resolveProfileMaterialRealism(
+  profile: ResolvedRoomRealismProfile
+): ResolvedRoomMaterialRealism {
+  return {
+    bevelDepth: profile.material.matBevelDepth,
+    bevelSoftness: profile.material.matBevelSoftness,
+    frameDepth: profile.material.frameDepth,
+    innerLipContrast: profile.material.innerLipContrast,
+    glassEnabled: profile.material.glassEnabled,
+    reflectionStrength: profile.material.reflectionStrength,
+  };
+}
+
+function clampMaterialRealismPatch(
+  patch: RoomMaterialRealismDraft,
+  sliderLimits: RoomRealismSliderLimits
+): RoomMaterialRealismDraft {
+  const constrainedPatch: RoomMaterialRealismDraft = {};
+
+  if (typeof patch.bevelDepth === "number") {
+    constrainedPatch.bevelDepth = clampToSliderLimit(
+      patch.bevelDepth,
+      sliderLimits.matBevelDepth
+    );
+  }
+
+  if (typeof patch.bevelSoftness === "number") {
+    constrainedPatch.bevelSoftness = clampToSliderLimit(
+      patch.bevelSoftness,
+      sliderLimits.matBevelSoftness
+    );
+  }
+
+  if (typeof patch.frameDepth === "number") {
+    constrainedPatch.frameDepth = clampToSliderLimit(
+      patch.frameDepth,
+      sliderLimits.frameDepth
+    );
+  }
+
+  if (typeof patch.innerLipContrast === "number") {
+    constrainedPatch.innerLipContrast = clampToSliderLimit(
+      patch.innerLipContrast,
+      sliderLimits.innerLipContrast
+    );
+  }
+
+  if (typeof patch.glassEnabled === "boolean") {
+    constrainedPatch.glassEnabled = patch.glassEnabled;
+  }
+
+  if (typeof patch.reflectionStrength === "number") {
+    constrainedPatch.reflectionStrength = clampToSliderLimit(
+      patch.reflectionStrength,
+      sliderLimits.reflectionStrength
+    );
+  }
+
+  return constrainedPatch;
 }
 
 function createDefaultArtworkCrop(
@@ -268,7 +530,12 @@ function getWallShadowAngle(shadow: { offsetX: number; offsetY: number }) {
 }
 
 function getWallShadowFeatherRadius(blurRadius: number) {
-  return clampNumber(blurRadius * 1.45 + 4, 4, WALL_SHADOW_MAX_SOFTNESS * 1.55);
+  const maxCompressedSoftness = WALL_REALISM_COMPRESSED_RANGE_MAX;
+  const previousMaxCompressedFeatherRadius = maxCompressedSoftness * 0.72 + 1.5;
+  const zeroBasedFeatherScale =
+    previousMaxCompressedFeatherRadius / maxCompressedSoftness;
+
+  return clampNumber(blurRadius * zeroBasedFeatherScale, 0, 30);
 }
 
 function WallCastShadow({
@@ -284,7 +551,6 @@ function WallCastShadow({
     return null;
   }
 
-  const featherRadius = getWallShadowFeatherRadius(shadow.blurRadius);
   const shadowDistance = getWallShadowDistance(shadow);
   const direction =
     shadowDistance > 0.1
@@ -293,94 +559,53 @@ function WallCastShadow({
           y: shadow.offsetY / shadowDistance,
         }
       : { x: 0.58, y: 0.82 };
-  const directionalExpansion = {
-    left: Math.max(-direction.x, 0),
-    right: Math.max(direction.x, 0),
-    top: Math.max(-direction.y, 0),
-    bottom: Math.max(direction.y, 0),
-  };
-  const canvasLeft = Math.min(
-    0,
-    shadow.offsetX - featherRadius * directionalExpansion.left
-  );
-  const canvasTop = Math.min(
-    0,
-    shadow.offsetY - featherRadius * directionalExpansion.top
-  );
-  const canvasRight = Math.max(
-    width,
-    shadow.offsetX + width + featherRadius * directionalExpansion.right
-  );
-  const canvasBottom = Math.max(
-    height,
-    shadow.offsetY + height + featherRadius * directionalExpansion.bottom
-  );
-  const svgWidth = Math.max(1, canvasRight - canvasLeft);
-  const svgHeight = Math.max(1, canvasBottom - canvasTop);
-  let layerWeightTotal = 0;
-
-  for (let index = 0; index < WALL_SHADOW_FEATHER_STEPS; index += 1) {
-    const progress = index / WALL_SHADOW_FEATHER_STEPS;
-
-    layerWeightTotal += (1 - progress) ** 2;
-  }
-  const nearEdgeOpacity = clampNumber(shadow.opacity * 0.3, 0, 0.34);
-  const shadowLayers = Array.from({ length: WALL_SHADOW_FEATHER_STEPS }).map((_layer, index) => {
-    const progress = (index + 1) / WALL_SHADOW_FEATHER_STEPS;
-    const falloff = (1 - index / WALL_SHADOW_FEATHER_STEPS) ** 2;
-    const grow = featherRadius * progress;
-
-    return {
-      left: shadow.offsetX - grow * directionalExpansion.left - canvasLeft,
-      top: shadow.offsetY - grow * directionalExpansion.top - canvasTop,
-      width:
-        width +
-        grow * directionalExpansion.left +
-        grow * directionalExpansion.right,
-      height:
-        height +
-        grow * directionalExpansion.top +
-        grow * directionalExpansion.bottom,
-      opacity: (nearEdgeOpacity * falloff) / layerWeightTotal,
-    };
-  });
-  const coreOpacity = clampNumber(shadow.opacity * 0.16, 0, 0.22);
+  const shadowRadius = getWallShadowFeatherRadius(shadow.blurRadius);
+  const offsetDistance = clampNumber(shadowDistance, 1, 52);
+  const shadowOpacity = clampNumber(shadow.opacity * 0.78, 0, 0.72);
+  const sideThreshold = 0.06;
+  const xWeight = Math.abs(direction.x);
+  const yWeight = Math.abs(direction.y);
+  const horizontalAllowance = clampNumber(offsetDistance * xWeight + shadowRadius * 1.8, 2, 108);
+  const verticalAllowance = clampNumber(offsetDistance * yWeight + shadowRadius * 1.8, 2, 108);
+  const leftPad = direction.x < -sideThreshold ? horizontalAllowance : 0;
+  const rightPad = direction.x > sideThreshold ? horizontalAllowance : 0;
+  const topPad = direction.y < -sideThreshold ? verticalAllowance : 0;
+  const bottomPad = direction.y > sideThreshold ? verticalAllowance : 0;
 
   return (
-    <Svg
+    <View
       pointerEvents="none"
-      width={svgWidth}
-      height={svgHeight}
+      collapsable={false}
       style={{
         position: "absolute",
-        left: canvasLeft,
-        top: canvasTop,
+        left: -leftPad,
+        top: -topPad,
+        width: width + leftPad + rightPad,
+        height: height + topPad + bottomPad,
+        overflow: "hidden",
       }}
     >
-      <SvgRect
-        x={shadow.offsetX - canvasLeft}
-        y={shadow.offsetY - canvasTop}
-        width={width}
-        height={height}
-        rx={1}
-        ry={1}
-        fill="#000000"
-        opacity={coreOpacity}
+      <View
+        pointerEvents="none"
+        collapsable={false}
+        style={{
+          position: "absolute",
+          left: leftPad,
+          top: topPad,
+          width,
+          height,
+          borderRadius: 2,
+          backgroundColor: "#000000",
+          shadowColor: "#000000",
+          shadowOpacity,
+          shadowRadius,
+          shadowOffset: {
+            width: direction.x * offsetDistance,
+            height: direction.y * offsetDistance,
+          },
+        }}
       />
-      {shadowLayers.map((layer, index) => (
-        <SvgRect
-          key={`${index}-${layer.left}-${layer.top}`}
-          x={layer.left}
-          y={layer.top}
-          width={layer.width}
-          height={layer.height}
-          rx={1}
-          ry={1}
-          fill="#000000"
-          opacity={layer.opacity}
-        />
-      ))}
-    </Svg>
+    </View>
   );
 }
 
@@ -2352,6 +2577,7 @@ function SavedFramedArtworkPickerTile({
             artworkCrop={preview.artworkCrop}
             physicalScale={thumbnailGeometry.physicalScale}
             showShadow={false}
+            enableImageProfileFrames
           />
         ) : (
           <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
@@ -3068,6 +3294,7 @@ function PlacedWallArtwork({
           shadowDirection={{ x: wallShadow.offsetX, y: wallShadow.offsetY }}
           materialRealism={effectiveMaterialRealism}
           environment={effectiveEnvironment ?? undefined}
+          enableImageProfileFrames
           style={{ opacity: 0.992 }}
         />
 
@@ -3432,6 +3659,7 @@ function RoomShadowAdjustmentPanel({
   shadow,
   baseShadow,
   materialRealism,
+  sliderLimits,
   activeRealismTab,
   artworkBrightness,
   enabled,
@@ -3451,6 +3679,7 @@ function RoomShadowAdjustmentPanel({
   shadow: ResolvedWallShadow;
   baseShadow: ResolvedWallShadow;
   materialRealism: ResolvedRoomMaterialRealism;
+  sliderLimits: RoomRealismSliderLimits;
   activeRealismTab: RoomRealismControlTab;
   artworkBrightness: number;
   enabled: boolean;
@@ -3474,6 +3703,129 @@ function RoomShadowAdjustmentPanel({
   const shadowAngle =
     shadowDistance > 0.1 ? getWallShadowAngle(shadow) : getWallShadowAngle(baseShadow);
   const controlsDisabled = panelDisabled || !enabled;
+  const shadowSoftnessControlLimit = useMemo(
+    () => expandWallSoftnessControlLimit(sliderLimits.shadowSoftness),
+    [sliderLimits.shadowSoftness]
+  );
+  const shadowDistanceControlLimit = useMemo(
+    () => compressWallRealismControlLimit(sliderLimits.shadowDistance),
+    [sliderLimits.shadowDistance]
+  );
+  const shadowStrengthControlLimit = useMemo(
+    () => expandWallStrengthControlLimit(sliderLimits.shadowStrength),
+    [sliderLimits.shadowStrength]
+  );
+  const shadowStrengthUserValue = mapWallRealismRawValueToUserScale(
+    shadow.opacity,
+    shadowStrengthControlLimit
+  );
+  const shadowSoftnessUserValue = mapWallRealismRawValueToUserScale(
+    shadow.blurRadius,
+    shadowSoftnessControlLimit
+  );
+  const shadowDistanceUserValue = mapWallRealismRawValueToUserScale(
+    shadowDistance,
+    shadowDistanceControlLimit
+  );
+  const handleShadowStrengthUserChange = useCallback(
+    (value: number) => {
+      onOpacityChange(
+        mapWallRealismUserScaleToRawValue(value, shadowStrengthControlLimit)
+      );
+    },
+    [onOpacityChange, shadowStrengthControlLimit]
+  );
+  const handleShadowSoftnessUserChange = useCallback(
+    (value: number) => {
+      onBlurRadiusChange(
+        mapWallRealismUserScaleToRawValue(value, shadowSoftnessControlLimit)
+      );
+    },
+    [onBlurRadiusChange, shadowSoftnessControlLimit]
+  );
+  const handleShadowDistanceUserChange = useCallback(
+    (value: number) => {
+      onDistanceChange(
+        mapWallRealismUserScaleToRawValue(value, shadowDistanceControlLimit)
+      );
+    },
+    [onDistanceChange, shadowDistanceControlLimit]
+  );
+  const matBevelDepthUserValue = mapFrameMatRealismRawValueToUserScale(
+    materialRealism.bevelDepth,
+    sliderLimits.matBevelDepth
+  );
+  const matBevelSoftnessUserValue = mapFrameMatRealismRawValueToUserScale(
+    materialRealism.bevelSoftness,
+    sliderLimits.matBevelSoftness
+  );
+  const frameDepthUserValue = mapFrameMatRealismRawValueToUserScale(
+    materialRealism.frameDepth,
+    sliderLimits.frameDepth
+  );
+  const innerLipContrastUserValue = mapFrameMatRealismRawValueToUserScale(
+    materialRealism.innerLipContrast,
+    sliderLimits.innerLipContrast
+  );
+  const artworkBrightnessPercentValue = mapArtworkBrightnessRawValueToPercent(
+    artworkBrightness,
+    ARTWORK_BRIGHTNESS_CONTROL_LIMIT
+  );
+  const handleMatBevelDepthUserChange = useCallback(
+    (value: number) => {
+      onMaterialRealismChange({
+        bevelDepth: mapFrameMatRealismUserScaleToRawValue(
+          value,
+          sliderLimits.matBevelDepth
+        ),
+      });
+    },
+    [onMaterialRealismChange, sliderLimits.matBevelDepth]
+  );
+  const handleMatBevelSoftnessUserChange = useCallback(
+    (value: number) => {
+      onMaterialRealismChange({
+        bevelSoftness: mapFrameMatRealismUserScaleToRawValue(
+          value,
+          sliderLimits.matBevelSoftness
+        ),
+      });
+    },
+    [onMaterialRealismChange, sliderLimits.matBevelSoftness]
+  );
+  const handleFrameDepthUserChange = useCallback(
+    (value: number) => {
+      onMaterialRealismChange({
+        frameDepth: mapFrameMatRealismUserScaleToRawValue(
+          value,
+          sliderLimits.frameDepth
+        ),
+      });
+    },
+    [onMaterialRealismChange, sliderLimits.frameDepth]
+  );
+  const handleInnerLipContrastUserChange = useCallback(
+    (value: number) => {
+      onMaterialRealismChange({
+        innerLipContrast: mapFrameMatRealismUserScaleToRawValue(
+          value,
+          sliderLimits.innerLipContrast
+        ),
+      });
+    },
+    [onMaterialRealismChange, sliderLimits.innerLipContrast]
+  );
+  const handleArtworkBrightnessUserChange = useCallback(
+    (value: number) => {
+      onArtworkBrightnessChange(
+        mapArtworkBrightnessPercentToRawValue(
+          value,
+          ARTWORK_BRIGHTNESS_CONTROL_LIMIT
+        )
+      );
+    },
+    [onArtworkBrightnessChange]
+  );
 
   useEffect(() => {
     Animated.timing(slideProgress, {
@@ -3652,104 +4004,112 @@ function RoomShadowAdjustmentPanel({
 
               <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
                 <RoomShadowSlider
+                  key="wall-shadow-strength"
                   label="Strength"
-                  value={shadow.opacity}
-                  min={0}
-                  max={1}
-                  step={0.01}
+                  value={shadowStrengthUserValue}
+                  min={WALL_REALISM_USER_CONTROL_LIMIT.min}
+                  max={WALL_REALISM_USER_CONTROL_LIMIT.max}
+                  step={WALL_REALISM_USER_CONTROL_LIMIT.step}
                   disabled={controlsDisabled}
-                  formatValue={(shadowOpacity) => `${Math.round(shadowOpacity * 100)}%`}
-                  onChange={onOpacityChange}
-                  onCommit={onOpacityChange}
+                  formatValue={formatWallRealismUserScaleValue}
+                  onChange={handleShadowStrengthUserChange}
+                  onCommit={handleShadowStrengthUserChange}
                 />
 
                 <RoomShadowSlider
+                  key="wall-shadow-softness"
                   label="Softness"
-                  value={shadow.blurRadius}
-                  min={0}
-                  max={WALL_SHADOW_MAX_SOFTNESS}
-                  step={1}
+                  value={shadowSoftnessUserValue}
+                  min={WALL_REALISM_USER_CONTROL_LIMIT.min}
+                  max={WALL_REALISM_USER_CONTROL_LIMIT.max}
+                  step={WALL_REALISM_USER_CONTROL_LIMIT.step}
                   disabled={controlsDisabled}
-                  formatValue={(blurRadius) => `${Math.round(blurRadius)} px`}
-                  onChange={onBlurRadiusChange}
-                  onCommit={onBlurRadiusChange}
+                  formatValue={formatWallRealismUserScaleValue}
+                  onChange={handleShadowSoftnessUserChange}
+                  onCommit={handleShadowSoftnessUserChange}
                 />
 
                 <RoomShadowSlider
+                  key="wall-shadow-distance"
                   label="Distance"
-                  value={shadowDistance}
-                  min={0}
-                  max={72}
-                  step={1}
+                  value={shadowDistanceUserValue}
+                  min={WALL_REALISM_USER_CONTROL_LIMIT.min}
+                  max={WALL_REALISM_USER_CONTROL_LIMIT.max}
+                  step={WALL_REALISM_USER_CONTROL_LIMIT.step}
                   disabled={controlsDisabled}
-                  formatValue={(distance) => `${Math.round(distance)} px`}
-                  onChange={onDistanceChange}
-                  onCommit={onDistanceChange}
+                  formatValue={formatWallRealismUserScaleValue}
+                  onChange={handleShadowDistanceUserChange}
+                  onCommit={handleShadowDistanceUserChange}
                 />
               </View>
             </View>
           ) : activeRealismTab === "mat" ? (
             <View style={{ gap: spacing.xs }}>
               <RoomShadowSlider
+                key="mat-bevel-depth"
                 label="Bevel Depth"
-                value={materialRealism.bevelDepth}
-                min={0}
-                max={3}
-                step={0.01}
+                value={matBevelDepthUserValue}
+                min={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min}
+                max={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max}
+                step={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step}
                 disabled={panelDisabled}
-                formatValue={(value) => `${Math.round(value * 100)}%`}
-                onChange={(bevelDepth) => onMaterialRealismChange({ bevelDepth })}
-                onCommit={(bevelDepth) => onMaterialRealismChange({ bevelDepth })}
+                formatValue={formatFrameMatRealismUserScaleValue}
+                onChange={handleMatBevelDepthUserChange}
+                onCommit={handleMatBevelDepthUserChange}
               />
 
               <RoomShadowSlider
+                key="mat-bevel-softness"
                 label="Bevel Softness"
-                value={materialRealism.bevelSoftness}
-                min={0}
-                max={1}
-                step={0.01}
+                value={matBevelSoftnessUserValue}
+                min={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min}
+                max={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max}
+                step={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step}
                 disabled={panelDisabled}
-                formatValue={(value) => `${Math.round(value * 100)}%`}
-                onChange={(bevelSoftness) => onMaterialRealismChange({ bevelSoftness })}
-                onCommit={(bevelSoftness) => onMaterialRealismChange({ bevelSoftness })}
+                formatValue={formatFrameMatRealismUserScaleValue}
+                onChange={handleMatBevelSoftnessUserChange}
+                onCommit={handleMatBevelSoftnessUserChange}
               />
             </View>
           ) : activeRealismTab === "frame" ? (
             <View style={{ gap: spacing.xs }}>
               <RoomShadowSlider
+                key="frame-depth"
                 label="Frame Depth"
-                value={materialRealism.frameDepth}
-                min={0}
-                max={3}
-                step={0.01}
+                value={frameDepthUserValue}
+                min={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min}
+                max={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max}
+                step={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step}
                 disabled={panelDisabled}
-                formatValue={(value) => `${Math.round(value * 100)}%`}
-                onChange={(frameDepth) => onMaterialRealismChange({ frameDepth })}
-                onCommit={(frameDepth) => onMaterialRealismChange({ frameDepth })}
+                formatValue={formatFrameMatRealismUserScaleValue}
+                onChange={handleFrameDepthUserChange}
+                onCommit={handleFrameDepthUserChange}
               />
 
               <RoomShadowSlider
+                key="frame-inner-lip-contrast"
                 label="Inner Lip Contrast"
-                value={materialRealism.innerLipContrast}
-                min={0}
-                max={4}
-                step={0.01}
+                value={innerLipContrastUserValue}
+                min={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.min}
+                max={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.max}
+                step={FRAME_MAT_REALISM_USER_CONTROL_LIMIT.step}
                 disabled={panelDisabled}
-                formatValue={(value) => `${Math.round(value * 100)}%`}
-                onChange={(innerLipContrast) => onMaterialRealismChange({ innerLipContrast })}
-                onCommit={(innerLipContrast) => onMaterialRealismChange({ innerLipContrast })}
+                formatValue={formatFrameMatRealismUserScaleValue}
+                onChange={handleInnerLipContrastUserChange}
+                onCommit={handleInnerLipContrastUserChange}
               />
 
               <RoomShadowSlider
+                key="frame-artwork-brightness"
                 label="Artwork Brightness"
-                value={artworkBrightness}
-                min={0.5}
-                max={1.25}
-                step={0.01}
+                value={artworkBrightnessPercentValue}
+                min={ARTWORK_BRIGHTNESS_CONTROL_LIMIT.min * 100}
+                max={ARTWORK_BRIGHTNESS_CONTROL_LIMIT.max * 100}
+                step={ARTWORK_BRIGHTNESS_CONTROL_LIMIT.step * 100}
                 disabled={panelDisabled}
-                formatValue={(brightness) => `${Math.round(brightness * 100)}%`}
-                onChange={onArtworkBrightnessChange}
-                onCommit={onArtworkBrightnessChange}
+                formatValue={formatArtworkBrightnessPercentValue}
+                onChange={handleArtworkBrightnessUserChange}
+                onCommit={handleArtworkBrightnessUserChange}
               />
             </View>
           ) : (
@@ -3822,11 +4182,12 @@ function RoomShadowAdjustmentPanel({
               </View>
 
               <RoomShadowSlider
+                key="glass-reflection-strength"
                 label="Reflection Strength"
                 value={materialRealism.reflectionStrength}
-                min={0}
-                max={1}
-                step={0.01}
+                min={sliderLimits.reflectionStrength.min}
+                max={sliderLimits.reflectionStrength.max}
+                step={sliderLimits.reflectionStrength.step}
                 disabled={panelDisabled || !materialRealism.glassEnabled}
                 formatValue={(value) => `${Math.round(value * 100)}%`}
                 onChange={(reflectionStrength) => onMaterialRealismChange({ reflectionStrength })}
@@ -3964,6 +4325,9 @@ export default function RoomViewScreen() {
   const [startNewPieceAfterLayoutSave, setStartNewPieceAfterLayoutSave] = useState(false);
   const [activeSheet, setActiveSheet] = useState<RoomViewDockSheet | null>(null);
   const [activeRealismTab, setActiveRealismTab] = useState<RoomRealismControlTab>("wall");
+  const [wallShadowEnabledBySource, setWallShadowEnabledBySource] = useState<
+    Record<string, boolean>
+  >({});
   const [selectedPlacementIds, setSelectedPlacementIds] = useState<string[]>([]);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [groupCommittedCenterOverrides, setGroupCommittedCenterOverrides] =
@@ -4055,24 +4419,54 @@ export default function RoomViewScreen() {
     framedArtworks.find((artwork) => artwork.id === activePlacement?.framedArtworkId) ?? null;
   const selectedDraft = selectedFramedArtwork?.draft ?? null;
   const selectedDerived = selectedDraft ? buildDerivedGeometry(selectedDraft) : null;
-  const activeSourceSceneDefaultShadow =
+  const activeSourceRealismProfile = resolveRoomRealismProfile(
+    roomView.sourceMode === "presetRoom" ? activePresetScene : null,
+    roomView.sourceMode
+  );
+  const activeSourceSliderLimits = activeSourceRealismProfile.sliderLimits;
+  const activeSourceProfileShadow = resolveProfileWallShadow(activeSourceRealismProfile);
+  const activeSourceProfileMaterialRealism =
+    resolveProfileMaterialRealism(activeSourceRealismProfile);
+  const activeSourceLegacyDefaultShadow =
     roomView.sourceMode === "presetRoom" ? activePresetScene.defaultShadow : null;
+  const activeSourceHasWallShadowOverride = hasSourceRealismOverride(
+    roomView.sourceWallShadows,
+    activeSourceId
+  );
   const activeSourceWallShadowOverride = roomView.sourceWallShadows?.[activeSourceId] ?? null;
-  const activeSourceBaseWallShadow = resolveWallShadow(activeSourceSceneDefaultShadow, null);
-  const activeSourceWallShadow = resolveWallShadow(
-    activeSourceSceneDefaultShadow,
-    activeSourceWallShadowOverride
+  // Launch-safe automatic realism: profiles become the base only for sources that have
+  // no saved/manual wall-shadow override. Existing override records keep the legacy base.
+  const activeSourceDefaultWallShadow = activeSourceHasWallShadowOverride
+    ? activeSourceLegacyDefaultShadow
+    : activeSourceProfileShadow;
+  const activeSourceBaseWallShadow = clampWallShadowToSliderLimits(
+    resolveWallShadow(activeSourceDefaultWallShadow, null),
+    activeSourceSliderLimits
   );
-  const activeSourceShadowEnabled = activeSourceWallShadow.opacity > 0.001;
+  const activeSourceWallShadow = clampWallShadowToSliderLimits(
+    resolveWallShadow(activeSourceDefaultWallShadow, activeSourceWallShadowOverride),
+    activeSourceSliderLimits
+  );
+  const activeSourceShadowEnabled = wallShadowEnabledBySource[activeSourceId] ?? true;
   const activeSourceShadowDistance = getWallShadowDistance(activeSourceWallShadow);
+  const activeSourceHasArtworkBrightnessOverride = hasSourceRealismOverride(
+    roomView.sourceArtworkBrightness,
+    activeSourceId
+  );
   const activeSourceArtworkBrightness = clampNumber(
-    roomView.sourceArtworkBrightness?.[activeSourceId] ?? 1,
-    0.5,
-    1.25
+    activeSourceHasArtworkBrightnessOverride
+      ? roomView.sourceArtworkBrightness?.[activeSourceId] ?? 1
+      : activeSourceRealismProfile.material.artworkBrightness,
+    ARTWORK_BRIGHTNESS_CONTROL_LIMIT.min,
+    ARTWORK_BRIGHTNESS_CONTROL_LIMIT.max
   );
-  const activeSourceMaterialRealism = resolveRoomMaterialRealism(
-    roomView.sourceMaterialRealism?.[activeSourceId] ?? null
+  const activeSourceHasMaterialRealismOverride = hasSourceRealismOverride(
+    roomView.sourceMaterialRealism,
+    activeSourceId
   );
+  const activeSourceMaterialRealism = activeSourceHasMaterialRealismOverride
+    ? resolveRoomMaterialRealism(roomView.sourceMaterialRealism?.[activeSourceId] ?? null)
+    : activeSourceProfileMaterialRealism;
   const activeSourceEnvironment =
     roomView.sourceMode === "presetRoom" ? activePresetScene.environment ?? null : null;
   const isTabletLandscape =
@@ -6067,28 +6461,67 @@ export default function RoomViewScreen() {
   const updateActiveSourceWallShadow = useCallback(
     (wallShadowPatch: RoomWallShadowDraft) => {
       const currentSourceWallShadows = roomView.sourceWallShadows ?? {};
-      const currentSourceShadow = currentSourceWallShadows[activeSourceId] ?? {};
+      const currentSourceShadow =
+        currentSourceWallShadows[activeSourceId] ?? activeSourceWallShadow;
+      const constrainedPatch: RoomWallShadowDraft = {};
+
+      if (typeof wallShadowPatch.opacity === "number") {
+        constrainedPatch.opacity = clampToSliderLimit(
+          wallShadowPatch.opacity,
+          expandWallStrengthControlLimit(activeSourceSliderLimits.shadowStrength)
+        );
+      }
+
+      if (typeof wallShadowPatch.blurRadius === "number") {
+        constrainedPatch.blurRadius = clampToSliderLimit(
+          wallShadowPatch.blurRadius,
+          expandWallSoftnessControlLimit(activeSourceSliderLimits.shadowSoftness)
+        );
+      }
+
+      if (typeof wallShadowPatch.offsetX === "number") {
+        constrainedPatch.offsetX = wallShadowPatch.offsetX;
+      }
+
+      if (typeof wallShadowPatch.offsetY === "number") {
+        constrainedPatch.offsetY = wallShadowPatch.offsetY;
+      }
 
       setRoomView({
         sourceWallShadows: {
           ...currentSourceWallShadows,
           [activeSourceId]: {
             ...currentSourceShadow,
-            ...wallShadowPatch,
+            ...constrainedPatch,
           },
         },
       });
     },
-    [activeSourceId, roomView.sourceWallShadows, setRoomView]
+    [
+      activeSourceId,
+      activeSourceSliderLimits.shadowSoftness,
+      activeSourceSliderLimits.shadowStrength,
+      activeSourceWallShadow,
+      roomView.sourceWallShadows,
+      setRoomView,
+    ]
   );
 
   const handleSourceWallShadowToggle = useCallback(
     (enabled: boolean) => {
+      setWallShadowEnabledBySource((currentState) => ({
+        ...currentState,
+        [activeSourceId]: enabled,
+      }));
       updateActiveSourceWallShadow({
         opacity: enabled ? activeSourceBaseWallShadow.opacity : 0,
       });
     },
-    [activeSourceBaseWallShadow.opacity, updateActiveSourceWallShadow]
+    [
+      activeSourceBaseWallShadow.opacity,
+      activeSourceId,
+      updateActiveSourceWallShadow,
+    ]
   );
 
   const handleSourceWallShadowDistanceChange = useCallback(
@@ -6135,29 +6568,47 @@ export default function RoomViewScreen() {
       setRoomView({
         sourceArtworkBrightness: {
           ...currentSourceArtworkBrightness,
-          [activeSourceId]: roundToStep(clampNumber(brightness, 0.5, 1.25), 0.01),
+          [activeSourceId]: roundToStep(
+            clampToSliderLimit(brightness, ARTWORK_BRIGHTNESS_CONTROL_LIMIT),
+            ARTWORK_BRIGHTNESS_CONTROL_LIMIT.step
+          ),
         },
       });
     },
-    [activeSourceId, roomView.sourceArtworkBrightness, setRoomView]
+    [
+      activeSourceId,
+      roomView.sourceArtworkBrightness,
+      setRoomView,
+    ]
   );
 
   const updateActiveSourceMaterialRealism = useCallback(
     (materialRealismPatch: RoomMaterialRealismDraft) => {
       const currentSourceMaterialRealism = roomView.sourceMaterialRealism ?? {};
-      const currentSourceRealism = currentSourceMaterialRealism[activeSourceId] ?? {};
+      const currentSourceRealism =
+        currentSourceMaterialRealism[activeSourceId] ?? activeSourceMaterialRealism;
+      const constrainedPatch = clampMaterialRealismPatch(
+        materialRealismPatch,
+        activeSourceSliderLimits
+      );
 
       setRoomView({
         sourceMaterialRealism: {
           ...currentSourceMaterialRealism,
           [activeSourceId]: {
             ...currentSourceRealism,
-            ...materialRealismPatch,
+            ...constrainedPatch,
           },
         },
       });
     },
-    [activeSourceId, roomView.sourceMaterialRealism, setRoomView]
+    [
+      activeSourceId,
+      activeSourceMaterialRealism,
+      activeSourceSliderLimits,
+      roomView.sourceMaterialRealism,
+      setRoomView,
+    ]
   );
 
   const deleteSelectedPlacement = useCallback(() => {
@@ -6799,11 +7250,9 @@ export default function RoomViewScreen() {
                   groupCommittedCenterOverrides?.[placedArtwork.placement.id]
                 }
                 sceneDefaultShadow={
-                  roomView.sourceMode === "presetRoom"
-                    ? activePresetScene.defaultShadow
-                    : null
+                  activeSourceDefaultWallShadow
                 }
-                roomShadowOverride={activeSourceWallShadowOverride}
+                roomShadowOverride={activeSourceWallShadow}
                 materialRealism={activeSourceMaterialRealism}
                 environment={activeSourceEnvironment}
                 sceneLightingZones={
@@ -7592,6 +8041,7 @@ export default function RoomViewScreen() {
           shadow={activeSourceWallShadow}
           baseShadow={activeSourceBaseWallShadow}
           materialRealism={activeSourceMaterialRealism}
+          sliderLimits={activeSourceSliderLimits}
           activeRealismTab={activeRealismTab}
           artworkBrightness={activeSourceArtworkBrightness}
           enabled={activeSourceShadowEnabled}

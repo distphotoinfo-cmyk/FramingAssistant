@@ -21,9 +21,16 @@ export interface FrameProfileDefinition {
   faceWidthInches: number;
   heightInches: number;
   rabbetInches: number | null;
+  rabbetWidthInches?: number | null;
   finishIds: FrameFinishId[];
   defaultFinishId: FrameFinishId | null;
-  renderStyle: "none" | "basic" | "florentine" | "monochrome";
+  renderStyle: "none" | "basic" | "florentine" | "monochrome" | "imageProfile";
+  textureAssetKey?:
+    | "larsPanelSilverBlack"
+    | "larsPanelSilverBlackSlim"
+    | "andoverSuede21116"
+    | "altoWhite11516"
+    | "altoBlack11516";
 }
 
 export const FRAME_FINISHES: Record<FrameFinishId, FrameFinishDefinition> = {
@@ -67,6 +74,26 @@ export const FRAME_FINISHES: Record<FrameFinishId, FrameFinishDefinition> = {
     label: "Painted Black",
     colorHex: "#111111",
   },
+  larsSilverBlack: {
+    id: "larsSilverBlack",
+    label: "Silver & Black",
+    colorHex: "#8B8C89",
+  },
+  andoverSuede: {
+    id: "andoverSuede",
+    label: "Suede",
+    colorHex: "#2F2721",
+  },
+  altoWhite: {
+    id: "altoWhite",
+    label: "White",
+    colorHex: "#E8E3D9",
+  },
+  altoBlack: {
+    id: "altoBlack",
+    label: "Black",
+    colorHex: "#121111",
+  },
 };
 
 export const FRAME_SELECTOR_OPTIONS: FramePresetOption[] = [
@@ -89,6 +116,26 @@ export const FRAME_SELECTOR_OPTIONS: FramePresetOption[] = [
   {
     label: "Nielsen Monochrome",
     value: "nielsenMonochrome97",
+  },
+  {
+    label: "Lars Panel Silver & Black",
+    value: "larsPanelSilverBlack",
+  },
+  {
+    label: "Lars Panel Silver & Black Slim",
+    value: "larsPanelSilverBlackSlim",
+  },
+  {
+    label: "Andover Suede 2 11/16",
+    value: "andoverSuede21116",
+  },
+  {
+    label: "Alto White 1 15/16",
+    value: "altoWhite11516",
+  },
+  {
+    label: "Alto Black 1 15/16",
+    value: "altoBlack11516",
   },
 ];
 
@@ -170,6 +217,81 @@ export const FRAME_PROFILES: Record<FrameProfileId, FrameProfileDefinition> = {
     finishIds: ["monochromePaintedBlack", "monochromeMatteWhite"],
     defaultFinishId: "monochromePaintedBlack",
     renderStyle: "monochrome",
+  },
+  larsPanelSilverBlack: {
+    id: "larsPanelSilverBlack",
+    family: "lars",
+    label: "Lars 3 9/16 in Panel Silver & Black",
+    selectorLabel: "Lars Panel Silver & Black - 3 9/16 in",
+    profileCode: null,
+    faceWidthInches: 3.5625,
+    heightInches: 1.625,
+    rabbetInches: 0.59375,
+    rabbetWidthInches: 0.3125,
+    finishIds: ["larsSilverBlack"],
+    defaultFinishId: "larsSilverBlack",
+    renderStyle: "imageProfile",
+    textureAssetKey: "larsPanelSilverBlack",
+  },
+  larsPanelSilverBlackSlim: {
+    id: "larsPanelSilverBlackSlim",
+    family: "lars",
+    label: "Lars 2 1/16 in Panel Silver & Black Slim",
+    selectorLabel: "Lars Panel Silver & Black Slim - 2 1/16 in",
+    profileCode: null,
+    faceWidthInches: 2.0625,
+    heightInches: 1.625,
+    rabbetInches: 0.75,
+    rabbetWidthInches: 0.3125,
+    finishIds: ["larsSilverBlack"],
+    defaultFinishId: "larsSilverBlack",
+    renderStyle: "imageProfile",
+    textureAssetKey: "larsPanelSilverBlackSlim",
+  },
+  andoverSuede21116: {
+    id: "andoverSuede21116",
+    family: "lars",
+    label: "Andover Suede 2 11/16",
+    selectorLabel: "Andover Suede 2 11/16 - 2 11/16 in",
+    profileCode: null,
+    faceWidthInches: 2.6875,
+    heightInches: 1.1875,
+    rabbetInches: 0.5,
+    rabbetWidthInches: 0.25,
+    finishIds: ["andoverSuede"],
+    defaultFinishId: "andoverSuede",
+    renderStyle: "imageProfile",
+    textureAssetKey: "andoverSuede21116",
+  },
+  altoWhite11516: {
+    id: "altoWhite11516",
+    family: "lars",
+    label: "Alto White 1 15/16",
+    selectorLabel: "Alto White 1 15/16 - 1 15/16 in",
+    profileCode: null,
+    faceWidthInches: 1.9375,
+    heightInches: 0.8125,
+    rabbetInches: 0.5,
+    rabbetWidthInches: 0.25,
+    finishIds: ["altoWhite"],
+    defaultFinishId: "altoWhite",
+    renderStyle: "imageProfile",
+    textureAssetKey: "altoWhite11516",
+  },
+  altoBlack11516: {
+    id: "altoBlack11516",
+    family: "lars",
+    label: "Alto Black 1 15/16",
+    selectorLabel: "Alto Black 1 15/16 - 1 15/16 in",
+    profileCode: null,
+    faceWidthInches: 1.9375,
+    heightInches: 0.8125,
+    rabbetInches: 0.5,
+    rabbetWidthInches: 0.25,
+    finishIds: ["altoBlack"],
+    defaultFinishId: "altoBlack",
+    renderStyle: "imageProfile",
+    textureAssetKey: "altoBlack11516",
   },
 };
 

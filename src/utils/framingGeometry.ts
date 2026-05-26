@@ -1,4 +1,5 @@
 import type {
+  EdgeMeasurements,
   FrameProfileId,
   FramingProjectDraft,
   MeasurementUnit,
@@ -23,6 +24,7 @@ export interface DerivedFramingGeometry {
   artworkSize: NumericSize | null;
   openingSize: NumericSize | null;
   outerMatSize: NumericSize | null;
+  visibleReveal: MatMargins | null;
   margins: MatMargins | null;
   isValidGeometry: boolean;
 }
@@ -38,14 +40,57 @@ export function parseSizeInput(size: SizeInput): NumericSize | null {
   return { width, height };
 }
 
+function parseMeasurementWithFallback(value: string | undefined, fallback: number) {
+  const parsed = parseMeasurement(value ?? "");
+
+  return parsed === null ? fallback : parsed;
+}
+
+export function calculateVisibleReveal(
+  openingBehavior: FramingProjectDraft["reveal"]["openingBehavior"],
+  openingAmount: string,
+  visibleReveal?: EdgeMeasurements
+): MatMargins | null {
+  if (openingBehavior !== "border") {
+    return null;
+  }
+
+  const uniformAmount = parseMeasurement(openingAmount);
+
+  if (uniformAmount === null) {
+    return null;
+  }
+
+  return {
+    top: Math.max(parseMeasurementWithFallback(visibleReveal?.top, uniformAmount), 0),
+    right: Math.max(parseMeasurementWithFallback(visibleReveal?.right, uniformAmount), 0),
+    bottom: Math.max(parseMeasurementWithFallback(visibleReveal?.bottom, uniformAmount), 0),
+    left: Math.max(parseMeasurementWithFallback(visibleReveal?.left, uniformAmount), 0),
+  };
+}
+
 export function calculateOpeningSize(
   artworkSize: NumericSize | null,
   openingBehavior: FramingProjectDraft["reveal"]["openingBehavior"],
-  openingAmount: string
+  openingAmount: string,
+  visibleReveal?: EdgeMeasurements
 ) {
   const amount = parseMeasurement(openingAmount);
   if (!artworkSize || amount === null) {
     return null;
+  }
+
+  if (openingBehavior === "border") {
+    const reveal = calculateVisibleReveal(openingBehavior, openingAmount, visibleReveal);
+
+    if (!reveal) {
+      return null;
+    }
+
+    return {
+      width: Math.max(artworkSize.width + reveal.left + reveal.right, 0),
+      height: Math.max(artworkSize.height + reveal.top + reveal.bottom, 0),
+    };
   }
 
   const direction = openingBehavior === "overlap" ? -1 : 1;
@@ -104,7 +149,17 @@ export function calculateMargins(
 export function buildDerivedGeometry(draft: FramingProjectDraft): DerivedFramingGeometry {
   const artworkSize = parseSizeInput(draft.artwork.artworkSize);
   const outerMatSize = parseSizeInput(draft.outerMat.outerMatSize);
-  const openingSize = calculateOpeningSize(artworkSize, draft.reveal.openingBehavior, draft.reveal.openingAmount);
+  const visibleReveal = calculateVisibleReveal(
+    draft.reveal.openingBehavior,
+    draft.reveal.openingAmount,
+    draft.reveal.visibleReveal
+  );
+  const openingSize = calculateOpeningSize(
+    artworkSize,
+    draft.reveal.openingBehavior,
+    draft.reveal.openingAmount,
+    draft.reveal.visibleReveal
+  );
   const offsetX = draft.preview?.offsetX ?? 0;
   const offsetY = draft.preview?.offsetY ?? 0;
   const margins = calculateMargins(outerMatSize, openingSize, offsetX, offsetY);
@@ -120,6 +175,7 @@ export function buildDerivedGeometry(draft: FramingProjectDraft): DerivedFraming
     artworkSize,
     openingSize,
     outerMatSize,
+    visibleReveal,
     margins,
     isValidGeometry,
   };
